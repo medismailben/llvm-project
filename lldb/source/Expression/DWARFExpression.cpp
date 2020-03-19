@@ -933,8 +933,8 @@ bool DWARFExpression::Evaluate(
   uint32_t reg_num;
 
   /// Insertion point for evaluating multi-piece expression.
-  uint64_t op_piece_offset = 0;
-  Value pieces; // Used for DW_OP_piece
+  llvm::BitVector bit_pieces;
+  llvm::BitVector bit_mask;
 
   Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_EXPRESSIONS));
 
@@ -1258,34 +1258,34 @@ bool DWARFExpression::Evaluate(
     // 8-byte signed integer constant DW_OP_constu     unsigned LEB128 integer
     // constant DW_OP_consts     signed LEB128 integer constant
     case DW_OP_const1u:
-      stack.push_back(Scalar((uint8_t)opcodes.GetU8(&offset)));
+      stack.push_back(Scalar((unsigned int)opcodes.GetU8(&offset)));
       break;
     case DW_OP_const1s:
-      stack.push_back(Scalar((int8_t)opcodes.GetU8(&offset)));
+      stack.push_back(Scalar((int)opcodes.GetU8(&offset)));
       break;
     case DW_OP_const2u:
-      stack.push_back(Scalar((uint16_t)opcodes.GetU16(&offset)));
+      stack.push_back(Scalar((unsigned int)opcodes.GetU16(&offset)));
       break;
     case DW_OP_const2s:
-      stack.push_back(Scalar((int16_t)opcodes.GetU16(&offset)));
+      stack.push_back(Scalar((int)opcodes.GetU16(&offset)));
       break;
     case DW_OP_const4u:
-      stack.push_back(Scalar((uint32_t)opcodes.GetU32(&offset)));
+      stack.push_back(Scalar((unsigned int)opcodes.GetU32(&offset)));
       break;
     case DW_OP_const4s:
-      stack.push_back(Scalar((int32_t)opcodes.GetU32(&offset)));
+      stack.push_back(Scalar((int)opcodes.GetU32(&offset)));
       break;
     case DW_OP_const8u:
-      stack.push_back(Scalar((uint64_t)opcodes.GetU64(&offset)));
+      stack.push_back(Scalar((unsigned long)opcodes.GetU64(&offset)));
       break;
     case DW_OP_const8s:
-      stack.push_back(Scalar((int64_t)opcodes.GetU64(&offset)));
+      stack.push_back(Scalar((long)opcodes.GetU64(&offset)));
       break;
     case DW_OP_constu:
-      stack.push_back(Scalar(opcodes.GetULEB128(&offset)));
+      stack.push_back(Scalar((unsigned long)opcodes.GetULEB128(&offset)));
       break;
     case DW_OP_consts:
-      stack.push_back(Scalar(opcodes.GetSLEB128(&offset)));
+      stack.push_back(Scalar((long)opcodes.GetSLEB128(&offset)));
       break;
 
     // OPCODE: DW_OP_dup
@@ -2064,27 +2064,19 @@ bool DWARFExpression::Evaluate(
 
       if (piece_byte_size > 0) {
         Value curr_piece;
+        
+        const uint64_t curr_width = std::max(bit_mask.size(), bit_pieces.size());
 
         if (stack.empty()) {
-          // In a multi-piece expression, this means that the current piece is
-          // not available. Fill with zeros for now by resizing the data and
-          // appending it
-          curr_piece.ResizeData(piece_byte_size);
-          // Note that "0" is not a correct value for the unknown bits.
-          // It would be better to also return a mask of valid bits together
-          // with the expression result, so the debugger can print missing
-          // members as "<optimized out>" or something.
-          ::memset(curr_piece.GetBuffer().GetBytes(), 0, piece_byte_size);
-          pieces.AppendDataToHostBuffer(curr_piece);
+          bit_mask.resize(curr_width + piece_byte_size * 8);
+          bit_mask.set(curr_width, curr_width + piece_byte_size * 8);
         } else {
           Status error;
           // Extract the current piece into "curr_piece"
           Value curr_piece_source_value(stack.back());
           stack.pop_back();
 
-          const Value::ValueType curr_piece_source_value_type =
-              curr_piece_source_value.GetValueType();
-          switch (curr_piece_source_value_type) {
+          switch (curr_piece_source_value.GetValueType()) {
           case Value::eValueTypeLoadAddress:
             if (process) {
               if (curr_piece.ResizeData(piece_byte_size) == piece_byte_size) {
@@ -2168,36 +2160,11 @@ bool DWARFExpression::Evaluate(
           } break;
           }
 
-          // Check if this is the first piece?
-          if (op_piece_offset == 0) {
-            // This is the first piece, we should push it back onto the stack
-            // so subsequent pieces will be able to access this piece and add
-            // to it.
-            if (pieces.AppendDataToHostBuffer(curr_piece) == 0) {
-              if (error_ptr)
-                error_ptr->SetErrorString("failed to append piece data");
-              return false;
-            }
-          } else {
-            // If this is the second or later piece there should be a value on
-            // the stack.
-            if (pieces.GetBuffer().GetByteSize() != op_piece_offset) {
-              if (error_ptr)
-                error_ptr->SetErrorStringWithFormat(
-                    "DW_OP_piece for offset %" PRIu64
-                    " but top of stack is of size %" PRIu64,
-                    op_piece_offset, pieces.GetBuffer().GetByteSize());
-              return false;
-            }
-
-            if (pieces.AppendDataToHostBuffer(curr_piece) == 0) {
-              if (error_ptr)
-                error_ptr->SetErrorString("failed to append piece data");
-              return false;
-            }
-          }
+          unsigned int curr_scalar = curr_piece.GetScalar().UInt();
+          curr_scalar = curr_scalar << curr_width;
+          bit_pieces.resize(curr_width + piece_byte_size * 8);
+          bit_pieces.setBitsInMask(&curr_scalar);
         }
-        op_piece_offset += piece_byte_size;
       }
     } break;
 
@@ -2533,7 +2500,9 @@ bool DWARFExpression::Evaluate(
   if (stack.empty()) {
     // Nothing on the stack, check if we created a piece value from DW_OP_piece
     // or DW_OP_bit_piece opcodes
-    if (pieces.GetBuffer().GetByteSize()) {
+    if (bit_pieces.size()) {
+      Value pieces;
+      pieces.AppendBytes(bit_pieces.getData().data(), bit_pieces.size() / 8);
       result = pieces;
     } else {
       if (error_ptr)

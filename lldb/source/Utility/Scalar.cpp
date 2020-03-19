@@ -197,7 +197,7 @@ size_t Scalar::GetByteSize() const {
   case e_uint256:
   case e_sint512:
   case e_uint512:
-    return (m_integer.getBitWidth() / 8);
+    return ceil(m_integer.getBitWidth() / 8.0);
   case e_float:
     return sizeof(float_t);
   case e_double:
