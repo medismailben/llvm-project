@@ -243,4 +243,17 @@ TEST(DWARFExpression, DW_OP_piece) {
       // Note that the "00" should really be "undef", but we can't
       // represent that yet.
       llvm::HasValue(GetScalar(16, 0xff00, true)));
+  EXPECT_THAT_EXPECTED(
+      Evaluate({DW_OP_const1u, 0b10, DW_OP_stack_value, DW_OP_bit_piece, 1, 1}),
+      llvm::HasValue(GetScalar(8, 0b1, true)));
+  EXPECT_THAT_EXPECTED(
+      Evaluate({DW_OP_const1u, 0b0110, DW_OP_stack_value, DW_OP_bit_piece, 2, 1,
+                DW_OP_bit_piece, 2, 0,
+                DW_OP_const1u, 0b1, DW_OP_stack_value, DW_OP_bit_piece, 1, 0}),
+      llvm::HasValue(GetScalar(24, 0b10011, true)));
+  EXPECT_THAT_EXPECTED(
+      Evaluate({DW_OP_const1u, 0b0110, DW_OP_stack_value, DW_OP_bit_piece, 2, 1,
+                DW_OP_bit_piece, 6, 0,
+                DW_OP_const1u, 0xff, DW_OP_piece, 1}),
+      llvm::HasValue(GetScalar(32, 0xff03, true)));
 }

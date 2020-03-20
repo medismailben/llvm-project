@@ -128,6 +128,8 @@ public:
   void SetBytes(const void *bytes, int len);
 
   void AppendBytes(const void *bytes, int len);
+  
+  void AppendBits(const Value &rhs, int len);
 
   Value &operator=(const Value &rhs);
 

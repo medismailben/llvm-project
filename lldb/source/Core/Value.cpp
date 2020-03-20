@@ -104,6 +104,18 @@ void Value::AppendBytes(const void *bytes, int len) {
   m_value = (uintptr_t)m_data_buffer.GetBytes();
 }
 
+void Value::AppendBits(const Value& rhs, int len) {
+  m_value_type = eValueTypeHostAddress;
+  
+  llvm::APInt fail_value(1, 0, false);
+  llvm::APInt ap_int = GetScalar().UInt128(fail_value);
+  llvm::APInt rhs_int = rhs.GetScalar().UInt128(fail_value);
+  rhs_int = rhs_int << len;
+  ap_int |= rhs_int;
+  memcpy(m_data_buffer.GetBytes(), ap_int.getRawData(), ceil(ap_int.getBitWidth() / 8.0));
+  m_value = (uintptr_t)m_data_buffer.GetBytes();
+}
+
 void Value::Dump(Stream *strm) {
   m_value.GetValue(strm, true);
   strm->Printf(", value_type = %s, context = %p, context_type = %s",

@@ -933,6 +933,8 @@ bool DWARFExpression::Evaluate(
   uint32_t reg_num;
 
   /// Insertion point for evaluating multi-piece expression.
+//  uint64_t op_piece_offset = 0;
+//  Value pieces; // Used for DW_OP_piece and DW_OP_bit_piece
   llvm::BitVector bit_pieces;
   llvm::BitVector bit_mask;
 
@@ -2164,31 +2166,85 @@ bool DWARFExpression::Evaluate(
           curr_scalar = curr_scalar << curr_width;
           bit_pieces.resize(curr_width + piece_byte_size * 8);
           bit_pieces.setBitsInMask(&curr_scalar);
+          // If this is the second or later piece there should be a value on
+          // the stack.
+//          if (op_piece_offset) {
+//            if (pieces.GetBuffer().GetByteSize() != op_piece_offset) {
+//              if (error_ptr)
+//                error_ptr->SetErrorStringWithFormat(
+//                    "DW_OP_piece for offset %" PRIu64
+//                    " but top of stack is of size %" PRIu64,
+//                    op_piece_offset, pieces.GetBuffer().GetByteSize());
+//              return false;
+//            }
+//          }
+//
+//           This is the first piece, we should push it back onto the stack
+//           so subsequent pieces will be able to access this piece and add
+//           to it.
+//          if (pieces.AppendDataToHostBuffer(curr_piece) == 0) {
+//            if (error_ptr)
+//              error_ptr->SetErrorString("failed to append piece data");
+//            return false;
+//          }
         }
+//        op_piece_offset += piece_byte_size;
       }
     } break;
 
-    case DW_OP_bit_piece: // 0x9d ULEB128 bit size, ULEB128 bit offset (DWARF3);
-      if (stack.size() < 1) {
-        if (error_ptr)
-          error_ptr->SetErrorString(
-              "Expression stack needs at least 1 item for DW_OP_bit_piece.");
-        return false;
+    // 0x9d ULEB128 bit size, ULEB128 bit offset (DWARF3);
+    case DW_OP_bit_piece: {
+      Value curr_bit_piece;
+      
+      const uint64_t piece_bit_size = opcodes.GetULEB128(&offset);
+      const uint64_t piece_bit_offset = opcodes.GetULEB128(&offset);
+
+      const uint64_t piece_byte_size = ceil(piece_bit_size / 8.0);
+
+        
+      if (stack.empty()) {
+        // For unknown location, set bits in mask at the right offset.
+        bit_mask.resize(bit_mask.size() + piece_bit_size);
+        bit_mask.set(bit_mask.size() + piece_bit_offset, piece_bit_offset + piece_bit_size);
+        
+        
+        
+        // In a multi-piece expression, this means that the current piece is
+        // not available. Fill with zeros for now by resizing the data and
+        // appending it
+//        curr_bit_piece.ResizeData(piece_byte_size);
+//        // Note that "0" is not a correct value for the unknown bits.
+//        // It would be better to also return a mask of valid bits together
+//        // with the expression result, so the debugger can print missing
+//        // members as "<optimized out>" or something.
+//        ::memset(curr_bit_piece.GetBuffer().GetBytes(), 0, piece_byte_size);
+//        pieces.AppendBits(curr_bit_piece, piece_bit_size);
       } else {
-        const uint64_t piece_bit_size = opcodes.GetULEB128(&offset);
-        const uint64_t piece_bit_offset = opcodes.GetULEB128(&offset);
-        switch (stack.back().GetValueType()) {
+        // Extract the current piece into "curr_bit_piece"
+        Value curr_bit_piece_source_value(stack.back());
+        stack.pop_back();
+
+        switch (curr_bit_piece_source_value.GetValueType()) {
         case Value::eValueTypeScalar: {
-          if (!stack.back().GetScalar().ExtractBitfield(piece_bit_size,
-                                                        piece_bit_offset)) {
+          Scalar &scalar = curr_bit_piece_source_value.GetScalar();
+          if (!scalar.ExtractBitfield(piece_bit_size, piece_bit_offset)) {
             if (error_ptr)
               error_ptr->SetErrorStringWithFormat(
                   "unable to extract %" PRIu64 " bit value with %" PRIu64
                   " bit offset from a %" PRIu64 " bit scalar value.",
                   piece_bit_size, piece_bit_offset,
-                  (uint64_t)(stack.back().GetScalar().GetByteSize() * 8));
+                  (uint64_t)(scalar.GetByteSize() * 8));
             return false;
           }
+          
+          // Create curr_bit_piece with piece_bit_size. By default Scalar
+          // grows to the nearest host integer type.
+          llvm::APInt fail_value(1, 0, false);
+          llvm::APInt ap_int = scalar.UInt128(fail_value);
+          assert(ap_int.getBitWidth() >= piece_bit_size);
+          llvm::ArrayRef<uint64_t> buf{ap_int.getRawData(),
+                                       ap_int.getNumWords()};
+          curr_bit_piece.GetScalar() = Scalar(llvm::APInt(piece_bit_size, buf));
         } break;
 
         case Value::eValueTypeFileAddress:
@@ -2211,8 +2267,31 @@ bool DWARFExpression::Evaluate(
           }
           return false;
         }
+        
+        // If this is the second or later piece there should be a value on
+        // the stack.
+//        if (op_piece_offset) {
+//          if (pieces.GetBuffer().GetByteSize() != op_piece_offset) {
+//            if (error_ptr)
+//              error_ptr->SetErrorStringWithFormat(
+//                  "DW_OP_piece for offset %" PRIu64
+//                  " but top of stack is of size %" PRIu64,
+//                  op_piece_offset, pieces.GetBuffer().GetByteSize());
+//            return false;
+//          }
+//        }
+//
+//        // This is the first piece, we should push it back onto the stack
+//        // so subsequent pieces will be able to access this piece and add
+//        // to it.
+//        if (pieces.AppendDataToHostBuffer(curr_bit_piece) == 0) {
+//          if (error_ptr)
+//            error_ptr->SetErrorString("failed to append piece data");
+//          return false;
+//        }
       }
-      break;
+//      op_piece_offset += piece_byte_size;
+      } break;
 
     // OPCODE: DW_OP_push_object_address
     // OPERANDS: none
