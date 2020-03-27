@@ -1013,14 +1013,14 @@ AppleObjCTrampolineHandler::GetStepThroughDispatchPlan(Thread &thread,
         // to dig the super out of the class and use that.
 
         Value super_value(*(argument_values.GetValueAtIndex(obj_index)));
-        super_value.GetScalar() += process->GetAddressByteSize();
+        super_value.GetScalar() += llvm::APInt(32, process->GetAddressByteSize());
         super_value.ResolveValue(&exe_ctx);
 
         if (super_value.GetScalar().IsValid()) {
 
           // isa_value now holds the class pointer.  The second word of the
           // class pointer is the super-class pointer:
-          super_value.GetScalar() += process->GetAddressByteSize();
+          super_value.GetScalar() += llvm::APInt(32, process->GetAddressByteSize());
           super_value.ResolveValue(&exe_ctx);
           if (super_value.GetScalar().IsValid())
             isa_addr = super_value.GetScalar().ULongLong();
@@ -1039,7 +1039,7 @@ AppleObjCTrampolineHandler::GetStepThroughDispatchPlan(Thread &thread,
         // this structure.
 
         Value super_value(*(argument_values.GetValueAtIndex(obj_index)));
-        super_value.GetScalar() += process->GetAddressByteSize();
+        super_value.GetScalar() += llvm::APInt(32, process->GetAddressByteSize());
         super_value.ResolveValue(&exe_ctx);
 
         if (super_value.GetScalar().IsValid()) {
@@ -1130,46 +1130,46 @@ AppleObjCTrampolineHandler::GetStepThroughDispatchPlan(Thread &thread,
       flag_value.SetCompilerType(clang_int_type);
 
       if (this_dispatch->stret_return)
-        flag_value.GetScalar() = 1;
+        flag_value.GetScalar() = llvm::APInt(1,1);
       else
-        flag_value.GetScalar() = 0;
+        flag_value.GetScalar() = llvm::APInt(1,0);
       dispatch_values.PushValue(flag_value);
 
       if (this_dispatch->is_super)
-        flag_value.GetScalar() = 1;
+        flag_value.GetScalar() = llvm::APInt(1,1);
       else
-        flag_value.GetScalar() = 0;
+        flag_value.GetScalar() = llvm::APInt(1,0);
       dispatch_values.PushValue(flag_value);
 
       if (this_dispatch->is_super2)
-        flag_value.GetScalar() = 1;
+        flag_value.GetScalar() = llvm::APInt(1,1);
       else
-        flag_value.GetScalar() = 0;
+        flag_value.GetScalar() = llvm::APInt(1,0);
       dispatch_values.PushValue(flag_value);
 
       switch (this_dispatch->fixedup) {
       case DispatchFunction::eFixUpNone:
-        flag_value.GetScalar() = 0;
+        flag_value.GetScalar() = llvm::APInt(1,0);
         dispatch_values.PushValue(flag_value);
         dispatch_values.PushValue(flag_value);
         break;
       case DispatchFunction::eFixUpFixed:
-        flag_value.GetScalar() = 1;
+        flag_value.GetScalar() = llvm::APInt(1,1);
         dispatch_values.PushValue(flag_value);
-        flag_value.GetScalar() = 1;
+        flag_value.GetScalar() = llvm::APInt(1,1);
         dispatch_values.PushValue(flag_value);
         break;
       case DispatchFunction::eFixUpToFix:
-        flag_value.GetScalar() = 1;
+        flag_value.GetScalar() = llvm::APInt(1,1);
         dispatch_values.PushValue(flag_value);
-        flag_value.GetScalar() = 0;
+        flag_value.GetScalar() = llvm::APInt(1,0);
         dispatch_values.PushValue(flag_value);
         break;
       }
       if (log && log->GetVerbose())
-        flag_value.GetScalar() = 1;
+        flag_value.GetScalar() = llvm::APInt(1,1);
       else
-        flag_value.GetScalar() = 0; // FIXME - Set to 0 when debugging is done.
+        flag_value.GetScalar() = llvm::APInt(1,0); // FIXME - Set to 0 when debugging is done.
       dispatch_values.PushValue(flag_value);
 
       // The step through code might have to fill in the cache, so it

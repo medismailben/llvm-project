@@ -42,30 +42,34 @@ public:
   };
 
   RegisterValue()
-      : m_type(eTypeInvalid), m_scalar(static_cast<unsigned long>(0)) {}
+      : m_type(eTypeInvalid), m_scalar(llvm::APInt()) {}
 
-  explicit RegisterValue(uint8_t inst) : m_type(eTypeUInt8) { m_scalar = inst; }
+  explicit RegisterValue(uint8_t inst) : m_type(eTypeUInt8) {
+    m_scalar = llvm::APInt(8, inst);
+  }
 
   explicit RegisterValue(uint16_t inst) : m_type(eTypeUInt16) {
-    m_scalar = inst;
+    m_scalar = llvm::APInt(16, inst);
   }
 
   explicit RegisterValue(uint32_t inst) : m_type(eTypeUInt32) {
-    m_scalar = inst;
+    m_scalar = llvm::APInt(32,inst);
   }
 
   explicit RegisterValue(uint64_t inst) : m_type(eTypeUInt64) {
-    m_scalar = inst;
+    m_scalar = llvm::APInt(64, inst);
   }
 
   explicit RegisterValue(llvm::APInt inst) : m_type(eTypeUInt128) {
     m_scalar = llvm::APInt(inst);
   }
 
-  explicit RegisterValue(float value) : m_type(eTypeFloat) { m_scalar = value; }
+  explicit RegisterValue(float value) : m_type(eTypeFloat) {
+    m_scalar = llvm::APFloat(value);
+  }
 
   explicit RegisterValue(double value) : m_type(eTypeDouble) {
-    m_scalar = value;
+    m_scalar = llvm::APFloat(value);
   }
 
   explicit RegisterValue(long double value) : m_type(eTypeLongDouble) {
@@ -148,22 +152,22 @@ public:
 
   void operator=(uint8_t uint) {
     m_type = eTypeUInt8;
-    m_scalar = uint;
+    m_scalar = llvm::APInt(8, uint);
   }
 
   void operator=(uint16_t uint) {
     m_type = eTypeUInt16;
-    m_scalar = uint;
+    m_scalar = llvm::APInt(16, uint);
   }
 
   void operator=(uint32_t uint) {
     m_type = eTypeUInt32;
-    m_scalar = uint;
+    m_scalar = llvm::APInt(32, uint);
   }
 
   void operator=(uint64_t uint) {
     m_type = eTypeUInt64;
-    m_scalar = uint;
+    m_scalar = llvm::APInt(64, uint);
   }
 
   void operator=(llvm::APInt uint) {
@@ -173,12 +177,12 @@ public:
 
   void operator=(float f) {
     m_type = eTypeFloat;
-    m_scalar = f;
+    m_scalar = llvm::APFloat(f);
   }
 
   void operator=(double f) {
     m_type = eTypeDouble;
-    m_scalar = f;
+    m_scalar = llvm::APFloat(f);
   }
 
   void operator=(long double f) {
@@ -188,22 +192,22 @@ public:
 
   void SetUInt8(uint8_t uint) {
     m_type = eTypeUInt8;
-    m_scalar = uint;
+    m_scalar = llvm::APInt(8, uint);
   }
 
   void SetUInt16(uint16_t uint) {
     m_type = eTypeUInt16;
-    m_scalar = uint;
+    m_scalar = llvm::APInt(16, uint);
   }
 
   void SetUInt32(uint32_t uint, Type t = eTypeUInt32) {
     m_type = t;
-    m_scalar = uint;
+    m_scalar = llvm::APInt(32, uint);
   }
 
   void SetUInt64(uint64_t uint, Type t = eTypeUInt64) {
     m_type = t;
-    m_scalar = uint;
+    m_scalar = llvm::APInt(64, uint);;
   }
 
   void SetUInt128(llvm::APInt uint) {
@@ -215,12 +219,12 @@ public:
 
   void SetFloat(float f) {
     m_type = eTypeFloat;
-    m_scalar = f;
+    m_scalar = llvm::APFloat(f);
   }
 
   void SetDouble(double f) {
     m_type = eTypeDouble;
-    m_scalar = f;
+    m_scalar = llvm::APFloat(f);
   }
 
   void SetLongDouble(long double f) {

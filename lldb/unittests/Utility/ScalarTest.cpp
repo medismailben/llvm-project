@@ -20,37 +20,51 @@ using llvm::APInt;
 using llvm::Failed;
 using llvm::Succeeded;
 
-template <typename T>
-bool checkInequality(T c1, T c2) {
-  return (Scalar(c1) != Scalar(c2));
+template <typename T,
+          typename = std::enable_if_t<std::is_integral<T>::value>>
+bool checkIntegralInequality(T c1, T c2) {
+  return (Scalar(llvm::APInt(sizeof(T) * 8, c1)) != Scalar(llvm::APInt(sizeof(T) * 8, c2)));
 }
 
-template <typename T>
-bool checkEquality(T c1, T c2) {
-  return (Scalar(c1) == Scalar(c2));
+template <typename T,
+          typename = std::enable_if_t<std::is_integral<T>::value>>
+bool checkIntegralEquality(T c1, T c2) {
+  return (Scalar(llvm::APInt(sizeof(T) * 8, c1)) == Scalar(llvm::APInt(sizeof(T) * 8, c2)));
+}
+
+template <typename T,
+          typename = std::enable_if_t<std::is_floating_point<T>::value>>
+bool checkFloatingInequality(T c1, T c2) {
+  return (Scalar(llvm::APFloat(c1)) != Scalar(llvm::APFloat(c2)));
+}
+
+template <typename T,
+          typename = std::enable_if_t<std::is_floating_point<T>::value>>
+bool checkFloatingEquality(T c1, T c2) {
+  return (Scalar(llvm::APFloat(c1)) == Scalar(llvm::APFloat(c2)));
 }
 
 TEST(ScalarTest, Equality) {
-  ASSERT_TRUE(checkInequality<int>(23, 24));
-  ASSERT_TRUE(checkEquality<int>(96, 96));
-  ASSERT_TRUE(checkInequality<float>(4.0f, 4.5f));
-  ASSERT_TRUE(checkEquality<float>(4.0f, 4.0f));
+   ASSERT_TRUE(checkIntegralInequality(23, 24));
+   ASSERT_TRUE(checkIntegralEquality(96, 96));
+   ASSERT_TRUE(checkFloatingInequality(4.0f, 4.5f));
+   ASSERT_TRUE(checkFloatingEquality(4.0f, 4.0f));
 
   auto apint1 = APInt(64, 234);
   auto apint2 = APInt(64, 246);
-  ASSERT_TRUE(checkInequality<APInt>(apint1, apint2));
-  ASSERT_TRUE(checkEquality<APInt>(apint1, apint1));
+  ASSERT_TRUE(apint1 != apint2);
+  ASSERT_TRUE(apint1 == apint1);
 
   Scalar void1;
   Scalar void2;
   float f1 = 2.0;
   ASSERT_TRUE(void1 == void2);
-  ASSERT_FALSE(void1 == Scalar(f1));
+  ASSERT_FALSE(void1 == Scalar(llvm::APFloat(f1)));
 }
 
 TEST(ScalarTest, Comparison) {
-  auto s1 = Scalar(23);
-  auto s2 = Scalar(46);
+  auto s1 = Scalar(llvm::APInt(sizeof(int) * 8, 23));
+  auto s2 = Scalar(llvm::APInt(sizeof(int) * 8, 46));
   ASSERT_TRUE(s1 < s2);
   ASSERT_TRUE(s1 <= s2);
   ASSERT_TRUE(s2 > s1);
@@ -58,8 +72,8 @@ TEST(ScalarTest, Comparison) {
 }
 
 TEST(ScalarTest, ComparisonFloat) {
-  auto s1 = Scalar(23.0f);
-  auto s2 = Scalar(46.0f);
+  auto s1 = Scalar(llvm::APFloat(23.0f));
+  auto s2 = Scalar(llvm::APFloat(46.0f));
   ASSERT_TRUE(s1 < s2);
   ASSERT_TRUE(s1 <= s2);
   ASSERT_TRUE(s2 > s1);
@@ -70,11 +84,11 @@ TEST(ScalarTest, RightShiftOperator) {
   int a = 0x00001000;
   int b = 0xFFFFFFFF;
   int c = 4;
-  Scalar a_scalar(a);
-  Scalar b_scalar(b);
-  Scalar c_scalar(c);
-  ASSERT_EQ(a >> c, a_scalar >> c_scalar);
-  ASSERT_EQ(b >> c, b_scalar >> c_scalar);
+  Scalar a_scalar(llvm::APInt(sizeof(int) * 8, a));
+  Scalar b_scalar(llvm::APInt(sizeof(int) * 8, b));
+  Scalar c_scalar(llvm::APInt(sizeof(int) * 8, c));
+  ASSERT_EQ(llvm::APInt(sizeof(int) * 8, a >> c), a_scalar >> c_scalar);
+  ASSERT_EQ(llvm::APInt(sizeof(int) * 8, b >> c), b_scalar >> c_scalar);
 }
 
 TEST(ScalarTest, GetBytes) {
@@ -85,10 +99,10 @@ TEST(ScalarTest, GetBytes) {
   char e[16] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
   char f[32] = {1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
                 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
-  Scalar a_scalar(a);
-  Scalar b_scalar(b);
-  Scalar c_scalar(c);
-  Scalar d_scalar(d);
+  Scalar a_scalar(llvm::APInt(sizeof(int) * 8, a));
+  Scalar b_scalar(llvm::APInt(sizeof(long long) * 8, b));
+  Scalar c_scalar = llvm::APFloat(c);
+  Scalar d_scalar = llvm::APFloat(d);
   Scalar e_scalar;
   Scalar f_scalar;
   DataExtractor e_data(e, sizeof(e), endian::InlHostByteOrder(),
@@ -111,7 +125,7 @@ TEST(ScalarTest, GetBytes) {
 
 TEST(ScalarTest, CastOperations) {
   long long a = 0xf1f2f3f4f5f6f7f8LL;
-  Scalar a_scalar(a);
+  Scalar a_scalar(llvm::APInt(sizeof(long long) * 8, a));
   ASSERT_EQ((signed char)a, a_scalar.SChar());
   ASSERT_EQ((unsigned char)a, a_scalar.UChar());
   ASSERT_EQ((signed short)a, a_scalar.SShort());
@@ -124,7 +138,7 @@ TEST(ScalarTest, CastOperations) {
   ASSERT_EQ((unsigned long long)a, a_scalar.ULongLong());
 
   int a2 = 23;
-  Scalar a2_scalar(a2);
+  Scalar a2_scalar(llvm::APInt(sizeof(int) * 8, a2));
   ASSERT_EQ((float)a2, a2_scalar.Float());
   ASSERT_EQ((double)a2, a2_scalar.Double());
   ASSERT_EQ((long double)a2, a2_scalar.LongDouble());
@@ -135,28 +149,36 @@ TEST(ScalarTest, ExtractBitfield) {
 
   long long a1 = 0xf1f2f3f4f5f6f7f8LL;
   long long b1 = 0xff1f2f3f4f5f6f7fLL;
-  Scalar s_scalar(a1);
+  Scalar s_scalar(llvm::APInt(sizeof(long long) * 8, a1));
   ASSERT_TRUE(s_scalar.ExtractBitfield(0, 0));
-  ASSERT_EQ(0, memcmp(&a1, s_scalar.GetBytes(), sizeof(a1)));
+  ASSERT_EQ(0, memcmp(&a1, s_scalar.GetBytes(), sizeof(a1) * 8));
   ASSERT_TRUE(s_scalar.ExtractBitfield(len, 0));
-  ASSERT_EQ(0, memcmp(&a1, s_scalar.GetBytes(), sizeof(a1)));
+  ASSERT_EQ(0, memcmp(&a1, s_scalar.GetBytes(), sizeof(a1) * 8));
   ASSERT_TRUE(s_scalar.ExtractBitfield(len - 4, 4));
-  ASSERT_EQ(0, memcmp(&b1, s_scalar.GetBytes(), sizeof(b1)));
+  ASSERT_EQ(0, memcmp(&b1, s_scalar.GetBytes(), sizeof(b1) * 8));
 
   unsigned long long a2 = 0xf1f2f3f4f5f6f7f8ULL;
   unsigned long long b2 = 0x0f1f2f3f4f5f6f7fULL;
   Scalar u_scalar(a2);
   ASSERT_TRUE(u_scalar.ExtractBitfield(0, 0));
-  ASSERT_EQ(0, memcmp(&a2, u_scalar.GetBytes(), sizeof(a2)));
+  ASSERT_EQ(0, memcmp(&a2, u_scalar.GetBytes(), sizeof(a2) * 8));
   ASSERT_TRUE(u_scalar.ExtractBitfield(len, 0));
-  ASSERT_EQ(0, memcmp(&a2, u_scalar.GetBytes(), sizeof(a2)));
+  ASSERT_EQ(0, memcmp(&a2, u_scalar.GetBytes(), sizeof(a2) * 8));
   ASSERT_TRUE(u_scalar.ExtractBitfield(len - 4, 4));
-  ASSERT_EQ(0, memcmp(&b2, u_scalar.GetBytes(), sizeof(b2)));
+  ASSERT_EQ(0, memcmp(&b2, u_scalar.GetBytes(), sizeof(b2) * 8));
 }
 
-template <typename T> static std::string ScalarGetValue(T value) {
+template <typename T, std::enable_if_t<std::is_integral<T>::value, int> = 0>
+static std::string ScalarGetValue(T value) {
   StreamString stream;
-  Scalar(value).GetValue(&stream, false);
+  Scalar(llvm::APInt(sizeof(T) * 8, value, std::is_signed<T>::value)).GetValue(&stream, false);
+  return std::string(stream.GetString());
+}
+
+template <typename T, std::enable_if_t<std::is_floating_point<T>::value, int> = 0>
+static std::string ScalarGetValue(T value) {
+  StreamString stream;
+  Scalar(llvm::APFloat(value)).GetValue(&stream, false);
   return std::string(stream.GetString());
 }
 
@@ -165,19 +187,19 @@ TEST(ScalarTest, GetValue) {
   EXPECT_EQ("-12345", ScalarGetValue<signed short>(-12345));
   EXPECT_EQ("12345", ScalarGetValue<unsigned short>(12345));
   EXPECT_EQ(std::to_string(std::numeric_limits<unsigned short>::max()),
-            ScalarGetValue(std::numeric_limits<unsigned short>::max()));
+            ScalarGetValue<unsigned short>(std::numeric_limits<unsigned short>::max()));
 
   EXPECT_EQ("12345", ScalarGetValue<signed int>(12345));
   EXPECT_EQ("-12345", ScalarGetValue<signed int>(-12345));
   EXPECT_EQ("12345", ScalarGetValue<unsigned int>(12345));
   EXPECT_EQ(std::to_string(std::numeric_limits<unsigned int>::max()),
-            ScalarGetValue(std::numeric_limits<unsigned int>::max()));
+            ScalarGetValue<unsigned int>(std::numeric_limits<unsigned int>::max()));
 
   EXPECT_EQ("12345678", ScalarGetValue<signed long>(12345678L));
   EXPECT_EQ("-12345678", ScalarGetValue<signed long>(-12345678L));
   EXPECT_EQ("12345678", ScalarGetValue<unsigned long>(12345678UL));
   EXPECT_EQ(std::to_string(std::numeric_limits<unsigned long>::max()),
-            ScalarGetValue(std::numeric_limits<unsigned long>::max()));
+            ScalarGetValue<unsigned long>(std::numeric_limits<unsigned long>::max()));
 
   EXPECT_EQ("1234567890123", ScalarGetValue<signed long long>(1234567890123LL));
   EXPECT_EQ("-1234567890123",
@@ -185,15 +207,15 @@ TEST(ScalarTest, GetValue) {
   EXPECT_EQ("1234567890123",
             ScalarGetValue<unsigned long long>(1234567890123ULL));
   EXPECT_EQ(std::to_string(std::numeric_limits<unsigned long long>::max()),
-            ScalarGetValue(std::numeric_limits<unsigned long long>::max()));
+            ScalarGetValue<unsigned long long>(std::numeric_limits<unsigned long long>::max()));
 }
 
 TEST(ScalarTest, Division) {
-  Scalar lhs(5.0);
-  Scalar rhs(2.0);
+  Scalar lhs(llvm::APFloat(5.0));
+  Scalar rhs(llvm::APFloat(2.0));
   Scalar r = lhs / rhs;
   EXPECT_TRUE(r.IsValid());
-  EXPECT_EQ(r, Scalar(2.5));
+  EXPECT_EQ(r, Scalar(llvm::APFloat(2.5)));
 }
 
 TEST(ScalarTest, Promotion) {
@@ -212,11 +234,11 @@ TEST(ScalarTest, Promotion) {
 
   for (int i = 0; int_types[i] != Scalar::e_void; ++i) {
     for (int j = 0; float_types[j] != Scalar::e_void; ++j) {
-      Scalar lhs(2);
+      Scalar lhs(llvm::APInt(sizeof(int) * 8, 2));
       EXPECT_TRUE(lhs.Promote(int_types[i])) << "int promotion #" << i;
-      Scalar rhs(0.5f);
+      Scalar rhs(llvm::APFloat(0.5f));
       EXPECT_TRUE(rhs.Promote(float_types[j])) << "float promotion #" << j;
-      Scalar x(2.5f);
+      Scalar x(llvm::APFloat(2.5f));
       EXPECT_TRUE(x.Promote(float_types[j]));
       EXPECT_EQ(lhs + rhs, x);
     }
@@ -224,11 +246,11 @@ TEST(ScalarTest, Promotion) {
 
   for (int i = 0; float_types[i] != Scalar::e_void; ++i) {
     for (int j = 0; float_types[j] != Scalar::e_void; ++j) {
-      Scalar lhs(2);
+      Scalar lhs(llvm::APInt(sizeof(int) * 8, 2));
       EXPECT_TRUE(lhs.Promote(float_types[i])) << "float promotion #" << i;
-      Scalar rhs(0.5f);
+      Scalar rhs(llvm::APFloat(0.5f));
       EXPECT_TRUE(rhs.Promote(float_types[j])) << "float promotion #" << j;
-      Scalar x(2.5f);
+      Scalar x(llvm::APFloat(2.5f));
       EXPECT_TRUE(x.Promote(float_types[j]));
       EXPECT_EQ(lhs + rhs, x);
     }
@@ -241,12 +263,12 @@ TEST(ScalarTest, SetValueFromCString) {
   EXPECT_THAT_ERROR(
       a.SetValueFromCString("1234567890123", lldb::eEncodingUint, 8).ToError(),
       Succeeded());
-  EXPECT_EQ(1234567890123ull, a);
+  EXPECT_EQ(Scalar(llvm::APInt(sizeof(unsigned long long) * 8, 1234567890123ull)), a);
 
   EXPECT_THAT_ERROR(
       a.SetValueFromCString("-1234567890123", lldb::eEncodingSint, 8).ToError(),
       Succeeded());
-  EXPECT_EQ(-1234567890123ll, a);
+  EXPECT_EQ(Scalar(llvm::APInt(sizeof(long long) * 8, -1234567890123ll)), a);
 
   EXPECT_THAT_ERROR(
       a.SetValueFromCString("asdf", lldb::eEncodingSint, 8).ToError(),

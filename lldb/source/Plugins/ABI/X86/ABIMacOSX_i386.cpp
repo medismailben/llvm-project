@@ -295,40 +295,22 @@ ABIMacOSX_i386::GetReturnValueObjectImpl(Thread &thread,
           (thread.GetRegisterContext()->ReadRegisterAsUnsigned(edx_id, 0) &
            0xffffffff)
           << 32;
-      if (is_signed)
-        value.GetScalar() = (int64_t)raw_value;
-      else
-        value.GetScalar() = (uint64_t)raw_value;
+      value.GetScalar() = llvm::APInt(64, raw_value, is_signed);
       break;
     case 32:
-      if (is_signed)
-        value.GetScalar() = (int32_t)(
-            thread.GetRegisterContext()->ReadRegisterAsUnsigned(eax_id, 0) &
-            0xffffffff);
-      else
-        value.GetScalar() = (uint32_t)(
-            thread.GetRegisterContext()->ReadRegisterAsUnsigned(eax_id, 0) &
-            0xffffffff);
+      value.GetScalar() = llvm::APInt(32,
+          thread.GetRegisterContext()->ReadRegisterAsUnsigned(eax_id, 0) &
+          0xffffffff, is_signed);
       break;
     case 16:
-      if (is_signed)
-        value.GetScalar() = (int16_t)(
-            thread.GetRegisterContext()->ReadRegisterAsUnsigned(eax_id, 0) &
-            0xffff);
-      else
-        value.GetScalar() = (uint16_t)(
-            thread.GetRegisterContext()->ReadRegisterAsUnsigned(eax_id, 0) &
-            0xffff);
+      value.GetScalar() = llvm::APInt(16,
+          thread.GetRegisterContext()->ReadRegisterAsUnsigned(eax_id, 0) &
+          0xffff, is_signed);
       break;
     case 8:
-      if (is_signed)
-        value.GetScalar() = (int8_t)(
-            thread.GetRegisterContext()->ReadRegisterAsUnsigned(eax_id, 0) &
-            0xff);
-      else
-        value.GetScalar() = (uint8_t)(
-            thread.GetRegisterContext()->ReadRegisterAsUnsigned(eax_id, 0) &
-            0xff);
+      value.GetScalar() = llvm::APInt(8,
+          thread.GetRegisterContext()->ReadRegisterAsUnsigned(eax_id, 0) &
+          0xff, is_signed);
       break;
     }
   } else if (compiler_type.IsPointerType()) {
@@ -337,7 +319,7 @@ ABIMacOSX_i386::GetReturnValueObjectImpl(Thread &thread,
     uint32_t ptr =
         thread.GetRegisterContext()->ReadRegisterAsUnsigned(eax_id, 0) &
         0xffffffff;
-    value.GetScalar() = ptr;
+    value.GetScalar() = llvm::APInt(32, ptr);
   } else {
     // not handled yet
     return return_valobj_sp;

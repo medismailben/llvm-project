@@ -1597,41 +1597,26 @@ ValueObjectSP ABISysV_arm::GetReturnValueObjectImpl(
       raw_value |= ((uint64_t)(reg_ctx->ReadRegisterAsUnsigned(r1_reg_info, 0) &
                                UINT32_MAX))
                    << 32;
-      if (is_signed)
-        value.GetScalar() = (int64_t)raw_value;
-      else
-        value.GetScalar() = (uint64_t)raw_value;
+      value.GetScalar() = llvm::APInt(64, raw_value, is_signed);
     } break;
     case 32:
-      if (is_signed)
-        value.GetScalar() = (int32_t)(
-            reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT32_MAX);
-      else
-        value.GetScalar() = (uint32_t)(
-            reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT32_MAX);
+      value.GetScalar() = llvm::APInt(32,
+          reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT32_MAX, is_signed);
       break;
     case 16:
-      if (is_signed)
-        value.GetScalar() = (int16_t)(
-            reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT16_MAX);
-      else
-        value.GetScalar() = (uint16_t)(
-            reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT16_MAX);
+      value.GetScalar() = llvm::APInt(16,
+          reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT16_MAX, is_signed);
       break;
     case 8:
-      if (is_signed)
-        value.GetScalar() = (int8_t)(
-            reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT8_MAX);
-      else
-        value.GetScalar() = (uint8_t)(
-            reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT8_MAX);
+      value.GetScalar() = llvm::APInt(8,
+          reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT8_MAX, is_signed);
       break;
     }
   } else if (compiler_type.IsPointerType()) {
     uint32_t ptr =
         thread.GetRegisterContext()->ReadRegisterAsUnsigned(r0_reg_info, 0) &
         UINT32_MAX;
-    value.GetScalar() = ptr;
+    value.GetScalar() = llvm::APInt(32, ptr);
   } else if (compiler_type.IsVectorType(nullptr, nullptr)) {
     if (IsArmHardFloat(thread) && (*byte_size == 8 || *byte_size == 16)) {
       is_vfp_candidate = true;
@@ -1665,7 +1650,7 @@ ValueObjectSP ABISysV_arm::GetReturnValueObjectImpl(
           const RegisterInfo *d0_reg_info =
               reg_ctx->GetRegisterInfoByName("d0", 0);
           reg_ctx->ReadRegister(d0_reg_info, reg_value);
-          value.GetScalar() = reg_value.GetAsDouble();
+          value.GetScalar() = llvm::APFloat(reg_value.GetAsDouble());
         } else {
           uint64_t raw_value;
           const RegisterInfo *r1_reg_info = reg_ctx->GetRegisterInfo(
@@ -1676,7 +1661,7 @@ ValueObjectSP ABISysV_arm::GetReturnValueObjectImpl(
               ((uint64_t)(reg_ctx->ReadRegisterAsUnsigned(r1_reg_info, 0) &
                           UINT32_MAX))
               << 32;
-          value.GetScalar() = *reinterpret_cast<double *>(&raw_value);
+          value.GetScalar() = llvm::APFloat(*reinterpret_cast<double *>(&raw_value));
         }
         break;
       }
@@ -1689,12 +1674,12 @@ ValueObjectSP ABISysV_arm::GetReturnValueObjectImpl(
           const RegisterInfo *s0_reg_info =
               reg_ctx->GetRegisterInfoByName("s0", 0);
           reg_ctx->ReadRegister(s0_reg_info, reg_value);
-          value.GetScalar() = reg_value.GetAsFloat();
+          value.GetScalar() = llvm::APFloat(reg_value.GetAsFloat());
         } else {
           uint32_t raw_value;
           raw_value =
               reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT32_MAX;
-          value.GetScalar() = *reinterpret_cast<float *>(&raw_value);
+          value.GetScalar() = llvm::APFloat(*reinterpret_cast<float *>(&raw_value));
         }
         break;
       }

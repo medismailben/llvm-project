@@ -310,7 +310,7 @@ AppleGetPendingItemsHandler::GetPendingItems(Thread &thread, addr_t queue,
   return_buffer_ptr_value.GetScalar() = m_get_pending_items_return_buffer_addr;
   argument_values.PushValue(return_buffer_ptr_value);
 
-  debug_value.GetScalar() = 0;
+  debug_value.GetScalar() = llvm::APInt(1,0);
   argument_values.PushValue(debug_value);
 
   queue_value.GetScalar() = queue;
@@ -319,7 +319,7 @@ AppleGetPendingItemsHandler::GetPendingItems(Thread &thread, addr_t queue,
   if (page_to_free != LLDB_INVALID_ADDRESS)
     page_to_free_value.GetScalar() = page_to_free;
   else
-    page_to_free_value.GetScalar() = 0;
+    page_to_free_value.GetScalar() = llvm::APInt(1,0);
   argument_values.PushValue(page_to_free_value);
 
   page_to_free_size_value.GetScalar() = page_to_free_size;

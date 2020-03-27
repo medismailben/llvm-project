@@ -1440,14 +1440,14 @@ AppleObjCRuntimeV2::UpdateISAToDescriptorMapDynamic(
   // Fill in our function argument values
   arguments.GetValueAtIndex(0)->GetScalar() = hash_table.GetTableLoadAddress();
   arguments.GetValueAtIndex(1)->GetScalar() = class_infos_addr;
-  arguments.GetValueAtIndex(2)->GetScalar() = class_infos_byte_size;
+  arguments.GetValueAtIndex(2)->GetScalar() = llvm::APInt(32, class_infos_byte_size);
   
   // Only dump the runtime classes from the expression evaluation if the log is
   // verbose:
   Log *type_log = GetLogIfAllCategoriesSet(LIBLLDB_LOG_TYPES);
   bool dump_log = type_log && type_log->GetVerbose();
   
-  arguments.GetValueAtIndex(3)->GetScalar() = dump_log ? 1 : 0;
+  arguments.GetValueAtIndex(3)->GetScalar() = dump_log ? llvm::APInt(1,1) : llvm::APInt(1,0);
 
   bool success = false;
 
@@ -1467,7 +1467,7 @@ AppleObjCRuntimeV2::UpdateISAToDescriptorMapDynamic(
     Value return_value;
     return_value.SetValueType(Value::eValueTypeScalar);
     return_value.SetCompilerType(clang_uint32_t_type);
-    return_value.GetScalar() = 0;
+    return_value.GetScalar() = llvm::APInt(1,0);
 
     diagnostics.Clear();
 
@@ -1734,13 +1734,13 @@ AppleObjCRuntimeV2::UpdateISAToDescriptorMapSharedCache() {
   // Fill in our function argument values
   arguments.GetValueAtIndex(0)->GetScalar() = objc_opt_ptr;
   arguments.GetValueAtIndex(1)->GetScalar() = class_infos_addr;
-  arguments.GetValueAtIndex(2)->GetScalar() = class_infos_byte_size;
+  arguments.GetValueAtIndex(2)->GetScalar() = llvm::APInt(32, class_infos_byte_size);
   // Only dump the runtime classes from the expression evaluation if the log is
   // verbose:
   Log *type_log = GetLogIfAllCategoriesSet(LIBLLDB_LOG_TYPES);
   bool dump_log = type_log && type_log->GetVerbose();
   
-  arguments.GetValueAtIndex(3)->GetScalar() = dump_log ? 1 : 0;
+  arguments.GetValueAtIndex(3)->GetScalar() = dump_log ? llvm::APInt(1,1) : llvm::APInt(1,0);
 
   bool success = false;
 
@@ -1761,7 +1761,7 @@ AppleObjCRuntimeV2::UpdateISAToDescriptorMapSharedCache() {
     Value return_value;
     return_value.SetValueType(Value::eValueTypeScalar);
     return_value.SetCompilerType(clang_uint32_t_type);
-    return_value.GetScalar() = 0;
+    return_value.GetScalar() = llvm::APInt(1,0);
 
     diagnostics.Clear();
 

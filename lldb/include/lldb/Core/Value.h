@@ -105,13 +105,13 @@ public:
       Scalar scalar;
       if (IsValid()) {
         if (length == 1)
-          scalar = *(const uint8_t *)bytes;
+          scalar = llvm::APInt(8, *reinterpret_cast<const uint8_t *>(bytes));
         else if (length == 2)
-          scalar = *(const uint16_t *)bytes;
+          scalar = llvm::APInt(16, *reinterpret_cast<const uint16_t *>(bytes));
         else if (length == 4)
-          scalar = *(const uint32_t *)bytes;
+          scalar = llvm::APInt(32, *reinterpret_cast<const uint32_t *>(bytes));
         else if (length == 8)
-          scalar = *(const uint64_t *)bytes;
+          scalar = llvm::APInt(64, *reinterpret_cast<const uint64_t *>(bytes));
         else if (length >= 16)
           scalar = rhs;
       }

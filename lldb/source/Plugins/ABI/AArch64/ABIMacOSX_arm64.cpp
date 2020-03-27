@@ -2326,34 +2326,22 @@ ValueObjectSP ABIMacOSX_arm64::GetReturnValueObjectImpl(
             }
             break;
           case sizeof(uint64_t):
-            if (is_signed)
-              value.GetScalar() = (int64_t)(raw_value);
-            else
-              value.GetScalar() = (uint64_t)(raw_value);
+            value.GetScalar() = llvm::APInt(64, raw_value, is_signed);
             success = true;
             break;
 
           case sizeof(uint32_t):
-            if (is_signed)
-              value.GetScalar() = (int32_t)(raw_value & UINT32_MAX);
-            else
-              value.GetScalar() = (uint32_t)(raw_value & UINT32_MAX);
+            value.GetScalar() = llvm::APInt(32, raw_value & UINT32_MAX, is_signed);
             success = true;
             break;
 
           case sizeof(uint16_t):
-            if (is_signed)
-              value.GetScalar() = (int16_t)(raw_value & UINT16_MAX);
-            else
-              value.GetScalar() = (uint16_t)(raw_value & UINT16_MAX);
+            value.GetScalar() = llvm::APInt(16, raw_value & UINT16_MAX, is_signed);
             success = true;
             break;
 
           case sizeof(uint8_t):
-            if (is_signed)
-              value.GetScalar() = (int8_t)(raw_value & UINT8_MAX);
-            else
-              value.GetScalar() = (uint8_t)(raw_value & UINT8_MAX);
+            value.GetScalar() = llvm::APInt(8, raw_value & UINT8_MAX, is_signed);
             success = true;
             break;
           }
@@ -2372,10 +2360,10 @@ ValueObjectSP ABIMacOSX_arm64::GetReturnValueObjectImpl(
             if (v0_value.GetData(data)) {
               lldb::offset_t offset = 0;
               if (*byte_size == sizeof(float)) {
-                value.GetScalar() = data.GetFloat(&offset);
+                value.GetScalar() = llvm::APFloat(data.GetFloat(&offset));
                 success = true;
               } else if (*byte_size == sizeof(double)) {
-                value.GetScalar() = data.GetDouble(&offset);
+                value.GetScalar() = llvm::APFloat(data.GetDouble(&offset));
                 success = true;
               } else if (*byte_size == sizeof(long double)) {
                 value.GetScalar() = data.GetLongDouble(&offset);

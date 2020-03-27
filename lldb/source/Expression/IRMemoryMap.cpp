@@ -741,13 +741,13 @@ void IRMemoryMap::ReadScalarFromMemory(Scalar &scalar,
           "Couldn't read scalar: unsupported size %" PRIu64, (uint64_t)size);
       return;
     case 1:
-      scalar = extractor.GetU8(&offset);
+      scalar = llvm::APInt(8,extractor.GetU8(&offset));
       break;
     case 2:
-      scalar = extractor.GetU16(&offset);
+      scalar = llvm::APInt(16, extractor.GetU16(&offset));
       break;
     case 4:
-      scalar = extractor.GetU32(&offset);
+        scalar = llvm::APInt(32, extractor.GetU32(&offset));
       break;
     case 8:
       scalar = extractor.GetU64(&offset);

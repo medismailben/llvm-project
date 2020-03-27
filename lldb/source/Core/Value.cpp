@@ -67,7 +67,7 @@ Value::Value(const Value &v)
     m_data_buffer.CopyData(v.m_data_buffer.GetBytes(),
                            v.m_data_buffer.GetByteSize());
 
-    m_value = (uintptr_t)m_data_buffer.GetBytes();
+    m_value = llvm::APInt(64, reinterpret_cast<uintptr_t>(m_data_buffer.GetBytes()));
   }
 }
 
@@ -86,7 +86,7 @@ Value &Value::operator=(const Value &rhs) {
       m_data_buffer.CopyData(rhs.m_data_buffer.GetBytes(),
                              rhs.m_data_buffer.GetByteSize());
 
-      m_value = (uintptr_t)m_data_buffer.GetBytes();
+      m_value = llvm::APInt(64, reinterpret_cast<uintptr_t>(m_data_buffer.GetBytes()));
     }
   }
   return *this;
@@ -95,13 +95,13 @@ Value &Value::operator=(const Value &rhs) {
 void Value::SetBytes(const void *bytes, int len) {
   m_value_type = eValueTypeHostAddress;
   m_data_buffer.CopyData(bytes, len);
-  m_value = (uintptr_t)m_data_buffer.GetBytes();
+  m_value = llvm::APInt(64, reinterpret_cast<uintptr_t>(m_data_buffer.GetBytes()));
 }
 
 void Value::AppendBytes(const void *bytes, int len) {
   m_value_type = eValueTypeHostAddress;
   m_data_buffer.AppendData(bytes, len);
-  m_value = (uintptr_t)m_data_buffer.GetBytes();
+  m_value = llvm::APInt(64, reinterpret_cast<uintptr_t>(m_data_buffer.GetBytes()));
 }
 
 void Value::Dump(Stream *strm) {
@@ -190,7 +190,7 @@ size_t Value::AppendDataToHostBuffer(const Value &rhs) {
 size_t Value::ResizeData(size_t len) {
   m_value_type = eValueTypeHostAddress;
   m_data_buffer.SetByteSize(len);
-  m_value = (uintptr_t)m_data_buffer.GetBytes();
+  m_value = llvm::APInt(64, reinterpret_cast<uintptr_t>(m_data_buffer.GetBytes()));
   return m_data_buffer.GetByteSize();
 }
 

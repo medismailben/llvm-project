@@ -379,7 +379,7 @@ ValueObjectSP ABISysV_i386::GetReturnValueObjectSimple(
         thread.GetRegisterContext()->ReadRegisterAsUnsigned(eax_id, 0) &
         0xffffffff;
     value.SetValueType(Value::eValueTypeScalar);
-    value.GetScalar() = ptr;
+    value.GetScalar() = llvm::APInt(32, ptr);
     return_valobj_sp = ValueObjectConstResult::Create(
         thread.GetStackFrameAtIndex(0).get(), value, ConstString(""));
   } else if ((type_flags & eTypeIsScalar) ||
@@ -413,34 +413,22 @@ ValueObjectSP ABISysV_i386::GetReturnValueObjectSimple(
         break;
 
       case 8:
-        if (is_signed)
-          value.GetScalar() = (int64_t)(raw_value);
-        else
-          value.GetScalar() = (uint64_t)(raw_value);
+        value.GetScalar() = llvm::APInt(64, raw_value, is_signed);
         success = true;
         break;
 
       case 4:
-        if (is_signed)
-          value.GetScalar() = (int32_t)(raw_value & UINT32_MAX);
-        else
-          value.GetScalar() = (uint32_t)(raw_value & UINT32_MAX);
+        value.GetScalar() = llvm::APInt(32, raw_value & UINT32_MAX, is_signed);
         success = true;
         break;
 
       case 2:
-        if (is_signed)
-          value.GetScalar() = (int16_t)(raw_value & UINT16_MAX);
-        else
-          value.GetScalar() = (uint16_t)(raw_value & UINT16_MAX);
+        value.GetScalar() = llvm::APInt(16, raw_value & UINT16_MAX, is_signed);
         success = true;
         break;
 
       case 1:
-        if (is_signed)
-          value.GetScalar() = (int8_t)(raw_value & UINT8_MAX);
-        else
-          value.GetScalar() = (uint8_t)(raw_value & UINT8_MAX);
+        value.GetScalar() = llvm::APInt(8, raw_value & UINT8_MAX, is_signed);
         success = true;
         break;
       }
@@ -454,7 +442,7 @@ ValueObjectSP ABISysV_i386::GetReturnValueObjectSimple(
           thread.GetRegisterContext()->ReadRegisterAsUnsigned(eax_id, 0) &
           0xffffffff;
       value.SetValueType(Value::eValueTypeScalar);
-      value.GetScalar() = enm;
+      value.GetScalar() = llvm::APInt(32, enm);
       return_valobj_sp = ValueObjectConstResult::Create(
           thread.GetStackFrameAtIndex(0).get(), value, ConstString(""));
     } else if (type_flags & eTypeIsFloat) // 'Floating Point'
@@ -473,14 +461,14 @@ ValueObjectSP ABISysV_i386::GetReturnValueObjectSimple(
             // float is 4 bytes.
             if (*byte_size == 4) {
               float value_float = (float)value_long_double;
-              value.GetScalar() = value_float;
+              value.GetScalar() = llvm::APFloat(value_float);
               success = true;
             } else if (*byte_size == 8) {
               // double is 8 bytes
               // On Android Platform: long double is also 8 bytes It will be
               // handled here only.
               double value_double = (double)value_long_double;
-              value.GetScalar() = value_double;
+              value.GetScalar() = llvm::APFloat(value_double);
               success = true;
             } else if (*byte_size == 12) {
               // long double and __float80 are 12 bytes on i386.
