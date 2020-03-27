@@ -1650,41 +1650,26 @@ ValueObjectSP ABIMacOSX_arm::GetReturnValueObjectImpl(
       raw_value |= ((uint64_t)(reg_ctx->ReadRegisterAsUnsigned(r1_reg_info, 0) &
                                UINT32_MAX))
                    << 32;
-      if (is_signed)
-        value.GetScalar() = (int64_t)raw_value;
-      else
-        value.GetScalar() = (uint64_t)raw_value;
+      value.GetScalar() = llvm::APInt(64, raw_value, is_signed);
     } break;
     case 32:
-      if (is_signed)
-        value.GetScalar() = (int32_t)(
-            reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT32_MAX);
-      else
-        value.GetScalar() = (uint32_t)(
-            reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT32_MAX);
+      value.GetScalar() = llvm::APInt(32,
+          reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT32_MAX, is_signed);
       break;
     case 16:
-      if (is_signed)
-        value.GetScalar() = (int16_t)(
-            reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT16_MAX);
-      else
-        value.GetScalar() = (uint16_t)(
-            reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT16_MAX);
+      value.GetScalar() = llvm::APInt(16,
+        reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT16_MAX, is_signed);
       break;
     case 8:
-      if (is_signed)
-        value.GetScalar() = (int8_t)(
-            reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT8_MAX);
-      else
-        value.GetScalar() = (uint8_t)(
-            reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT8_MAX);
+      value.GetScalar() = llvm::APInt(8,
+        reg_ctx->ReadRegisterAsUnsigned(r0_reg_info, 0) & UINT8_MAX, is_signed);
       break;
     }
   } else if (compiler_type.IsPointerType()) {
     uint32_t ptr =
         thread.GetRegisterContext()->ReadRegisterAsUnsigned(r0_reg_info, 0) &
         UINT32_MAX;
-    value.GetScalar() = ptr;
+    value.GetScalar() = llvm::APInt(32, ptr);
   } else {
     // not handled yet
     return return_valobj_sp;

@@ -186,10 +186,10 @@ protected:
 
         Value v;
         if (m_ptr_size == 8) {
-          Scalar scalar((unsigned long long)value.first);
+          Scalar scalar(llvm::APInt(64, value.first));
           v = Value(scalar);
         } else {
-          Scalar scalar((unsigned int)value.first);
+          Scalar scalar(llvm::APInt(32, value.first));
           v = Value(scalar);
         }
 

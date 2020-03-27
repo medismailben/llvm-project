@@ -74,7 +74,7 @@ ValueObjectConstResult::ValueObjectConstResult(
     m_data.SetData(shared_data_buffer);
   }
 
-  m_value.GetScalar() = (uintptr_t)m_data.GetDataStart();
+  m_value.GetScalar() = llvm::APInt(64, reinterpret_cast<uintptr_t>(m_data.GetDataStart()));
   m_value.SetValueType(Value::eValueTypeHostAddress);
   m_value.SetCompilerType(compiler_type);
   m_name = name;
@@ -117,7 +117,7 @@ ValueObjectConstResult::ValueObjectConstResult(
   m_data.SetByteOrder(data_byte_order);
   m_data.SetAddressByteSize(data_addr_size);
   m_data.SetData(data_sp);
-  m_value.GetScalar() = (uintptr_t)data_sp->GetBytes();
+    m_value.GetScalar() = llvm::APInt(64, reinterpret_cast<uintptr_t>(data_sp->GetBytes()));
   m_value.SetValueType(Value::eValueTypeHostAddress);
   m_value.SetCompilerType(compiler_type);
   m_name = name;

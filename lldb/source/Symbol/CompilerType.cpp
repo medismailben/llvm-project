@@ -793,13 +793,13 @@ bool CompilerType::GetValueAsScalar(const lldb_private::DataExtractor &data,
       if (*byte_size <= sizeof(unsigned long long)) {
         uint64_t uval64 = data.GetMaxU64(&offset, *byte_size);
         if (*byte_size <= sizeof(unsigned int)) {
-          value = (unsigned int)uval64;
+          value = llvm::APInt(sizeof(unsigned int) * 8, static_cast<unsigned int>(uval64));
           return true;
         } else if (*byte_size <= sizeof(unsigned long)) {
-          value = (unsigned long)uval64;
+          value = llvm::APInt(sizeof(unsigned long) * 8, static_cast<unsigned long>(uval64));
           return true;
         } else if (*byte_size <= sizeof(unsigned long long)) {
-          value = (unsigned long long)uval64;
+          value = llvm::APInt(sizeof(unsigned long long) * 8, static_cast<unsigned long long>(uval64));
           return true;
         } else
           value.Clear();
@@ -810,13 +810,13 @@ bool CompilerType::GetValueAsScalar(const lldb_private::DataExtractor &data,
       if (*byte_size <= sizeof(long long)) {
         int64_t sval64 = data.GetMaxS64(&offset, *byte_size);
         if (*byte_size <= sizeof(int)) {
-          value = (int)sval64;
+          value = llvm::APInt(sizeof(int) * 8, static_cast<int>(sval64), true);
           return true;
         } else if (*byte_size <= sizeof(long)) {
-          value = (long)sval64;
+          value = llvm::APInt(sizeof(long) * 8, static_cast<long>(sval64), true);
           return true;
         } else if (*byte_size <= sizeof(long long)) {
-          value = (long long)sval64;
+          value = llvm::APInt(sizeof(long long) * 8, static_cast<long long>(sval64), true);
           return true;
         } else
           value.Clear();
@@ -830,21 +830,21 @@ bool CompilerType::GetValueAsScalar(const lldb_private::DataExtractor &data,
         if (*byte_size == sizeof(float)) {
           if (sizeof(float) == sizeof(uint32_t)) {
             u32 = data.GetU32(&offset);
-            value = *((float *)&u32);
+            value = llvm::APFloat(*reinterpret_cast<float *>(&u32));
             return true;
           } else if (sizeof(float) == sizeof(uint64_t)) {
             u64 = data.GetU64(&offset);
-            value = *((float *)&u64);
+            value = llvm::APFloat(*reinterpret_cast<float *>(&u64));
             return true;
           }
         } else if (*byte_size == sizeof(double)) {
           if (sizeof(double) == sizeof(uint32_t)) {
             u32 = data.GetU32(&offset);
-            value = *((double *)&u32);
+            value = llvm::APFloat(*reinterpret_cast<double *>(&u32));
             return true;
           } else if (sizeof(double) == sizeof(uint64_t)) {
             u64 = data.GetU64(&offset);
-            value = *((double *)&u64);
+            value = llvm::APFloat(*reinterpret_cast<double *>(&u64));
             return true;
           }
         } else if (*byte_size == sizeof(long double)) {

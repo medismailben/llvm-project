@@ -894,7 +894,7 @@ bool IRInterpreter::Interpret(llvm::Module &module, llvm::Function &function,
 
       S.MakeSigned();
 
-      lldb_private::Scalar S_signextend(S.SLongLong());
+      lldb_private::Scalar S_signextend(llvm::APInt(64, S.SLongLong(), true));
 
       frame.AssignValue(inst, S_signextend, module);
     } break;
@@ -1010,7 +1010,7 @@ bool IRInterpreter::Interpret(llvm::Module &module, llvm::Function &function,
       uint64_t offset =
           data_layout.getIndexedOffsetInType(src_elem_ty, const_indices);
 
-      lldb_private::Scalar Poffset = P + offset;
+      lldb_private::Scalar Poffset = P + llvm::APInt(64, offset);
 
       frame.AssignValue(inst, Poffset, module);
 
@@ -1052,50 +1052,50 @@ bool IRInterpreter::Interpret(llvm::Module &module, llvm::Function &function,
       default:
         return false;
       case CmpInst::ICMP_EQ:
-        result = (L == R);
+        result = llvm::APInt(1,L == R);
         break;
       case CmpInst::ICMP_NE:
-        result = (L != R);
+        result = llvm::APInt(1,L != R);
         break;
       case CmpInst::ICMP_UGT:
         L.MakeUnsigned();
         R.MakeUnsigned();
-        result = (L > R);
+        result = llvm::APInt(1,L > R);
         break;
       case CmpInst::ICMP_UGE:
         L.MakeUnsigned();
         R.MakeUnsigned();
-        result = (L >= R);
+        result = llvm::APInt(1,L >= R);
         break;
       case CmpInst::ICMP_ULT:
         L.MakeUnsigned();
         R.MakeUnsigned();
-        result = (L < R);
+        result = llvm::APInt(1,L < R);
         break;
       case CmpInst::ICMP_ULE:
         L.MakeUnsigned();
         R.MakeUnsigned();
-        result = (L <= R);
+        result = llvm::APInt(1,L <= R);
         break;
       case CmpInst::ICMP_SGT:
         L.MakeSigned();
         R.MakeSigned();
-        result = (L > R);
+        result = llvm::APInt(1,L > R);
         break;
       case CmpInst::ICMP_SGE:
         L.MakeSigned();
         R.MakeSigned();
-        result = (L >= R);
+        result = llvm::APInt(1,L >= R);
         break;
       case CmpInst::ICMP_SLT:
         L.MakeSigned();
         R.MakeSigned();
-        result = (L < R);
+        result = llvm::APInt(1,L < R);
         break;
       case CmpInst::ICMP_SLE:
         L.MakeSigned();
         R.MakeSigned();
-        result = (L <= R);
+        result = llvm::APInt(1,L <= R);
         break;
       }
 
@@ -1424,7 +1424,7 @@ bool IRInterpreter::Interpret(llvm::Module &module, llvm::Function &function,
         }
 
         // Extract the arguments value
-        lldb_private::Scalar tmp_op = 0;
+        lldb_private::Scalar tmp_op(llvm::APInt(1,0));
         if (!frame.EvaluateValue(tmp_op, arg_op, module)) {
           error.SetErrorToGenericError();
           error.SetErrorStringWithFormat("unable to evaluate argument %d", i);
@@ -1506,7 +1506,7 @@ bool IRInterpreter::Interpret(llvm::Module &module, llvm::Function &function,
         // Get the encapsulated return value
         lldb::ValueObjectSP retVal = call_plan_sp.get()->GetReturnValueObject();
 
-        lldb_private::Scalar returnVal = -1;
+            lldb_private::Scalar returnVal(llvm::APInt(8, -1, true));
         lldb_private::ValueObject *vobj = retVal.get();
 
         // Check if the return value is valid

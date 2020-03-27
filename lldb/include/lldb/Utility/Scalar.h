@@ -60,30 +60,46 @@ public:
 
   // Constructors and Destructors
   Scalar();
-  Scalar(int v) : m_type(e_sint), m_float(static_cast<float>(0)) {
-    m_integer = llvm::APInt(sizeof(int) * 8, v, true);
+  
+  Scalar(llvm::APInt v) : m_type(), m_float(static_cast<float>(0)) {
+    m_integer = llvm::APInt(v);
+    m_type = GetBestTypeForBitSize(m_integer.getBitWidth(), true);
   }
-  Scalar(unsigned int v) : m_type(e_uint), m_float(static_cast<float>(0)) {
-    m_integer = llvm::APInt(sizeof(int) * 8, v);
+  
+  template<typename T,
+           std::enable_if_t<std::is_same<T, lldb::addr_t>::value, int> = 0>
+  Scalar(T v)
+      : Scalar(llvm::APInt(64, v)) {
   }
-  Scalar(long v) : m_type(e_slong), m_float(static_cast<float>(0)) {
-    m_integer = llvm::APInt(sizeof(long) * 8, v, true);
+  
+  Scalar(llvm::APFloat v) : m_type(), m_integer(1, 0, false), m_float(v) {
+    const llvm::fltSemantics& Semantic = v.getSemantics();
+    switch (llvm::APFloat::APFloatBase::SemanticsToEnum(Semantic)) {
+      case llvm::APFloat::APFloatBase::Semantics::S_IEEEsingle:
+        m_type = e_float;
+        m_ieee_quad = false;
+        break;
+      case llvm::APFloat::APFloatBase::Semantics::S_IEEEdouble:
+        m_type = e_double;
+        m_ieee_quad = false;
+        break;
+      case llvm::APFloat::APFloatBase::Semantics::S_IEEEquad:
+        m_type = e_long_double;
+        m_ieee_quad = true;
+        break;
+      case llvm::APFloat::APFloatBase::Semantics::S_x87DoubleExtended:
+        m_type = e_long_double;
+        m_ieee_quad = false;
+        break;
+      default:
+        // S_IEEEhalf & S_PPCDoubleDouble not supported by Scalar types.
+        break;
+    }
   }
-  Scalar(unsigned long v) : m_type(e_ulong), m_float(static_cast<float>(0)) {
-    m_integer = llvm::APInt(sizeof(long) * 8, v);
-  }
-  Scalar(long long v) : m_type(e_slonglong), m_float(static_cast<float>(0)) {
-    m_integer = llvm::APInt(sizeof(long long) * 8, v, true);
-  }
-  Scalar(unsigned long long v)
-      : m_type(e_ulonglong), m_float(static_cast<float>(0)) {
-    m_integer = llvm::APInt(sizeof(long long) * 8, v);
-  }
-  Scalar(float v) : m_type(e_float), m_float(v) { m_float = llvm::APFloat(v); }
-  Scalar(double v) : m_type(e_double), m_float(v) {
-    m_float = llvm::APFloat(v);
-  }
-  Scalar(long double v, bool ieee_quad)
+  
+  template<typename T,
+      std::enable_if_t<std::is_same<T, long double>::value, int> = 0>
+  Scalar(T v, bool ieee_quad)
       : m_type(e_long_double), m_float(static_cast<float>(0)),
         m_ieee_quad(ieee_quad) {
     if (ieee_quad)
@@ -97,10 +113,7 @@ public:
                         llvm::APInt(BITWIDTH_INT128, NUM_OF_WORDS_INT128,
                                     (reinterpret_cast<type128 *>(&v))->x));
   }
-  Scalar(llvm::APInt v) : m_type(), m_float(static_cast<float>(0)) {
-    m_integer = llvm::APInt(v);
-    m_type = GetBestTypeForBitSize(m_integer.getBitWidth(), true);
-  }
+
   // Scalar(const RegisterValue& reg_value);
   virtual ~Scalar();
 
@@ -162,16 +175,30 @@ public:
   // automagically by the compiler, so no temporary objects will need to be
   // created. As a result, we currently don't need a variety of overloaded set
   // value accessors.
-  Scalar &operator=(const int i);
-  Scalar &operator=(unsigned int v);
-  Scalar &operator=(long v);
-  Scalar &operator=(unsigned long v);
-  Scalar &operator=(long long v);
-  Scalar &operator=(unsigned long long v);
-  Scalar &operator=(float v);
-  Scalar &operator=(double v);
-  Scalar &operator=(long double v);
+
+  template<typename T, std::enable_if_t<std::is_same<T, lldb::addr_t>::value, int> = 0>
+  Scalar &operator=(T v) {
+    m_type = e_ulonglong;
+    m_integer = llvm::APInt(sizeof(lldb::addr_t) * 8, v);
+    return *this;
+  }
+
+  template<typename T, std::enable_if_t<std::is_same<T, long double>::value, int> = 0>
+  Scalar &operator=(T v) {
+    m_type = e_long_double;
+    if (m_ieee_quad)
+      m_float = llvm::APFloat(llvm::APFloat::IEEEquad(),
+                              llvm::APInt(BITWIDTH_INT128, NUM_OF_WORDS_INT128,
+                                          (reinterpret_cast<type128 *>(&v))->x));
+    else
+      m_float = llvm::APFloat(llvm::APFloat::x87DoubleExtended(),
+                              llvm::APInt(BITWIDTH_INT128, NUM_OF_WORDS_INT128,
+                                          (reinterpret_cast<type128 *>(&v))->x));
+    return *this;
+  }
+
   Scalar &operator=(llvm::APInt v);
+  Scalar &operator=(llvm::APFloat v);
   Scalar &operator+=(const Scalar &rhs);
   Scalar &operator<<=(const Scalar &rhs); // Shift left
   Scalar &operator>>=(const Scalar &rhs); // Shift right (arithmetic)

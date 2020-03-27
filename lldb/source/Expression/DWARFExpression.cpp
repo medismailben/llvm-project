@@ -1024,7 +1024,7 @@ bool DWARFExpression::Evaluate(
         void *src = (void *)stack.back().GetScalar().ULongLong();
         intptr_t ptr;
         ::memcpy(&ptr, src, sizeof(void *));
-        stack.back().GetScalar() = ptr;
+        stack.back().GetScalar() = llvm::APInt(64, ptr, true);
         stack.back().ClearContext();
       } break;
       case Value::eValueTypeFileAddress: {
@@ -1152,7 +1152,7 @@ bool DWARFExpression::Evaluate(
         default:
           break;
         }
-        stack.back().GetScalar() = ptr;
+        stack.back().GetScalar() = llvm::APInt(64, ptr, true);
         stack.back().ClearContext();
       } break;
       case Value::eValueTypeLoadAddress:
@@ -1169,16 +1169,16 @@ bool DWARFExpression::Evaluate(
               lldb::offset_t addr_data_offset = 0;
               switch (size) {
               case 1:
-                stack.back().GetScalar() = addr_data.GetU8(&addr_data_offset);
+                stack.back().GetScalar() = llvm::APInt(8, addr_data.GetU8(&addr_data_offset));
                 break;
               case 2:
-                stack.back().GetScalar() = addr_data.GetU16(&addr_data_offset);
+                stack.back().GetScalar() = llvm::APInt(16, addr_data.GetU16(&addr_data_offset));
                 break;
               case 4:
-                stack.back().GetScalar() = addr_data.GetU32(&addr_data_offset);
+                  stack.back().GetScalar() = llvm::APInt(32, addr_data.GetU32(&addr_data_offset));
                 break;
               case 8:
-                stack.back().GetScalar() = addr_data.GetU64(&addr_data_offset);
+                stack.back().GetScalar() = llvm::APInt(64, addr_data.GetU64(&addr_data_offset));
                 break;
               default:
                 stack.back().GetScalar() =
@@ -1258,34 +1258,34 @@ bool DWARFExpression::Evaluate(
     // 8-byte signed integer constant DW_OP_constu     unsigned LEB128 integer
     // constant DW_OP_consts     signed LEB128 integer constant
     case DW_OP_const1u:
-      stack.push_back(Scalar((uint8_t)opcodes.GetU8(&offset)));
+      stack.push_back(Scalar(llvm::APInt(8,opcodes.GetU8(&offset))));
       break;
     case DW_OP_const1s:
-      stack.push_back(Scalar((int8_t)opcodes.GetU8(&offset)));
+        stack.push_back(Scalar(llvm::APInt(8, opcodes.GetU8(&offset), true)));
       break;
     case DW_OP_const2u:
-      stack.push_back(Scalar((uint16_t)opcodes.GetU16(&offset)));
+      stack.push_back(Scalar(llvm::APInt(16, opcodes.GetU16(&offset))));
       break;
     case DW_OP_const2s:
-      stack.push_back(Scalar((int16_t)opcodes.GetU16(&offset)));
+      stack.push_back(Scalar(llvm::APInt(16, opcodes.GetU16(&offset), true)));
       break;
     case DW_OP_const4u:
-      stack.push_back(Scalar((uint32_t)opcodes.GetU32(&offset)));
+      stack.push_back(Scalar(llvm::APInt(32, opcodes.GetU32(&offset))));
       break;
     case DW_OP_const4s:
-      stack.push_back(Scalar((int32_t)opcodes.GetU32(&offset)));
+      stack.push_back(Scalar(llvm::APInt(32, opcodes.GetU32(&offset), true)));
       break;
     case DW_OP_const8u:
-      stack.push_back(Scalar((uint64_t)opcodes.GetU64(&offset)));
+      stack.push_back(Scalar(llvm::APInt(64, opcodes.GetU64(&offset))));
       break;
     case DW_OP_const8s:
-      stack.push_back(Scalar((int64_t)opcodes.GetU64(&offset)));
+      stack.push_back(Scalar(llvm::APInt(64, opcodes.GetU64(&offset), true)));
       break;
     case DW_OP_constu:
-      stack.push_back(Scalar(opcodes.GetULEB128(&offset)));
+      stack.push_back(Scalar(llvm::APInt(64, opcodes.GetULEB128(&offset))));
       break;
     case DW_OP_consts:
-      stack.push_back(Scalar(opcodes.GetSLEB128(&offset)));
+      stack.push_back(Scalar(llvm::APInt(64, opcodes.GetSLEB128(&offset), true)));
       break;
 
     // OPCODE: DW_OP_dup
@@ -1587,8 +1587,7 @@ bool DWARFExpression::Evaluate(
         return false;
       } else {
         const uint64_t uconst_value = opcodes.GetULEB128(&offset);
-        // Implicit conversion from a UINT to a Scalar...
-        stack.back().GetScalar() += uconst_value;
+        stack.back().GetScalar() += llvm::APInt(64, uconst_value);
         if (!stack.back().GetScalar().IsValid()) {
           if (error_ptr)
             error_ptr->SetErrorString("DW_OP_plus_uconst failed.");
@@ -1710,7 +1709,7 @@ bool DWARFExpression::Evaluate(
         tmp = stack.back();
         stack.pop_back();
         int16_t bra_offset = (int16_t)opcodes.GetU16(&offset);
-        Scalar zero(0);
+        Scalar zero(llvm::APInt(1,0));
         if (tmp.ResolveValue(exe_ctx) != zero) {
           lldb::offset_t new_offset = offset + bra_offset;
           if (opcodes.ValidOffset(new_offset))
@@ -1740,8 +1739,8 @@ bool DWARFExpression::Evaluate(
       } else {
         tmp = stack.back();
         stack.pop_back();
-        stack.back().ResolveValue(exe_ctx) =
-            stack.back().ResolveValue(exe_ctx) == tmp.ResolveValue(exe_ctx);
+        stack.back().ResolveValue(exe_ctx) = llvm::APInt(1,
+            stack.back().ResolveValue(exe_ctx) == tmp.ResolveValue(exe_ctx));
       }
       break;
 
@@ -1761,8 +1760,8 @@ bool DWARFExpression::Evaluate(
       } else {
         tmp = stack.back();
         stack.pop_back();
-        stack.back().ResolveValue(exe_ctx) =
-            stack.back().ResolveValue(exe_ctx) >= tmp.ResolveValue(exe_ctx);
+        stack.back().ResolveValue(exe_ctx) = llvm::APInt(1,
+            stack.back().ResolveValue(exe_ctx) >= tmp.ResolveValue(exe_ctx));
       }
       break;
 
@@ -1782,8 +1781,8 @@ bool DWARFExpression::Evaluate(
       } else {
         tmp = stack.back();
         stack.pop_back();
-        stack.back().ResolveValue(exe_ctx) =
-            stack.back().ResolveValue(exe_ctx) > tmp.ResolveValue(exe_ctx);
+        stack.back().ResolveValue(exe_ctx) = llvm::APInt(1,
+            stack.back().ResolveValue(exe_ctx) > tmp.ResolveValue(exe_ctx));
       }
       break;
 
@@ -1803,8 +1802,8 @@ bool DWARFExpression::Evaluate(
       } else {
         tmp = stack.back();
         stack.pop_back();
-        stack.back().ResolveValue(exe_ctx) =
-            stack.back().ResolveValue(exe_ctx) <= tmp.ResolveValue(exe_ctx);
+        stack.back().ResolveValue(exe_ctx) = llvm::APInt(1,
+            stack.back().ResolveValue(exe_ctx) <= tmp.ResolveValue(exe_ctx));
       }
       break;
 
@@ -1824,8 +1823,8 @@ bool DWARFExpression::Evaluate(
       } else {
         tmp = stack.back();
         stack.pop_back();
-        stack.back().ResolveValue(exe_ctx) =
-            stack.back().ResolveValue(exe_ctx) < tmp.ResolveValue(exe_ctx);
+        stack.back().ResolveValue(exe_ctx) = llvm::APInt(1,
+            stack.back().ResolveValue(exe_ctx) < tmp.ResolveValue(exe_ctx));
       }
       break;
 
@@ -1845,8 +1844,8 @@ bool DWARFExpression::Evaluate(
       } else {
         tmp = stack.back();
         stack.pop_back();
-        stack.back().ResolveValue(exe_ctx) =
-            stack.back().ResolveValue(exe_ctx) != tmp.ResolveValue(exe_ctx);
+        stack.back().ResolveValue(exe_ctx) = llvm::APInt(1,
+            stack.back().ResolveValue(exe_ctx) != tmp.ResolveValue(exe_ctx));
       }
       break;
 
@@ -1887,7 +1886,7 @@ bool DWARFExpression::Evaluate(
     case DW_OP_lit29:
     case DW_OP_lit30:
     case DW_OP_lit31:
-      stack.push_back(Scalar((uint64_t)(op - DW_OP_lit0)));
+      stack.push_back(Scalar(llvm::APInt(64, op - DW_OP_lit0)));
       break;
 
     // OPCODE: DW_OP_regN
@@ -1986,7 +1985,7 @@ bool DWARFExpression::Evaluate(
       if (ReadRegisterValueAsScalar(reg_ctx, reg_kind, reg_num, error_ptr,
                                     tmp)) {
         int64_t breg_offset = opcodes.GetSLEB128(&offset);
-        tmp.ResolveValue(exe_ctx) += (uint64_t)breg_offset;
+        tmp.ResolveValue(exe_ctx) += llvm::APInt(64, breg_offset, true);
         tmp.ClearContext();
         stack.push_back(tmp);
         stack.back().SetValueType(Value::eValueTypeLoadAddress);
@@ -2005,7 +2004,7 @@ bool DWARFExpression::Evaluate(
       if (ReadRegisterValueAsScalar(reg_ctx, reg_kind, reg_num, error_ptr,
                                     tmp)) {
         int64_t breg_offset = opcodes.GetSLEB128(&offset);
-        tmp.ResolveValue(exe_ctx) += (uint64_t)breg_offset;
+        tmp.ResolveValue(exe_ctx) += llvm::APInt(64, breg_offset, true);
         tmp.ClearContext();
         stack.push_back(tmp);
         stack.back().SetValueType(Value::eValueTypeLoadAddress);
@@ -2019,7 +2018,7 @@ bool DWARFExpression::Evaluate(
           Scalar value;
           if (frame->GetFrameBaseValue(value, error_ptr)) {
             int64_t fbreg_offset = opcodes.GetSLEB128(&offset);
-            value += fbreg_offset;
+            value += llvm::APInt(64, fbreg_offset, true);
             stack.push_back(value);
             stack.back().SetValueType(Value::eValueTypeLoadAddress);
           } else

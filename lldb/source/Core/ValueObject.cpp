@@ -940,7 +940,7 @@ bool ValueObject::SetData(DataExtractor &data, Status &error) {
     data.CopyByteOrderedData(0, byte_size,
                              const_cast<uint8_t *>(m_data.GetDataStart()),
                              byte_size, m_data.GetByteOrder());
-    m_value.GetScalar() = (uintptr_t)m_data.GetDataStart();
+    m_value.GetScalar() = llvm::APInt(64, reinterpret_cast<uintptr_t>(m_data.GetDataStart()));
   } break;
   case Value::eValueTypeFileAddress:
   case Value::eValueTypeVector:
@@ -1621,7 +1621,7 @@ bool ValueObject::SetValueFromCString(const char *value_str, Status &error) {
               0, byte_size, const_cast<uint8_t *>(m_data.GetDataStart()),
               byte_size, m_data.GetByteOrder());
         }
-        m_value.GetScalar() = (uintptr_t)m_data.GetDataStart();
+        m_value.GetScalar() = llvm::APInt(64, reinterpret_cast<uintptr_t>(m_data.GetDataStart()));
 
       } break;
       case Value::eValueTypeFileAddress:
@@ -2738,7 +2738,7 @@ ValueObjectSP ValueObject::CreateConstantValue(ConstString name) {
     data.SetAddressByteSize(m_data.GetAddressByteSize());
 
     if (IsBitfield()) {
-      Value v(Scalar(GetValueAsUnsigned(UINT64_MAX)));
+      Value v(Scalar(llvm::APInt(64, GetValueAsUnsigned(UINT64_MAX))));
       m_error = v.GetValueAsData(&exe_ctx, data, GetModule().get());
     } else
       m_error = m_value.GetValueAsData(&exe_ctx, data, GetModule().get());

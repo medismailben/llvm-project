@@ -250,7 +250,7 @@ bool ValueObjectRegister::UpdateValue() {
         m_value.SetContext(Value::eContextTypeRegisterInfo,
                            (void *)&m_reg_info);
         m_value.SetValueType(Value::eValueTypeHostAddress);
-        m_value.GetScalar() = (uintptr_t)m_data.GetDataStart();
+        m_value.GetScalar() = llvm::APInt(64, reinterpret_cast<uintptr_t>(m_data.GetDataStart()));
         SetValueIsValid(true);
         SetValueDidChange(!(m_old_reg_value == m_reg_value));
         return true;

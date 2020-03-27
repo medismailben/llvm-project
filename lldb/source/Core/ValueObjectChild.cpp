@@ -135,7 +135,7 @@ bool ValueObjectChild::UpdateValue() {
         } else if (addr == 0) {
           m_error.SetErrorString("parent is NULL");
         } else {
-          m_value.GetScalar() += m_byte_offset;
+          m_value.GetScalar() += llvm::APInt(64, m_byte_offset);
           AddressType addr_type = parent->GetAddressTypeOfChildren();
 
           switch (addr_type) {
@@ -174,7 +174,7 @@ bool ValueObjectChild::UpdateValue() {
           } else {
             // Set this object's scalar value to the address of its value by
             // adding its byte offset to the parent address
-            m_value.GetScalar() += GetByteOffset();
+            m_value.GetScalar() += llvm::APInt(64, GetByteOffset());
 
             // If a bitfield doesn't fit into the child_byte_size'd
             // window at child_byte_offset, move the window forward
@@ -194,7 +194,7 @@ bool ValueObjectChild::UpdateValue() {
                 if (bitfield_end > *type_bit_size) {
                   uint64_t overhang_bytes =
                       (bitfield_end - *type_bit_size + 7) / 8;
-                  m_value.GetScalar() += overhang_bytes;
+                  m_value.GetScalar() += llvm::APInt(64, overhang_bytes);
                   m_bitfield_bit_offset -= overhang_bytes * 8;
                 }
               }

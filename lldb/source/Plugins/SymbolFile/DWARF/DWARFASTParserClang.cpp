@@ -2461,8 +2461,8 @@ void DWARFASTParserClang::ParseSingleMember(
           break;
         case DW_AT_data_member_location:
           if (form_value.BlockData()) {
-            Value initialValue(0);
-            Value memberOffset(0);
+            Value initialValue(llvm::APInt(1,0));
+            Value memberOffset(llvm::APInt(1,0));
             const DWARFDataExtractor &debug_info_data = die.GetData();
             uint32_t block_length = form_value.Unsigned();
             uint32_t block_offset =
@@ -2886,8 +2886,8 @@ bool DWARFASTParserClang::ParseChildMembers(
               break;
             case DW_AT_data_member_location:
               if (form_value.BlockData()) {
-                Value initialValue(0);
-                Value memberOffset(0);
+                Value initialValue(llvm::APInt(1,0));
+                Value memberOffset(llvm::APInt(1,0));
                 const DWARFDataExtractor &debug_info_data = die.GetData();
                 uint32_t block_length = form_value.Unsigned();
                 uint32_t block_offset =

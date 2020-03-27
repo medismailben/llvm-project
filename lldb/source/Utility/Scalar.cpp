@@ -15,6 +15,7 @@
 #include "lldb/Utility/StreamString.h"
 #include "lldb/lldb-types.h"
 
+#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/SmallString.h"
 
 #include <cinttypes>
@@ -305,66 +306,6 @@ const char *Scalar::GetTypeAsCString() const {
   return "<invalid Scalar type>";
 }
 
-Scalar &Scalar::operator=(const int v) {
-  m_type = e_sint;
-  m_integer = llvm::APInt(sizeof(int) * 8, v, true);
-  return *this;
-}
-
-Scalar &Scalar::operator=(unsigned int v) {
-  m_type = e_uint;
-  m_integer = llvm::APInt(sizeof(int) * 8, v);
-  return *this;
-}
-
-Scalar &Scalar::operator=(long v) {
-  m_type = e_slong;
-  m_integer = llvm::APInt(sizeof(long) * 8, v, true);
-  return *this;
-}
-
-Scalar &Scalar::operator=(unsigned long v) {
-  m_type = e_ulong;
-  m_integer = llvm::APInt(sizeof(long) * 8, v);
-  return *this;
-}
-
-Scalar &Scalar::operator=(long long v) {
-  m_type = e_slonglong;
-  m_integer = llvm::APInt(sizeof(long) * 8, v, true);
-  return *this;
-}
-
-Scalar &Scalar::operator=(unsigned long long v) {
-  m_type = e_ulonglong;
-  m_integer = llvm::APInt(sizeof(long long) * 8, v);
-  return *this;
-}
-
-Scalar &Scalar::operator=(float v) {
-  m_type = e_float;
-  m_float = llvm::APFloat(v);
-  return *this;
-}
-
-Scalar &Scalar::operator=(double v) {
-  m_type = e_double;
-  m_float = llvm::APFloat(v);
-  return *this;
-}
-
-Scalar &Scalar::operator=(long double v) {
-  m_type = e_long_double;
-  if (m_ieee_quad)
-    m_float = llvm::APFloat(llvm::APFloat::IEEEquad(),
-                            llvm::APInt(BITWIDTH_INT128, NUM_OF_WORDS_INT128,
-                                        (reinterpret_cast<type128 *>(&v))->x));
-  else
-    m_float = llvm::APFloat(llvm::APFloat::x87DoubleExtended(),
-                            llvm::APInt(BITWIDTH_INT128, NUM_OF_WORDS_INT128,
-                                        (reinterpret_cast<type128 *>(&v))->x));
-  return *this;
-}
 
 Scalar &Scalar::operator=(llvm::APInt rhs) {
   m_integer = llvm::APInt(rhs);
@@ -402,6 +343,34 @@ Scalar &Scalar::operator=(llvm::APInt rhs) {
       m_type = e_uint512;
     break;
   }
+  return *this;
+}
+
+Scalar &Scalar::operator=(llvm::APFloat v) {
+  m_float = llvm::APFloat(v);
+  const llvm::fltSemantics& Semantic = v.getSemantics();
+  switch (llvm::APFloat::APFloatBase::SemanticsToEnum(Semantic)) {
+    case llvm::APFloat::APFloatBase::Semantics::S_IEEEsingle:
+      m_type = e_float;
+      m_ieee_quad = false;
+      break;
+    case llvm::APFloat::APFloatBase::Semantics::S_IEEEdouble:
+      m_type = e_double;
+      m_ieee_quad = false;
+      break;
+    case llvm::APFloat::APFloatBase::Semantics::S_IEEEquad:
+      m_type = e_long_double;
+      m_ieee_quad = true;
+      break;
+    case llvm::APFloat::APFloatBase::Semantics::S_x87DoubleExtended:
+      m_type = e_long_double;
+      m_ieee_quad = false;
+      break;
+    default:
+      // S_IEEEhalf & S_PPCDoubleDouble not supported by Scalar types.
+      break;
+  }
+  
   return *this;
 }
 
@@ -2545,16 +2514,16 @@ Status Scalar::SetValueFromData(DataExtractor &data, lldb::Encoding encoding,
 
     switch (byte_size) {
     case 1:
-      operator=(data.GetU8(&offset));
+      operator=(llvm::APInt(8,data.GetU8(&offset)));
       break;
     case 2:
-      operator=(data.GetU16(&offset));
+      operator=(llvm::APInt(16,data.GetU16(&offset)));
       break;
     case 4:
-      operator=(data.GetU32(&offset));
+      operator=(llvm::APInt(32,data.GetU32(&offset)));
       break;
     case 8:
-      operator=(data.GetU64(&offset));
+      operator=(llvm::APInt(64,data.GetU64(&offset)));
       break;
     case 16:
       if (data.GetByteOrder() == eByteOrderBig) {
@@ -2592,16 +2561,16 @@ Status Scalar::SetValueFromData(DataExtractor &data, lldb::Encoding encoding,
 
     switch (byte_size) {
     case 1:
-      operator=(static_cast<int8_t>(data.GetU8(&offset)));
+      operator=(llvm::APInt(8, static_cast<int8_t>(data.GetU8(&offset), true)));
       break;
     case 2:
-      operator=(static_cast<int16_t>(data.GetU16(&offset)));
+      operator=(llvm::APInt(16,static_cast<int16_t>(data.GetU16(&offset), true)));
       break;
     case 4:
-      operator=(static_cast<int32_t>(data.GetU32(&offset)));
+      operator=(llvm::APInt(32,static_cast<int32_t>(data.GetU32(&offset), true)));
       break;
     case 8:
-      operator=(static_cast<int64_t>(data.GetU64(&offset)));
+      operator=(llvm::APInt(64,static_cast<int64_t>(data.GetU64(&offset), true)));
       break;
     case 16:
       if (data.GetByteOrder() == eByteOrderBig) {
@@ -2638,9 +2607,9 @@ Status Scalar::SetValueFromData(DataExtractor &data, lldb::Encoding encoding,
     lldb::offset_t offset = 0;
 
     if (byte_size == sizeof(float))
-      operator=(data.GetFloat(&offset));
+      operator=(llvm::APFloat(data.GetFloat(&offset)));
     else if (byte_size == sizeof(double))
-      operator=(data.GetDouble(&offset));
+      operator=(llvm::APFloat(data.GetDouble(&offset)));
     else if (byte_size == sizeof(long double))
       operator=(data.GetLongDouble(&offset));
     else

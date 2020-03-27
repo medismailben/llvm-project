@@ -65,22 +65,22 @@ static Scalar GetScalar(unsigned bits, uint64_t value, bool sign) {
   auto type = Scalar::GetBestTypeForBitSize(bits, sign);
   switch (type) {
   case Scalar::e_sint:
-    scalar = Scalar((int)value);
+    scalar = Scalar(llvm::APInt(sizeof(int), value, true));
     break;
   case Scalar::e_slong:
-    scalar = Scalar((long)value);
+    scalar = Scalar(llvm::APInt(sizeof(long), value, true));
     break;
   case Scalar::e_slonglong:
-    scalar = Scalar((long long)value);
+    scalar = Scalar(llvm::APInt(sizeof(long long), value, true));
     break;
   case Scalar::e_uint:
-    scalar = Scalar((unsigned int)value);
+    scalar = Scalar(llvm::APInt(sizeof(unsigned int), value));
     break;
   case Scalar::e_ulong:
-    scalar = Scalar((unsigned long)value);
+    scalar = Scalar(llvm::APInt(sizeof(unsigned long), value));
     break;
   case Scalar::e_ulonglong:
-    scalar = Scalar((unsigned long long)value);
+    scalar = Scalar(llvm::APInt(sizeof(unsigned long long), value));
     break;
   default:
     llvm_unreachable("not implemented");
@@ -95,9 +95,9 @@ static Scalar GetScalar(unsigned bits, uint64_t value, bool sign) {
 
 TEST(DWARFExpression, DW_OP_pick) {
   EXPECT_THAT_EXPECTED(Evaluate({DW_OP_lit1, DW_OP_lit0, DW_OP_pick, 0}),
-                       llvm::HasValue(0));
+                       llvm::HasValue(llvm::APInt(1,0)));
   EXPECT_THAT_EXPECTED(Evaluate({DW_OP_lit1, DW_OP_lit0, DW_OP_pick, 1}),
-                       llvm::HasValue(1));
+                       llvm::HasValue(llvm::APInt(1,1)));
   EXPECT_THAT_EXPECTED(Evaluate({DW_OP_lit1, DW_OP_lit0, DW_OP_pick, 2}),
                        llvm::Failed());
 }

@@ -142,16 +142,16 @@ bool RegisterValue::GetScalarValue(Scalar &scalar) const {
     default:
       break;
     case 1:
-      scalar = *(const uint8_t *)buffer.bytes;
+      scalar = llvm::APInt(8,*reinterpret_cast<const uint8_t *>(buffer.bytes));
       return true;
     case 2:
-      scalar = *reinterpret_cast<const uint16_t *>(buffer.bytes);
+      scalar = llvm::APInt(16, *reinterpret_cast<const uint16_t *>(buffer.bytes));
       return true;
     case 4:
-      scalar = *reinterpret_cast<const uint32_t *>(buffer.bytes);
+      scalar = llvm::APInt(32, *reinterpret_cast<const uint32_t *>(buffer.bytes));
       return true;
     case 8:
-      scalar = *reinterpret_cast<const uint64_t *>(buffer.bytes);
+      scalar = llvm::APInt(64, *reinterpret_cast<const uint64_t *>(buffer.bytes));
       return true;
     case 16:
     case 32:
@@ -448,7 +448,7 @@ Status RegisterValue::SetValueFromString(const RegisterInfo *reg_info,
                                        value_string.c_str());
         break;
       }
-      m_scalar = flt_val;
+      m_scalar = llvm::APFloat(flt_val);
       m_type = eTypeFloat;
     } else if (byte_size == sizeof(double)) {
       if (::sscanf(value_string.c_str(), "%lf", &dbl_val) != 1) {
@@ -456,7 +456,7 @@ Status RegisterValue::SetValueFromString(const RegisterInfo *reg_info,
                                        value_string.c_str());
         break;
       }
-      m_scalar = dbl_val;
+      m_scalar = llvm::APFloat(dbl_val);
       m_type = eTypeDouble;
     } else if (byte_size == sizeof(long double)) {
       if (::sscanf(value_string.c_str(), "%Lf", &ldbl_val) != 1) {

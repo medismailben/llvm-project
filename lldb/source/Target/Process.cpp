@@ -2137,7 +2137,7 @@ bool Process::WritePointerToMemory(lldb::addr_t vm_addr, lldb::addr_t ptr_value,
   Scalar scalar;
   const uint32_t addr_byte_size = GetAddressByteSize();
   if (addr_byte_size <= 4)
-    scalar = (uint32_t)ptr_value;
+    scalar = llvm::APInt(32, static_cast<uint32_t>(ptr_value));
   else
     scalar = ptr_value;
   return WriteScalarToMemory(vm_addr, scalar, addr_byte_size, error) ==
@@ -2270,7 +2270,7 @@ size_t Process::ReadScalarIntegerFromMemory(addr_t addr, uint32_t byte_size,
                          GetAddressByteSize());
       lldb::offset_t offset = 0;
       if (byte_size <= 4)
-        scalar = data.GetMaxU32(&offset, byte_size);
+        scalar = llvm::APInt(32, data.GetMaxU32(&offset, byte_size));
       else
         scalar = data.GetMaxU64(&offset, byte_size);
       if (is_signed)
