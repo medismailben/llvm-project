@@ -15,6 +15,7 @@
 #include "lldb/Utility/StreamString.h"
 #include "lldb/lldb-types.h"
 
+#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/SmallString.h"
 
 #include <cinttypes>
@@ -305,66 +306,6 @@ const char *Scalar::GetTypeAsCString() const {
   return "<invalid Scalar type>";
 }
 
-Scalar &Scalar::operator=(const int v) {
-  m_type = e_sint;
-  m_integer = llvm::APInt(sizeof(int) * 8, v, true);
-  return *this;
-}
-
-Scalar &Scalar::operator=(unsigned int v) {
-  m_type = e_uint;
-  m_integer = llvm::APInt(sizeof(int) * 8, v);
-  return *this;
-}
-
-Scalar &Scalar::operator=(long v) {
-  m_type = e_slong;
-  m_integer = llvm::APInt(sizeof(long) * 8, v, true);
-  return *this;
-}
-
-Scalar &Scalar::operator=(unsigned long v) {
-  m_type = e_ulong;
-  m_integer = llvm::APInt(sizeof(long) * 8, v);
-  return *this;
-}
-
-Scalar &Scalar::operator=(long long v) {
-  m_type = e_slonglong;
-  m_integer = llvm::APInt(sizeof(long) * 8, v, true);
-  return *this;
-}
-
-Scalar &Scalar::operator=(unsigned long long v) {
-  m_type = e_ulonglong;
-  m_integer = llvm::APInt(sizeof(long long) * 8, v);
-  return *this;
-}
-
-Scalar &Scalar::operator=(float v) {
-  m_type = e_float;
-  m_float = llvm::APFloat(v);
-  return *this;
-}
-
-Scalar &Scalar::operator=(double v) {
-  m_type = e_double;
-  m_float = llvm::APFloat(v);
-  return *this;
-}
-
-Scalar &Scalar::operator=(long double v) {
-  m_type = e_long_double;
-  if (m_ieee_quad)
-    m_float = llvm::APFloat(llvm::APFloat::IEEEquad(),
-                            llvm::APInt(BITWIDTH_INT128, NUM_OF_WORDS_INT128,
-                                        (reinterpret_cast<type128 *>(&v))->x));
-  else
-    m_float = llvm::APFloat(llvm::APFloat::x87DoubleExtended(),
-                            llvm::APInt(BITWIDTH_INT128, NUM_OF_WORDS_INT128,
-                                        (reinterpret_cast<type128 *>(&v))->x));
-  return *this;
-}
 
 Scalar &Scalar::operator=(llvm::APInt rhs) {
   m_integer = llvm::APInt(rhs);
@@ -402,6 +343,34 @@ Scalar &Scalar::operator=(llvm::APInt rhs) {
       m_type = e_uint512;
     break;
   }
+  return *this;
+}
+
+Scalar &Scalar::operator=(llvm::APFloat v) {
+  m_float = llvm::APFloat(v);
+  const llvm::fltSemantics& Semantic = v.getSemantics();
+  switch (llvm::APFloat::APFloatBase::SemanticsToEnum(Semantic)) {
+    case llvm::APFloat::APFloatBase::Semantics::S_IEEEsingle:
+      m_type = e_float;
+      m_ieee_quad = false;
+      break;
+    case llvm::APFloat::APFloatBase::Semantics::S_IEEEdouble:
+      m_type = e_double;
+      m_ieee_quad = false;
+      break;
+    case llvm::APFloat::APFloatBase::Semantics::S_IEEEquad:
+      m_type = e_long_double;
+      m_ieee_quad = true;
+      break;
+    case llvm::APFloat::APFloatBase::Semantics::S_x87DoubleExtended:
+      m_type = e_long_double;
+      m_ieee_quad = false;
+      break;
+    default:
+      // S_IEEEhalf & S_PPCDoubleDouble not supported by Scalar types.
+      break;
+  }
+  
   return *this;
 }
 
