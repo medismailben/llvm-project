@@ -9,23 +9,67 @@
 using namespace lldb;
 using namespace lldb_private;
 
-class SwiftUnsafeBufferPointer {
+namespace {
+
+class SwiftUnsafeType {
 public:
-  SwiftUnsafeBufferPointer(ValueObject &valobj);
+  static std::unique_ptr<SwiftUnsafeType> Create(ValueObject &valobj);
   size_t GetCount() const { return m_count; }
   addr_t GetStartAddress() const { return m_start_addr; }
   CompilerType GetElementType() const { return m_elem_type; }
-  bool Update();
+  virtual bool Update() = 0;
 
-private:
+protected:
+  SwiftUnsafeType(ValueObject &valobj);
+  addr_t GetAddress(llvm::StringRef child_name);
+
   ValueObject &m_valobj;
   size_t m_count;
   addr_t m_start_addr;
   CompilerType m_elem_type;
 };
 
-SwiftUnsafeBufferPointer::SwiftUnsafeBufferPointer(ValueObject &valobj)
+SwiftUnsafeType::SwiftUnsafeType(ValueObject &valobj)
     : m_valobj(*valobj.GetNonSyntheticValue().get()) {}
+
+lldb::addr_t SwiftUnsafeType::GetAddress(llvm::StringRef child_name) {
+  ConstString name(child_name);
+  ValueObjectSP position_value_sp(m_valobj.GetChildMemberWithName(name, true));
+  if (!position_value_sp || !position_value_sp->GetNumChildren())
+    return false;
+
+  ValueObjectSP some_value_sp = position_value_sp->GetChildAtIndex(0, true);
+  if (!some_value_sp || !some_value_sp->GetNumChildren())
+    return false;
+
+  CompilerType argument_type;
+
+  if (CompilerType type = some_value_sp->GetCompilerType()) {
+    auto type_system = llvm::dyn_cast<SwiftASTContext>(type.GetTypeSystem());
+    if (!type_system)
+      return false;
+
+    argument_type = type_system->GetGenericArgumentType(type, 0);
+  }
+
+  if (argument_type.IsValid())
+    m_elem_type = argument_type;
+
+  ValueObjectSP pointer_value_sp = some_value_sp->GetChildAtIndex(0, true);
+  if (!pointer_value_sp)
+    return false;
+
+  return pointer_value_sp->GetValueAsUnsigned(LLDB_INVALID_ADDRESS);
+}
+
+class SwiftUnsafeBufferPointer final : public SwiftUnsafeType {
+public:
+  SwiftUnsafeBufferPointer(ValueObject &valobj);
+  bool Update() override;
+};
+
+SwiftUnsafeBufferPointer::SwiftUnsafeBufferPointer(ValueObject &valobj)
+    : SwiftUnsafeType(valobj) {}
 
 bool SwiftUnsafeBufferPointer::Update() {
   if (!m_valobj.GetNumChildren())
@@ -74,50 +118,120 @@ bool SwiftUnsafeBufferPointer::Update() {
 
   m_count = count;
 
-  static ConstString g_position("_position");
-  ValueObjectSP position_value_sp(
-      m_valobj.GetChildMemberWithName(g_position, true));
-  if (!position_value_sp || !position_value_sp->GetNumChildren())
+  addr_t start_addr = GetAddress("_position");
+
+  if (!start_addr || start_addr == LLDB_INVALID_ADDRESS)
     return false;
 
-  ValueObjectSP some_value_sp = position_value_sp->GetChildAtIndex(0, true);
-  if (!some_value_sp || !some_value_sp->GetNumChildren())
-    return false;
-
-  CompilerType argument_type;
-
-  if (CompilerType type = some_value_sp->GetCompilerType())
-    argument_type = SwiftASTContext::GetGenericArgumentType(type, 0);
-
-  if (!argument_type.IsValid())
-    return false;
-
-  m_elem_type = argument_type;
-
-  ValueObjectSP pointer_value_sp = some_value_sp->GetChildAtIndex(0, true);
-  if (!pointer_value_sp)
-    return false;
-
-  addr_t addr = pointer_value_sp->GetValueAsUnsigned(LLDB_INVALID_ADDRESS);
-
-  if (!addr || addr == LLDB_INVALID_ADDRESS)
-    return false;
-
-  m_start_addr = addr;
+  m_start_addr = start_addr;
 
   return true;
 }
 
+class SwiftUnsafeRawBufferPointer final : public SwiftUnsafeType {
+public:
+  SwiftUnsafeRawBufferPointer(ValueObject &valobj);
+  bool Update() override;
+
+private:
+  addr_t m_end_addr;
+};
+
+SwiftUnsafeRawBufferPointer::SwiftUnsafeRawBufferPointer(ValueObject &valobj)
+    : SwiftUnsafeType(valobj) {}
+
+bool SwiftUnsafeRawBufferPointer::Update() {
+  if (!m_valobj.GetNumChildren())
+    return false;
+
+  // Here is the layout of Swift's UnsafeRaw[Mutable]BufferPointer.
+  // It's a view of the raw bytes of the pointee object. Each byte is viewed as
+  // a `UInt8` value independent of the type of values held in that memory.
+  //
+  // ▿ UnsafeRawBufferPointer
+  //   ▿ _position : Optional<UnsafeRawPointer<Int>>
+  //     ▿ some : UnsafeRawPointer<Int>
+  //       - pointerValue : Int
+  //   ▿ _end : Optional<UnsafeRawPointer<Int>>
+  //     ▿ some : UnsafeRawPointer<Int>
+  //       - pointerValue : Int
+  //
+  // The structure has 2 Optional UnsafePointer to the buffer's start address
+  // and end address. To access the pointer address, lldb unfolds every value
+  // object child until reaching `pointerValue`.
+
+  addr_t addr = GetAddress("_position");
+  if (!addr || addr == LLDB_INVALID_ADDRESS)
+    return false;
+  m_start_addr = addr;
+
+  addr = GetAddress("_end");
+  if (!addr || addr == LLDB_INVALID_ADDRESS)
+    return false;
+  m_end_addr = addr;
+
+  if (!m_elem_type.IsValid()) {
+    CompilerType type = m_valobj.GetCompilerType();
+    if (!type.IsValid())
+      return false;
+
+    auto type_system = llvm::dyn_cast<TypeSystemSwift>(type.GetTypeSystem());
+    if (!type_system)
+      return false;
+
+    CompilerType compiler_type =
+        type_system->GetTypeFromMangledTypename(ConstString("$ss5UInt8VD"));
+    if (!compiler_type.IsValid())
+      return false;
+
+    m_elem_type = compiler_type;
+  }
+
+  auto opt_type_size = m_elem_type.GetByteSize(m_valobj.GetTargetSP().get());
+
+  if (!opt_type_size)
+    return false;
+
+  m_count = (m_end_addr - m_start_addr) / *opt_type_size;
+
+  return true;
+}
+
+std::unique_ptr<SwiftUnsafeType> SwiftUnsafeType::Create(ValueObject &valobj) {
+  CompilerType type = valobj.GetCompilerType();
+  if (!type.IsValid())
+    return nullptr;
+
+  auto type_system = llvm::dyn_cast<TypeSystemSwift>(type.GetTypeSystem());
+  if (!type_system)
+    return nullptr;
+
+  opaque_compiler_type_t qual_type = type.GetOpaqueQualType();
+
+  if (type_system->IsTypedefType(qual_type))
+    type = type_system->GetTypedefedType(qual_type);
+
+  llvm::StringRef valobj_type_name(type.GetTypeName().GetCString());
+  bool is_raw = valobj_type_name.contains("Raw");
+  if (is_raw)
+    return std::make_unique<SwiftUnsafeRawBufferPointer>(valobj);
+  return std::make_unique<SwiftUnsafeBufferPointer>(valobj);
+}
+
+} // namespace
+
 bool lldb_private::formatters::swift::UnsafeBufferPointerSummaryProvider(
     ValueObject &valobj, Stream &stream, const TypeSummaryOptions &options) {
 
-  SwiftUnsafeBufferPointer swift_ubp(valobj);
+  size_t count = 0;
+  addr_t addr = LLDB_INVALID_ADDRESS;
 
-  if (!swift_ubp.Update())
+  std::unique_ptr<SwiftUnsafeType> unsafe_ptr = SwiftUnsafeType::Create(valobj);
+
+  if (!unsafe_ptr || !unsafe_ptr->Update())
     return false;
-
-  size_t count = swift_ubp.GetCount();
-  addr_t addr = swift_ubp.GetStartAddress();
+  count = unsafe_ptr->GetCount();
+  addr = unsafe_ptr->GetStartAddress();
 
   stream.Printf("%zu %s (0x%" PRIx64 ")", count,
                 (count == 1) ? "value" : "values", addr);
@@ -149,7 +263,7 @@ private:
   uint8_t m_ptr_size;
   lldb::ByteOrder m_order;
 
-  SwiftUnsafeBufferPointer m_unsafe_ptr;
+  std::unique_ptr<SwiftUnsafeType> m_unsafe_ptr;
   size_t m_element_stride;
   DataBufferSP m_buffer_sp;
   std::vector<ValueObjectSP> m_children;
@@ -160,8 +274,7 @@ private:
 
 lldb_private::formatters::swift::UnsafeBufferPointerSyntheticFrontEnd::
     UnsafeBufferPointerSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
-    : SyntheticChildrenFrontEnd(*valobj_sp.get()),
-      m_unsafe_ptr(*valobj_sp.get()) {
+    : SyntheticChildrenFrontEnd(*valobj_sp.get()) {
 
   ProcessSP process_sp = valobj_sp->GetProcessSP();
   if (!process_sp)
@@ -170,13 +283,18 @@ lldb_private::formatters::swift::UnsafeBufferPointerSyntheticFrontEnd::
   m_ptr_size = process_sp->GetAddressByteSize();
   m_order = process_sp->GetByteOrder();
 
+  m_unsafe_ptr = ::SwiftUnsafeType::Create(*valobj_sp.get());
+
+  lldb_assert(m_unsafe_ptr != nullptr, "Could not create Swift Unsafe Type",
+              __FUNCTION__, __FILE__, __LINE__);
+
   if (valobj_sp)
     Update();
 }
 
 size_t lldb_private::formatters::swift::UnsafeBufferPointerSyntheticFrontEnd::
     CalculateNumChildren() {
-  return m_unsafe_ptr.GetCount();
+  return m_unsafe_ptr->GetCount();
 }
 
 lldb::ValueObjectSP lldb_private::formatters::swift::
@@ -200,12 +318,12 @@ bool lldb_private::formatters::swift::UnsafeBufferPointerSyntheticFrontEnd::
   lldb::ProcessSP process_sp(valobj_sp->GetProcessSP());
   if (!process_sp)
     return false;
-  if (!m_unsafe_ptr.Update())
+  if (!m_unsafe_ptr->Update())
     return false;
 
-  const addr_t start_addr = m_unsafe_ptr.GetStartAddress();
+  const addr_t start_addr = m_unsafe_ptr->GetStartAddress();
   const size_t num_children = CalculateNumChildren();
-  const CompilerType element_type = m_unsafe_ptr.GetElementType();
+  const CompilerType element_type = m_unsafe_ptr->GetElementType();
 
   auto stride = element_type.GetByteStride(process_sp.get());
   if (!stride)
@@ -241,7 +359,7 @@ bool lldb_private::formatters::swift::UnsafeBufferPointerSyntheticFrontEnd::
 
 bool lldb_private::formatters::swift::UnsafeBufferPointerSyntheticFrontEnd::
     MightHaveChildren() {
-  return m_unsafe_ptr.GetCount();
+  return m_unsafe_ptr->GetCount();
 }
 
 size_t lldb_private::formatters::swift::UnsafeBufferPointerSyntheticFrontEnd::
