@@ -27,8 +27,9 @@
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/State.h"
 
-#include "ProcessMachCore.h"
+#include "Plugins/Process/Scriptable/ScriptableProcess.h"
 #include "Plugins/Process/Utility/StopInfoMachException.h"
+#include "ProcessMachCore.h"
 #include "ThreadMachCore.h"
 
 // Needed for the plug-in names for the dynamic loaders.
@@ -700,4 +701,12 @@ addr_t ProcessMachCore::GetImageInfoAddress() {
 
 lldb_private::ObjectFile *ProcessMachCore::GetCoreObjectFile() {
   return m_core_module_sp->GetObjectFile();
+}
+
+CommandObject *ProcessMachCore::GetPluginCommandObject() {
+  if (!m_scriptable_process_command_sp)
+    m_scriptable_process_command_sp =
+        std::make_shared<scriptable::CommandObjectMultiwordScriptableProcess>(
+            GetTarget().GetDebugger().GetCommandInterpreter());
+  return m_scriptable_process_command_sp.get();
 }

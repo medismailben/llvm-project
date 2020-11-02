@@ -12,6 +12,7 @@ add_lldb_library(lldbPluginProcessMachCore PLUGIN
     lldbPluginDynamicLoaderDarwinKernel
     lldbPluginDynamicLoaderMacOSXDYLD
     lldbPluginObjectFileMachO
+    lldbPluginScriptableProcess
   LINK_COMPONENTS
     Support
   )
