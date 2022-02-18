@@ -98,6 +98,7 @@
 #include "lldb/Core/DumpDataExtractor.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/ModuleSpec.h"
+#include "lldb/Core/Progress.h"
 #include "lldb/Core/Section.h"
 #include "lldb/Core/StreamFile.h"
 #include "lldb/Core/ThreadSafeDenseMap.h"
@@ -3969,7 +3970,13 @@ void SwiftASTContext::LoadModule(swift::ModuleDecl *swift_module,
         all_dlopen_errors.GetData());
   };
 
-  for (auto import : swift::namelookup::getAllImports(swift_module)) {
+  llvm::ArrayRef<swift::ImportedModule> module_imports = swift::namelookup::getAllImports(swift_module);
+
+  std::string progress_title = "Loading Swift Module ( " + swift_module->getNameStr().str() + " )";
+  Progress p(progress_title, module_imports.size());
+
+  for (auto import : module_imports) {
+    p.Increment();
     import.importedModule->collectLinkLibraries(addLinkLibrary);
   }
   error = current_error;

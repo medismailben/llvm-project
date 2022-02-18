@@ -21,6 +21,7 @@
 #include "lldb/Core/Debugger.h"
 #include "lldb/Core/JITSection.h"
 #include "lldb/Core/PluginManager.h"
+#include "lldb/Core/Progress.h"
 #include "lldb/Core/Section.h"
 #include "lldb/Core/ValueObjectConstResult.h"
 #include "lldb/DataFormatters/StringPrinter.h"
@@ -486,11 +487,13 @@ void SwiftLanguageRuntimeImpl::SetupReflection() {
     }
   }
   m_initialized_reflection_ctx = true;
-
+  
+  Progress p("Setting up Swift Reflections", m_modules_to_add.GetSize());
   // Add all defered modules to reflection context that were added to
   // the target since this SwiftLanguageRuntime was created.
   m_modules_to_add.ForEach([&](const ModuleSP &module_sp) -> bool {
     AddModuleToReflectionContext(module_sp);
+    p.Increment();
     return true;
   });
   m_modules_to_add.Clear();
