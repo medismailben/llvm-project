@@ -1017,6 +1017,15 @@ def load_crashlog_in_scripted_process(debugger, crash_log_file):
     error = lldb.SBError()
     process = target.Launch(launch_info, error)
 
+    if not process:
+        return
+
+    ci.HandleCommand('process status', res)
+    if not res.Succeeded():
+        return
+
+    ci.HandleCommand('thread backtrace', res)
+
 def CreateSymbolicateCrashLogOptions(
         command_name,
         description,
