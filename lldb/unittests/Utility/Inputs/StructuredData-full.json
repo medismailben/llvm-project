@@ -1,0 +1,13 @@
+{
+  "Array": [
+    3.14,
+    1.234
+  ],
+  "Dictionary": {
+    "FalseBool": false
+  },
+  "Integer": 1,
+  "Null": null,
+  "String": "value",
+  "TrueBool": true
+}

@@ -175,3 +175,77 @@ void StructuredData::Null::Serialize(json::OStream &s) const {
 void StructuredData::Generic::Serialize(json::OStream &s) const {
   s.value(llvm::formatv("{0:X}", m_object));
 }
+
+void StructuredData::Integer::GetDescription(lldb_private::Stream &s) const {
+  s.Printf("%" PRId64, static_cast<int64_t>(m_value));
+}
+
+void StructuredData::Float::GetDescription(lldb_private::Stream &s) const {
+  s.Printf("%f", m_value);
+}
+
+void StructuredData::Boolean::GetDescription(lldb_private::Stream &s) const {
+  s.Printf(m_value ? "True" : "False");
+}
+
+void StructuredData::String::GetDescription(lldb_private::Stream &s) const {
+  s.Printf("%s", m_value.empty() ? "\"\"" : m_value.c_str());
+}
+
+void StructuredData::Array::GetDescription(lldb_private::Stream &s) const {
+  for (const auto &item_sp : m_items) {
+    s.Indent();
+    // Print value
+    item_sp->GetDescription(s);
+
+    // Return to line
+    if (item_sp != *(--m_items.end()))
+      s.EOL();
+
+    // If record type, print extra line for visibility
+    auto value_type = item_sp->GetType();
+    if (value_type == lldb::eStructuredDataTypeArray ||
+        value_type == lldb::eStructuredDataTypeDictionary)
+      s.EOL();
+  }
+}
+
+void StructuredData::Dictionary::GetDescription(lldb_private::Stream &s) const {
+  auto indent = [&s](const std::pair<ConstString, ObjectSP> &pair) {
+    auto value_type = pair.second->GetType();
+    switch (value_type) {
+    case lldb::eStructuredDataTypeArray:
+      s.IndentMore();
+      LLVM_FALLTHROUGH;
+    case lldb::eStructuredDataTypeDictionary:
+      s.EOL();
+      break;
+    default:
+      s.PutChar(' ');
+      break;
+    }
+    pair.second->GetDescription(s);
+    if (value_type == lldb::eStructuredDataTypeArray)
+      s.IndentLess();
+  };
+
+  for (const auto &pair : m_dict) {
+    s.IndentMore();
+    s.Indent();
+    if (pair.first.IsNull() || pair.first.IsEmpty() || !pair.second)
+      continue;
+    s.Printf("%s:", pair.first.AsCString());
+    indent(pair);
+    if (pair != *(--m_dict.end()))
+      s.EOL();
+    s.IndentLess();
+  }
+}
+
+void StructuredData::Null::GetDescription(lldb_private::Stream &s) const {
+  s.Printf("NULL");
+}
+
+void StructuredData::Generic::GetDescription(lldb_private::Stream &s) const {
+  s.Printf("%p", m_object);
+}

@@ -31,6 +31,22 @@ TEST(StructuredDataTest, StringDump) {
   }
 }
 
+TEST(StructuredDataTest, GetDescription) {
+  Status status;
+  std::string input = GetInputFilePath("StructuredData-full.json");
+  auto object_sp = StructuredData::ParseJSONFromFile(FileSpec(input), status);
+  ASSERT_NE(nullptr, object_sp);
+
+  const std::string expected =
+      "  Array :\n    3.140000\n    1.234000  \n  Dictionary :\n    FalseBool "
+      ": False  \n  Integer : 1\n  Null : NULL\n  String : value\n  TrueBool : "
+      "True";
+
+  StreamString S;
+  object_sp->GetDescription(S);
+  EXPECT_EQ(expected, S.GetString());
+}
+
 TEST(StructuredDataTest, ParseJSONFromFile) {
   Status status;
   auto object_sp = StructuredData::ParseJSONFromFile(
