@@ -2,6 +2,66 @@ from abc import ABCMeta, abstractmethod
 
 import lldb
 
+class ScriptedDebugAgent(metaclass=ABCMeta):
+    """
+    What does a snapshot contains:
+        - Memory: variable values can change at each stop so we need to have a
+          different memory blob for each of them
+        - thread id that have changes with
+            - Status (stopped / running / suspended)
+            - StopReason
+            - Registers
+            - Frames (if necessary)
+    """
+
+    parent_process = None
+    scripted_process = None
+
+    def __init__(self, parent_target, scripted_process):
+        if isinstance(parent_target, lldb.SBTarget) and parent_target.IsValid():
+            parent_process = parent_target.GetProcess()
+            if parent_process.IsValid():
+                self.parent_process = parent_process
+        if isinstance(scripted_process, ScriptedProcess) and scripted_process.target:
+            self.scripted_process = scripted_process
+
+    def get_image_info_address(self):
+        """ Get the address for fetching image info.
+
+        Returns:
+            Dict: The dictionary of threads, with the thread ID as the key and
+            a Scripted Thread instance as the value.
+            The dictionary can be empty.
+        """
+        return self.parent_process.GetImageInfoAddress()
+
+    def update(self, snapshot):
+        pass
+
+    @abstractmethod
+    def create_breakpoint(self, addr, bp_id, hardware):
+        pass
+
+    @abstractmethod
+    def step_into(self):
+        pass
+
+    @abstractmethod
+    def step_over(self):
+        pass
+
+    @abstractmethod
+    def step_out(self):
+        pass
+
+    @abstractmethod
+    def step_instr(self):
+        pass
+
+    @abstractmethod
+    def next_instr(self):
+        pass
+
 class ScriptedProcess(metaclass=ABCMeta):
 
     """
@@ -216,7 +276,6 @@ class ScriptedThread(metaclass=ABCMeta):
     @abstractmethod
     def __init__(self, scripted_process, args):
         """ Construct a scripted thread.
-
         Args:
             process (ScriptedProcess): The scripted process owning this thread.
             args (lldb.SBStructuredData): A Dictionary holding arbitrary
@@ -353,6 +412,94 @@ class ScriptedThread(metaclass=ABCMeta):
                   None is the thread as no extended information.
         """
         return self.extended_info
+
+class LiveScriptedProcess(ScriptedProcess, ScriptedDebugAgent):
+    def __init__(self, target, args):
+        parent_process = None
+        parent_target_idx = args.GetValueForKey("parent_target_idx")
+        if parent_target_idx and parent_target_idx.IsValid():
+            idx = None
+            if parent_target_idx.GetType() == lldb.eStructuredDataTypeInteger:
+                idx = parent_target_idx.GetIntegerValue(42)
+            if parent_target_idx.GetType() == lldb.eStructuredDataTypeString:
+                idx = int(parent_target_idx.GetStringValue(100))
+            if not idx:
+                return
+            dbg = target.GetDebugger()
+            if idx > dbg.GetNumTargets():
+                return
+
+            parent_target = dbg.GetTargetAtIndex(idx)
+
+        ScriptedProcess.__init__(self, target, args)
+        ScriptedDebugAgent.__init__(self, parent_target, scripted_process=self)
+
+    def create_breakpoint(self, addr, bp_id, hardware):
+        bp = self.parent_target.BreakpointCreateByAddress(addr, bool(hardware))
+        return bp.IsValid()
+
+    def delete_breakpoint(self, bp_id):
+        return self.parent_target.BreakpointDelete(bp_id)
+
+    def launch(self):
+        # This launches both the parent process and the scripted process to
+        # keep them in sync. Otherwise, if the parent process is already
+        # running, the scripted process can interrupt it to fetch the metadata
+        # necessary to its synthesis.
+        # By default, this will just stop the parent process at entry.
+        return lldb.SBError()
+
+    def resume(self):
+        err = self.parent_process.Continue()
+        #FIXME: Should return `err`
+        return lldb.SBError()
+
+    def step_into(self):
+        thread = self.parent_process.GetSelectedThread()
+        err = lldb.SBError()
+        if not thread.IsValid():
+            err.SetErrorString("Invalid parent thread")
+        else:
+            # pass SBError or compare pc register after call
+            thread.StepInto()
+        return err
+
+    def step_over(self):
+        thread = self.parent_process.GetSelectedThread()
+        err = lldb.SBError()
+        if not thread.IsValid():
+            err.SetErrorString("Invalid parent thread")
+        else:
+            thread.StepOver(lldb.eOnlyDuringStepping, err)
+        return err
+
+    def step_out(self):
+        thread = self.parent_process.GetSelectedThread()
+        err = lldb.SBError()
+        if not thread.IsValid():
+            err.SetErrorString("Invalid parent thread")
+        else:
+            # pass SBError or compare pc register after call
+            thread.StepOut()
+        return err
+
+    def step_instr(self):
+        thread = self.parent_process.GetSelectedThread()
+        err = lldb.SBError()
+        if not thread.IsValid():
+            err.SetErrorString("Invalid parent thread")
+        else:
+            thread.StepInstruction(False, err)
+        return err
+
+    def next_instr(self):
+        thread = self.parent_process.GetSelectedThread()
+        err = lldb.SBError()
+        if not thread.IsValid():
+            err.SetErrorString("Invalid parent thread")
+        else:
+            thread.StepInstruction(True, err)
+        return err
 
 ARM64_GPR = [ {'name': 'x0',   'bitsize': 64, 'offset': 0,   'encoding': 'uint', 'format': 'hex', 'set': 0, 'gcc': 0,  'dwarf': 0,  'generic': 'arg0', 'alt-name': 'arg0'},
               {'name': 'x1',   'bitsize': 64, 'offset': 8,   'encoding': 'uint', 'format': 'hex', 'set': 0, 'gcc': 1,  'dwarf': 1,  'generic': 'arg1', 'alt-name': 'arg1'},

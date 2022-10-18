@@ -648,6 +648,7 @@ public:
                                                   bool catch_bp, bool throw_bp);
 
   lldb::SBBreakpoint BreakpointCreateByAddress(addr_t address);
+  lldb::SBBreakpoint BreakpointCreateByAddress(addr_t address, bool hardware);
 
   lldb::SBBreakpoint BreakpointCreateBySBAddress(SBAddress &address);
 

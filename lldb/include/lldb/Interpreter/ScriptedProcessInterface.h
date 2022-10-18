@@ -31,6 +31,27 @@ public:
 
   virtual Status Resume() { return Status("ScriptedProcess did not resume"); }
 
+  virtual Status StepInto() { return Status("ScriptedProcess cannot step in"); }
+  virtual Status StepOver() {
+    return Status("ScriptedProcess cannot step over");
+  }
+  virtual Status StepOut() { return Status("ScriptedProcess cannot step out"); }
+  virtual Status StepInstruction() {
+    return Status("ScriptedProcess cannot step instruction");
+  }
+  virtual Status StepOverInstruction() {
+    return Status("ScriptedProcess cannot step over instruction");
+  }
+
+  virtual llvm::Optional<bool>
+  CreateBreakpoint(lldb::addr_t addr, lldb::break_id_t bp_id, bool hardware) {
+    return {};
+  }
+
+  virtual llvm::Optional<bool> DeleteBreakpoint(lldb::break_id_t bp_id) {
+    return {};
+  }
+
   virtual bool ShouldStop() { return true; }
 
   virtual Status Stop() { return Status("ScriptedProcess did not stop"); }
@@ -40,6 +61,8 @@ public:
     error.SetErrorString("ScriptedProcess have no memory region.");
     return {};
   }
+
+  virtual lldb::addr_t GetImageInfoAddress() { return LLDB_INVALID_ADDRESS; }
 
   virtual StructuredData::DictionarySP GetThreadsInfo() { return nullptr; }
 

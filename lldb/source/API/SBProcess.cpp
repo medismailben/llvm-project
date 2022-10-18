@@ -1262,3 +1262,16 @@ lldb::SBError SBProcess::DeallocateMemory(lldb::addr_t ptr) {
   }
   return sb_error;
 }
+
+addr_t SBProcess::GetImageInfoAddress() {
+  LLDB_INSTRUMENT_VA(this);
+
+  lldb::addr_t addr = LLDB_INVALID_ADDRESS;
+  ProcessSP process_sp(GetSP());
+  if (process_sp) {
+    std::lock_guard<std::recursive_mutex> guard(
+        process_sp->GetTarget().GetAPIMutex());
+    addr = process_sp->GetImageInfoAddress();
+  }
+  return addr;
+}

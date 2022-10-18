@@ -73,7 +73,7 @@ void DynamicLoaderDarwin::DidAttach() {
   SetNotificationBreakpoint();
 }
 
-/// Called after attaching a process.
+/// Called after launching a process.
 ///
 /// Allow DynamicLoader plug-ins to execute some code after
 /// attaching to a process.

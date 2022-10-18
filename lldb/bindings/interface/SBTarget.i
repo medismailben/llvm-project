@@ -670,6 +670,8 @@ public:
 
     lldb::SBBreakpoint
     BreakpointCreateByAddress (addr_t address);
+    lldb::SBBreakpoint
+    BreakpointCreateByAddress (addr_t address, bool hardware);
 
     lldb::SBEnvironment
     GetEnvironment();

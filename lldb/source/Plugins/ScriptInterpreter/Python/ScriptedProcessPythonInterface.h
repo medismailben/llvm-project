@@ -32,6 +32,18 @@ public:
 
   Status Resume() override;
 
+  Status StepInto() override;
+  Status StepOver() override;
+  Status StepOut() override;
+  Status StepInstruction() override;
+  Status StepOverInstruction() override;
+
+  llvm::Optional<bool> CreateBreakpoint(lldb::addr_t addr,
+                                        lldb::break_id_t bp_id,
+                                        bool hardware) override;
+
+  llvm::Optional<bool> DeleteBreakpoint(lldb::break_id_t bp_id) override;
+
   bool ShouldStop() override;
 
   Status Stop() override;
@@ -39,6 +51,8 @@ public:
   llvm::Optional<MemoryRegionInfo>
   GetMemoryRegionContainingAddress(lldb::addr_t address,
                                    Status &error) override;
+
+  lldb::addr_t GetImageInfoAddress() override;
 
   StructuredData::DictionarySP GetThreadsInfo() override;
 

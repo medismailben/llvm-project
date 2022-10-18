@@ -439,6 +439,9 @@ public:
     lldb::SBError
     DeallocateMemory(lldb::addr_t ptr);
 
+    lldb::addr_t
+    GetImageInfoAddress();
+
     STRING_EXTENSION(SBProcess)
 
 #ifdef SWIGPYTHON

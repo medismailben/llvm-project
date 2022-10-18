@@ -18,8 +18,10 @@
 #include "lldb/Interpreter/OptionArgParser.h"
 #include "lldb/Interpreter/OptionGroupBoolean.h"
 #include "lldb/Interpreter/ScriptInterpreter.h"
+#include "lldb/Target/DynamicLoader.h"
 #include "lldb/Target/MemoryRegionInfo.h"
 #include "lldb/Target/RegisterContext.h"
+#include "lldb/Target/ThreadPlan.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/State.h"
 
@@ -139,6 +141,52 @@ void ScriptedProcess::Terminate() {
   PluginManager::UnregisterPlugin(ScriptedProcess::CreateInstance);
 }
 
+Status ScriptedProcess::EnableBreakpointSite(BreakpointSite *bp_site) {
+  if (bp_site->IsInternal())
+    return {}; // ScriptedProcess shouldn't set internal breakpoints.
+
+  llvm::Optional<bool> implemented = GetInterface().CreateBreakpoint(
+      bp_site->GetLoadAddress(), bp_site->GetID(), bp_site->HardwareRequired());
+  if (!implemented)
+    return Status(
+        "%s", llvm::Twine(m_scripted_process_info.GetClassName() +
+                          llvm::Twine(" doesn't support creating breakpoints."))
+                  .str()
+                  .c_str());
+
+  bool succes = *implemented;
+  if (!succes)
+    return Status("ScriptedProcess couldn't create breakpoint.");
+
+  // TODO: Eventually, we should fallback to this (once we have memory write)
+  // return EnableSoftwareBreakpoint(bp_site);
+
+  return {};
+}
+
+Status ScriptedProcess::DisableBreakpointSite(BreakpointSite *bp_site) {
+  if (bp_site->IsInternal())
+    return {}; // ScriptedProcess shouldn't set internal breakpoints.
+
+  llvm::Optional<bool> implemented =
+      GetInterface().DeleteBreakpoint(bp_site->GetID());
+  if (!implemented)
+    return Status(
+        "%s", llvm::Twine(m_scripted_process_info.GetClassName() +
+                          llvm::Twine(" doesn't support deleting breakpoints."))
+                  .str()
+                  .c_str());
+
+  bool succes = *implemented;
+  if (!succes)
+    return Status("ScriptedProcess couldn't delete breakpoint.");
+
+  // TODO: Eventually, we should fallback to this (once we have memory write)
+  // return DisableSoftwareBreakpoint(bp_site);
+
+  return {};
+}
+
 Status ScriptedProcess::DoLoadCore() {
   ProcessLaunchInfo launch_info = GetTarget().GetProcessLaunchInfo();
 
@@ -176,18 +224,56 @@ void ScriptedProcess::DidLaunch() {
 Status ScriptedProcess::DoResume() {
   CheckInterpreterAndScriptObject();
 
-  Log *log = GetLog(LLDBLog::Process);
-  // FIXME: Fetch data from thread.
-  const StateType thread_resume_state = eStateRunning;
-  LLDB_LOGF(log, "ScriptedProcess::%s thread_resume_state = %s", __FUNCTION__,
-            StateAsCString(thread_resume_state));
-
-  bool resume = (thread_resume_state == eStateRunning);
-  assert(thread_resume_state == eStateRunning && "invalid thread resume state");
-
   Status error;
-  if (resume) {
-    LLDB_LOGF(log, "ScriptedProcess::%s sending resume", __FUNCTION__);
+  Log *log = GetLog(LLDBLog::Process);
+
+  ThreadList &threads = GetThreadList();
+  if (threads.GetSize() == 0) {
+
+    // FIXME: Fetch data from thread.
+    const StateType thread_resume_state = eStateRunning;
+    LLDB_LOGF(log, "ScriptedProcess::%s thread_resume_state = %s", __FUNCTION__,
+              StateAsCString(thread_resume_state));
+
+    bool resume = (thread_resume_state == eStateRunning);
+    assert(thread_resume_state == eStateRunning &&
+           "invalid thread resume state");
+
+    if (resume) {
+      LLDB_LOGF(log, "ScriptedProcess::%s sending resume", __FUNCTION__);
+
+      SetPrivateState(eStateRunning);
+      SetPrivateState(eStateStopped);
+      error = GetInterface().Resume();
+    }
+  } else {
+    ThreadSP selected_thread_sp = threads.GetSelectedThread();
+    assert(selected_thread_sp && "cannot fetch selected thread");
+
+    //    ThreadPlan *thread_plan = selected_thread_sp->GetCurrentPlan();
+    //    assert(thread_plan && "invalid thread plan");
+    //    switch (thread_plan->GetKind()) {
+    //    case ThreadPlan::eKindBase: {
+    //    } break;
+    //    case ThreadPlan::eKindStepInstruction: { // si / step-inst
+    //      error = GetInterface().StepInstruction();
+    //    } break;
+    //      //      case ThreadPlan::eKindStepInstruction: { // si / step-inst
+    //      //        error = GetInterface().StepInstruction();
+    //      //      } break;
+    //    case ThreadPlan::eKindStepInRange: { // step / step-in
+    //      error = GetInterface().StepInto();
+    //    } break;
+    //    case ThreadPlan::eKindStepOverRange: { // next / step-over
+    //      error = GetInterface().StepOver();
+    //    } break;
+    //    case ThreadPlan::eKindStepOut: { // finish / step-out
+    //      error = GetInterface().StepOut();
+    //    } break;
+    //    default: {
+    //      error.SetErrorString("Invalid current thread plan kind");
+    //    }
+    //    }
 
     SetPrivateState(eStateRunning);
     SetPrivateState(eStateStopped);
@@ -218,6 +304,17 @@ bool ScriptedProcess::IsAlive() {
   if (m_interpreter && m_script_object_sp)
     return GetInterface().IsAlive();
   return false;
+}
+
+DynamicLoader *ScriptedProcess::GetDynamicLoader() {
+  if (m_dyld_up.get() == nullptr)
+    m_dyld_up.reset(DynamicLoader::FindPlugin(this, ""));
+  return m_dyld_up.get();
+}
+
+lldb::addr_t ScriptedProcess::GetImageInfoAddress() {
+  CheckInterpreterAndScriptObject();
+  return GetInterface().GetImageInfoAddress();
 }
 
 size_t ScriptedProcess::DoReadMemory(lldb::addr_t addr, void *buf, size_t size,

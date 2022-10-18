@@ -423,6 +423,8 @@ public:
   ///
   lldb::SBError DeallocateMemory(lldb::addr_t ptr);
 
+  addr_t GetImageInfoAddress();
+
 protected:
   friend class SBAddress;
   friend class SBBreakpoint;

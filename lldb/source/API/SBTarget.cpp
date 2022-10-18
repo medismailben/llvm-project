@@ -926,12 +926,17 @@ lldb::SBBreakpoint SBTarget::BreakpointCreateByRegex(
 
 SBBreakpoint SBTarget::BreakpointCreateByAddress(addr_t address) {
   LLDB_INSTRUMENT_VA(this, address);
+  return BreakpointCreateByAddress(address, false);
+}
+
+SBBreakpoint SBTarget::BreakpointCreateByAddress(addr_t address,
+                                                 bool hardware) {
+  LLDB_INSTRUMENT_VA(this, address, hardware);
 
   SBBreakpoint sb_bp;
   TargetSP target_sp(GetSP());
   if (target_sp) {
     std::lock_guard<std::recursive_mutex> guard(target_sp->GetAPIMutex());
-    const bool hardware = false;
     sb_bp = target_sp->CreateBreakpoint(address, false, hardware);
   }
 

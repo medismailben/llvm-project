@@ -55,9 +55,15 @@ public:
   bool CanDebug(lldb::TargetSP target_sp,
                 bool plugin_specified_by_name) override;
 
-  DynamicLoader *GetDynamicLoader() override { return nullptr; }
+  lldb::addr_t GetImageInfoAddress() override;
+
+  DynamicLoader *GetDynamicLoader() override;
 
   llvm::StringRef GetPluginName() override { return GetPluginNameStatic(); }
+
+  Status EnableBreakpointSite(BreakpointSite *bp_site) override;
+
+  Status DisableBreakpointSite(BreakpointSite *bp_site) override;
 
   Status DoLoadCore() override;
 

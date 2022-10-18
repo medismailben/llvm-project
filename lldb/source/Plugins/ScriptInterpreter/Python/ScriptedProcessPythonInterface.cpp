@@ -60,6 +60,60 @@ Status ScriptedProcessPythonInterface::Resume() {
   return GetStatusFromMethod("resume");
 }
 
+Status ScriptedProcessPythonInterface::StepInto() {
+  Status err = GetStatusFromMethod("step_into");
+  return err.Success() ? err : ScriptedProcessInterface::StepInto();
+}
+
+Status ScriptedProcessPythonInterface::StepOver() {
+  Status err = GetStatusFromMethod("step_over");
+  return err.Success() ? err : ScriptedProcessInterface::StepOver();
+}
+
+Status ScriptedProcessPythonInterface::StepOut() {
+  Status err = GetStatusFromMethod("step_out");
+  return err.Success() ? err : ScriptedProcessInterface::StepOut();
+}
+
+Status ScriptedProcessPythonInterface::StepInstruction() {
+  Status err = GetStatusFromMethod("step_instr");
+  return err.Success() ? err : ScriptedProcessInterface::StepInstruction();
+}
+
+Status ScriptedProcessPythonInterface::StepOverInstruction() {
+  Status err = GetStatusFromMethod("next_instr");
+  return err.Success() ? err : ScriptedProcessInterface::StepOverInstruction();
+}
+
+llvm::Optional<bool> ScriptedProcessPythonInterface::CreateBreakpoint(
+    lldb::addr_t addr, lldb::break_id_t bp_id, bool hardware) {
+  Status error;
+  StructuredData::ObjectSP obj = Dispatch(
+      "create_breakpoint", error, addr, bp_id, static_cast<unsigned>(hardware));
+
+  if (error.Fail())
+    return llvm::None;
+
+  if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj, error))
+    return llvm::None;
+
+  return obj->GetBooleanValue();
+}
+
+llvm::Optional<bool>
+ScriptedProcessPythonInterface::DeleteBreakpoint(lldb::break_id_t bp_id) {
+  Status error;
+  StructuredData::ObjectSP obj = Dispatch("delete_breakpoint", error, bp_id);
+
+  if (error.Fail())
+    return llvm::None;
+
+  if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj, error))
+    return llvm::None;
+
+  return obj->GetBooleanValue();
+}
+
 bool ScriptedProcessPythonInterface::ShouldStop() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("is_alive", error);
@@ -86,6 +140,16 @@ ScriptedProcessPythonInterface::GetMemoryRegionContainingAddress(
   }
 
   return mem_region;
+}
+
+lldb::addr_t ScriptedProcessPythonInterface::GetImageInfoAddress() {
+  Status error;
+  StructuredData::ObjectSP obj = Dispatch("get_image_info_address", error);
+
+  if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj, error))
+    return LLDB_INVALID_ADDRESS;
+
+  return obj->GetIntegerValue(LLDB_INVALID_ADDRESS);
 }
 
 StructuredData::DictionarySP ScriptedProcessPythonInterface::GetThreadsInfo() {

@@ -29,9 +29,9 @@ ScriptedPythonInterface::ScriptedPythonInterface(
 Status
 ScriptedPythonInterface::GetStatusFromMethod(llvm::StringRef method_name) {
   Status error;
-  Dispatch<Status>(method_name, error);
+  Status ret = Dispatch<Status>(method_name, error);
 
-  return error;
+  return error.Fail() ? error : ret;
 }
 
 template <>
@@ -53,13 +53,14 @@ ScriptedPythonInterface::ExtractValueFromPythonObject<
 template <>
 Status ScriptedPythonInterface::ExtractValueFromPythonObject<Status>(
     python::PythonObject &p, Status &error) {
+  Status ret;
   if (lldb::SBError *sb_error = reinterpret_cast<lldb::SBError *>(
           LLDBSWIGPython_CastPyObjectToSBError(p.get())))
-    error = m_interpreter.GetStatusFromSBError(*sb_error);
+    ret = m_interpreter.GetStatusFromSBError(*sb_error);
   else
     error.SetErrorString("Couldn't cast lldb::SBError to lldb::Status.");
 
-  return error;
+  return ret;
 }
 
 template <>
