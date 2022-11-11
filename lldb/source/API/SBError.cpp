@@ -25,6 +25,12 @@ SBError::SBError(const SBError &rhs) {
   m_opaque_up = clone(rhs.m_opaque_up);
 }
 
+SBError::SBError(const lldb_private::Status &status)
+    : m_opaque_up(new Status(status.ToError())) {
+  LLDB_INSTRUMENT_VA(this, status);
+  m_opaque_up->SetErrorString("I was created by the SWIG");
+}
+
 SBError::~SBError() = default;
 
 const SBError &SBError::operator=(const SBError &rhs) {

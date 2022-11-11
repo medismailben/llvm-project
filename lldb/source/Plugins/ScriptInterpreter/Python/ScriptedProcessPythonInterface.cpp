@@ -120,8 +120,9 @@ ScriptedProcessPythonInterface::GetRegistersForThread(lldb::tid_t tid) {
 
 lldb::DataExtractorSP ScriptedProcessPythonInterface::ReadMemoryAtAddress(
     lldb::addr_t address, size_t size, Status &error) {
-  return Dispatch<lldb::DataExtractorSP>("read_memory_at_address", error,
-                                         address, size);
+  Status py_error;
+  return Dispatch<lldb::DataExtractorSP>("read_memory_at_address", py_error,
+                                         address, size, error);
 }
 
 StructuredData::ArraySP ScriptedProcessPythonInterface::GetLoadedImages() {

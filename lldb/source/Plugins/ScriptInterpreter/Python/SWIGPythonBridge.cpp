@@ -16,11 +16,14 @@
 
 #include "SWIGPythonBridge.h"
 
+// DOC: https://docs.python.org/3/c-api/arg.html#building-values
+
 using namespace lldb;
 
 namespace lldb_private {
 
 template <typename T> const char *GetPythonValueFormatString(T t);
+template <> const char *GetPythonValueFormatString(PyObject *) { return "O"; }
 template <> const char *GetPythonValueFormatString(char *) { return "s"; }
 template <> const char *GetPythonValueFormatString(char) { return "b"; }
 template <> const char *GetPythonValueFormatString(unsigned char) {

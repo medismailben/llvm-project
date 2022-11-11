@@ -9,12 +9,14 @@
 #ifndef LLDB_PLUGINS_SCRIPTINTERPRETER_PYTHON_SCRIPTEDPYTHONINTERFACE_H
 #define LLDB_PLUGINS_SCRIPTINTERPRETER_PYTHON_SCRIPTEDPYTHONINTERFACE_H
 
+#include <tuple>
+#include <utility>
+
 #include "lldb/Host/Config.h"
-
-#if LLDB_ENABLE_PYTHON
-
 #include "lldb/Interpreter/ScriptedInterface.h"
 #include "lldb/Utility/DataBufferHeap.h"
+
+#if LLDB_ENABLE_PYTHON
 
 #include "PythonDataObjects.h"
 #include "SWIGPythonBridge.h"
@@ -81,18 +83,30 @@ protected:
     char *format = nullptr;
     std::string format_buffer;
 
+    auto transformed_args = TransformArgs(args...);
+
     if (sizeof...(Args) > 0) {
-      FormatArgs(format_buffer, args...);
+      std::apply(
+          [&format_buffer, this](auto... args) {
+            this->FormatArgs(format_buffer, args...);
+          },
+          transformed_args);
       // TODO: make `const char *` when removing support for Python 2.
       format = const_cast<char *>(format_buffer.c_str());
     }
 
-    // TODO: make `const char *` when removing support for Python 2.
-    PythonObject py_return(
-        PyRefType::Owned,
-        PyObject_CallMethod(implementor.get(),
-                            const_cast<char *>(method_name.data()), format,
-                            args...));
+    PyObject *py_obj_ptr = nullptr;
+
+    std::apply(
+        [&py_obj_ptr, &implementor, &method_name, &format](auto... args) {
+          // TODO: make `const char *` when removing support for Python 2.
+          py_obj_ptr = PyObject_CallMethod(
+              implementor.get(), const_cast<char *>(method_name.data()), format,
+              args...);
+        },
+        transformed_args);
+
+    PythonObject py_return = PythonObject(PyRefType::Owned, py_obj_ptr);
 
     if (PyErr_Occurred()) {
       PyErr_Print();
@@ -109,6 +123,39 @@ protected:
   }
 
   Status GetStatusFromMethod(llvm::StringRef method_name);
+
+  template <typename T> struct transformation { using type = T; };
+  template <> struct transformation<Status> { using type = PyObject *; };
+
+  template <typename T> typename transformation<T>::type Transform(T object) {
+    // No Transformation for generic usage
+    return {object};
+  }
+
+  template <> typename transformation<Status>::type Transform(Status arg) {
+    // Call SWIG Wrapper function
+    python::PythonObject py_obj = python::ToSWIGWrapper(arg);
+    return py_obj.release();
+  }
+
+  template <std::size_t... I, typename... Args>
+  auto TransformTuple(const std::tuple<Args...> &args,
+                      std::index_sequence<I...>) {
+    return std::make_tuple(Transform(std::get<I>(args))...);
+  }
+
+  template <typename... Args>
+  auto TransformTuple(const std::tuple<Args...> &args) {
+    return TransformTuple(args, std::make_index_sequence<sizeof...(Args)>());
+  }
+
+  // This will iterate over the Dispatch parameter pack and replace in-place
+  // every `lldb_private` argument that has a SB counterpart.
+  template <typename... Args> auto TransformArgs(Args... args) {
+    std::tuple<Args...> input = std::make_tuple(args...);
+    auto output = TransformTuple(input);
+    return output;
+  }
 
   template <typename T, typename... Args>
   void FormatArgs(std::string &fmt, T arg, Args... args) const {
