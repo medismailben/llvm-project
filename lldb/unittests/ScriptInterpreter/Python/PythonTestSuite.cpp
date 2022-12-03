@@ -213,6 +213,12 @@ python::PythonObject lldb_private::LLDBSwigPythonCreateScriptedThread(
   return python::PythonObject();
 }
 
+python::PythonObject lldb_private::LLDBSwigPythonCreateScriptedPlatform(
+    const char *python_class_name, const char *session_dictionary_name,
+    const StructuredDataImpl &args_impl, std::string &error_string) {
+  return python::PythonObject();
+}
+
 python::PythonObject lldb_private::LLDBSWIGPython_CreateFrameRecognizer(
     const char *python_class_name, const char *session_dictionary_name) {
   return python::PythonObject();

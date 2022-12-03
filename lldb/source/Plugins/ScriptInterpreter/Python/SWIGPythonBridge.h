@@ -105,6 +105,10 @@ python::PythonObject LLDBSwigPythonCreateScriptedThread(
     const lldb::ProcessSP &process_sp, const StructuredDataImpl &args_impl,
     std::string &error_string);
 
+python::PythonObject LLDBSwigPythonCreateScriptedPlatform(
+    const char *python_class_name, const char *session_dictionary_name,
+    const StructuredDataImpl &args_impl, std::string &error_string);
+
 llvm::Expected<bool> LLDBSwigPythonBreakpointCallbackFunction(
     const char *python_function_name, const char *session_dictionary_name,
     const lldb::StackFrameSP &sb_frame,
