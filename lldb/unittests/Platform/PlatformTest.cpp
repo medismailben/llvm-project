@@ -59,7 +59,9 @@ public:
     PluginManager::UnregisterPlugin(PlatformThumb::CreateInstance);
   }
 
-  static PlatformSP CreateInstance(bool force, const ArchSpec *arch) {
+  static PlatformSP CreateInstance(bool force, const ArchSpec *arch,
+                                   const Debugger *debugger,
+                                   const ScriptedMetadata *metadata) {
     return std::make_shared<PlatformThumb>();
   }
 

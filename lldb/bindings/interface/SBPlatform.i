@@ -126,6 +126,9 @@ public:
 
     SBPlatform (const char *);
 
+    SBPlatform (const char *, const SBDebugger&,
+                const char *, const SBStructuredData&);
+
     ~SBPlatform();
 
     static SBPlatform GetHostPlatform();

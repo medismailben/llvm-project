@@ -163,40 +163,6 @@ Platform::LocateExecutableScriptingResources(Target *target, Module &module,
   return FileSpecList();
 }
 
-// PlatformSP
-// Platform::FindPlugin (Process *process, ConstString plugin_name)
-//{
-//    PlatformCreateInstance create_callback = nullptr;
-//    if (plugin_name)
-//    {
-//        create_callback  =
-//        PluginManager::GetPlatformCreateCallbackForPluginName (plugin_name);
-//        if (create_callback)
-//        {
-//            ArchSpec arch;
-//            if (process)
-//            {
-//                arch = process->GetTarget().GetArchitecture();
-//            }
-//            PlatformSP platform_sp(create_callback(process, &arch));
-//            if (platform_sp)
-//                return platform_sp;
-//        }
-//    }
-//    else
-//    {
-//        for (uint32_t idx = 0; (create_callback =
-//        PluginManager::GetPlatformCreateCallbackAtIndex(idx)) != nullptr;
-//        ++idx)
-//        {
-//            PlatformSP platform_sp(create_callback(process, nullptr));
-//            if (platform_sp)
-//                return platform_sp;
-//        }
-//    }
-//    return PlatformSP();
-//}
-
 Status Platform::GetSharedModule(
     const ModuleSpec &module_spec, Process *process, ModuleSP &module_sp,
     const FileSpecList *module_search_paths_ptr,
@@ -250,14 +216,15 @@ bool Platform::GetModuleSpec(const FileSpec &module_file_spec,
                                              module_spec);
 }
 
-PlatformSP Platform::Create(llvm::StringRef name) {
+PlatformSP Platform::Create(llvm::StringRef name, const Debugger *debugger,
+                            const ScriptedMetadata *metadata) {
   lldb::PlatformSP platform_sp;
   if (name == GetHostPlatformName())
     return GetHostPlatform();
 
   if (PlatformCreateInstance create_callback =
           PluginManager::GetPlatformCreateCallbackForPluginName(name))
-    return create_callback(true, nullptr);
+    return create_callback(true, nullptr, debugger, metadata);
   return nullptr;
 }
 
@@ -1966,19 +1933,20 @@ Args Platform::GetExtraStartupCommands() {
   return {};
 }
 
-PlatformSP PlatformList::GetOrCreate(llvm::StringRef name) {
+PlatformSP PlatformList::GetOrCreate(llvm::StringRef name,
+                                     const ScriptedMetadata *metadata) {
   std::lock_guard<std::recursive_mutex> guard(m_mutex);
   for (const PlatformSP &platform_sp : m_platforms) {
     if (platform_sp->GetName() == name)
       return platform_sp;
   }
-  return Create(name);
+  return Create(name, metadata);
 }
 
 PlatformSP PlatformList::GetOrCreate(const ArchSpec &arch,
                                      const ArchSpec &process_host_arch,
-                                     ArchSpec *platform_arch_ptr,
-                                     Status &error) {
+                                     ArchSpec *platform_arch_ptr, Status &error,
+                                     const ScriptedMetadata *metadata) {
   std::lock_guard<std::recursive_mutex> guard(m_mutex);
   // First try exact arch matches across all platforms already created
   for (const auto &platform_sp : m_platforms) {
@@ -2001,7 +1969,8 @@ PlatformSP PlatformList::GetOrCreate(const ArchSpec &arch,
   for (idx = 0;
        (create_callback = PluginManager::GetPlatformCreateCallbackAtIndex(idx));
        ++idx) {
-    PlatformSP platform_sp = create_callback(false, &arch);
+    PlatformSP platform_sp =
+        create_callback(false, &arch, &m_debugger, metadata);
     if (platform_sp &&
         platform_sp->IsCompatibleArchitecture(
             arch, process_host_arch, ArchSpec::ExactMatch, platform_arch_ptr)) {
@@ -2013,7 +1982,8 @@ PlatformSP PlatformList::GetOrCreate(const ArchSpec &arch,
   for (idx = 0;
        (create_callback = PluginManager::GetPlatformCreateCallbackAtIndex(idx));
        ++idx) {
-    PlatformSP platform_sp = create_callback(false, &arch);
+    PlatformSP platform_sp =
+        create_callback(false, &arch, &m_debugger, metadata);
     if (platform_sp && platform_sp->IsCompatibleArchitecture(
                            arch, process_host_arch, ArchSpec::CompatibleMatch,
                            platform_arch_ptr)) {
@@ -2028,16 +1998,19 @@ PlatformSP PlatformList::GetOrCreate(const ArchSpec &arch,
 
 PlatformSP PlatformList::GetOrCreate(const ArchSpec &arch,
                                      const ArchSpec &process_host_arch,
-                                     ArchSpec *platform_arch_ptr) {
+                                     ArchSpec *platform_arch_ptr,
+                                     const ScriptedMetadata *metadata) {
   Status error;
   if (arch.IsValid())
-    return GetOrCreate(arch, process_host_arch, platform_arch_ptr, error);
+    return GetOrCreate(arch, process_host_arch, platform_arch_ptr, error,
+                       metadata);
   return nullptr;
 }
 
 PlatformSP PlatformList::GetOrCreate(llvm::ArrayRef<ArchSpec> archs,
                                      const ArchSpec &process_host_arch,
-                                     std::vector<PlatformSP> &candidates) {
+                                     std::vector<PlatformSP> &candidates,
+                                     const ScriptedMetadata *metadata) {
   candidates.clear();
   candidates.reserve(archs.size());
 
@@ -2066,7 +2039,8 @@ PlatformSP PlatformList::GetOrCreate(llvm::ArrayRef<ArchSpec> archs,
 
   // Collect a list of candidate platforms for the architectures.
   for (const ArchSpec &arch : archs) {
-    if (PlatformSP platform = GetOrCreate(arch, process_host_arch, nullptr))
+    if (PlatformSP platform =
+            GetOrCreate(arch, process_host_arch, nullptr, nullptr))
       candidates.push_back(platform);
   }
 
@@ -2087,9 +2061,10 @@ PlatformSP PlatformList::GetOrCreate(llvm::ArrayRef<ArchSpec> archs,
   return nullptr;
 }
 
-PlatformSP PlatformList::Create(llvm::StringRef name) {
+PlatformSP PlatformList::Create(llvm::StringRef name,
+                                const ScriptedMetadata *metadata) {
   std::lock_guard<std::recursive_mutex> guard(m_mutex);
-  PlatformSP platform_sp = Platform::Create(name);
+  PlatformSP platform_sp = Platform::Create(name, &m_debugger, metadata);
   m_platforms.push_back(platform_sp);
   return platform_sp;
 }
@@ -2103,7 +2078,7 @@ bool PlatformList::LoadPlatformBinaryAndSetup(Process *process,
        (create_callback = PluginManager::GetPlatformCreateCallbackAtIndex(idx));
        ++idx) {
     ArchSpec arch;
-    PlatformSP platform_sp = create_callback(true, &arch);
+    PlatformSP platform_sp = create_callback(true, &arch, &m_debugger, nullptr);
     if (platform_sp) {
       if (platform_sp->LoadPlatformBinaryAndSetup(process, addr, notify))
         return true;
