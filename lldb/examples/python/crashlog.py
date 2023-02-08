@@ -30,6 +30,7 @@ import abc
 import concurrent.futures
 import contextlib
 import datetime
+import enum
 import json
 import optparse
 import os
@@ -43,7 +44,6 @@ import sys
 import threading
 import time
 import uuid
-
 
 print_lock = threading.RLock()
 
@@ -449,7 +449,12 @@ class JSONCrashLogParser(CrashLogParser):
                 head, _, tail = buffer.partition('\n')
                 return json.loads(tail)
 
-        with open(path, 'r', encoding='utf-8') as f:
+        # Python's `open` function doesn't recognize user paths ('~/'), and
+        # expects either an absolute path or a relative path to the current
+        # working directory, so we need to expand the file path  ourself.
+        # The reasoning behind this is that on non-Unix systems, `~foo` is a
+        # valid filename, that wouldn't require file expansion.
+        with open(os.path.normpath(os.path.expanduser(path)), 'r', encoding='utf-8') as f:
             buffer = f.read()
         try:
             return parse_json(buffer)
@@ -1139,6 +1144,10 @@ def load_crashlog_in_scripted_process(debugger, crash_log_file, options, result)
             if error.Success():
                 debugger.RunCommandInterpreter(True, False, run_options, 0, False, True)
 
+class CrashLogLoadingMode(str, enum.Enum):
+    batch = 'batch'
+    interactive = 'interactive'
+
 def CreateSymbolicateCrashLogOptions(
         command_name,
         description,
@@ -1245,19 +1254,13 @@ def CreateSymbolicateCrashLogOptions(
         dest='source_all',
         help='show source for all threads, not just the crashed thread',
         default=False)
+    option_parser.add_option(
+        '-m',
+        '--mode',
+        type="choice",
+        choices=[mode.value for mode in CrashLogLoadingMode],
+        help="change how the symbolicated process and threads are displayed to the user (default = 'interactive')")
     if add_interactive_options:
-        option_parser.add_option(
-            '-i',
-            '--interactive',
-            action='store_true',
-            help='parse a crash log and load it in a ScriptedProcess',
-            default=False)
-        option_parser.add_option(
-            '-b',
-            '--batch',
-            action='store_true',
-            help='dump symbolicated stackframes without creating a debug session',
-            default=True)
         option_parser.add_option(
             '--target',
             '-t',
@@ -1297,6 +1300,12 @@ def SymbolicateCrashLogs(debugger, command_args, result):
     except:
         return
 
+    if options.mode and options.mode != CrashLogLoadingMode.interactive and (options.target_path or options.skip_status):
+        print("Target path (-t) and skipping process status (-s) options can only used in intercative mode (-m=interactive).")
+        print("Aborting symbolication.")
+        option_parser.print_help()
+        return
+
     if options.version:
         print(debugger.GetVersionString())
         return
@@ -1312,14 +1321,12 @@ def SymbolicateCrashLogs(debugger, command_args, result):
     error = lldb.SBError()
 
     def should_run_in_interactive_mode(options, ci):
-        if options.interactive:
+        if options.mode:
+            return options.mode == CrashLogLoadingMode.interactive
+        elif ci and ci.IsInteractive():
             return True
-        elif options.batch:
-            return False
-        # elif ci and ci.IsInteractive():
-        #     return True
         else:
-            return False
+            return sys.stdout.isatty()
 
     ci = debugger.GetCommandInterpreter()
 
