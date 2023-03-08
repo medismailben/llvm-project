@@ -25,18 +25,16 @@ class CrashLogScriptedProcess(ScriptedProcess):
             self.extended_thread_info = crash_log.asb
 
         def load_images(self, images):
-            #TODO: Add to self.loaded_images and load images in lldb
+            self.loaded_images.clear()
             if images:
                 for image in images:
                     if image not in self.loaded_images:
                         if image.uuid == uuid.UUID(int=0):
                             continue
-                        err = image.add_module(self.target)
-                        if err:
-                            # Append to SBCommandReturnObject
-                            print(err)
-                        else:
-                            self.loaded_images.append(image)
+                        for section in image.section_infos:
+                            if section.start_addr and section.name == "__TEXT":
+                                self.loaded_images.append({"uuid": str(image.uuid),
+                                                           "load_addr": section.start_addr})
 
         for thread in crash_log.threads:
             if self.load_all_images:
@@ -93,6 +91,7 @@ class CrashLogScriptedProcess(ScriptedProcess):
         self.exception = None
         self.extended_thread_info = None
         self.parse_crashlog()
+        self.capabilities['force_symbol_lookup'] = True
 
     def read_memory_at_address(self, addr: int, size: int, error: lldb.SBError) -> lldb.SBData:
         # NOTE: CrashLogs don't contain any memory.

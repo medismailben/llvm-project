@@ -11,19 +11,22 @@
 #include "lldb/Core/Debugger.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/PluginManager.h"
-
+#include "lldb/Core/Progress.h"
 #include "lldb/Host/OptionParser.h"
 #include "lldb/Host/ThreadLauncher.h"
 #include "lldb/Interpreter/CommandInterpreter.h"
 #include "lldb/Interpreter/OptionArgParser.h"
 #include "lldb/Interpreter/OptionGroupBoolean.h"
 #include "lldb/Interpreter/ScriptInterpreter.h"
+#include "lldb/Symbol/LocateSymbolFile.h"
 #include "lldb/Target/MemoryRegionInfo.h"
 #include "lldb/Target/Queue.h"
 #include "lldb/Target/RegisterContext.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/ScriptedMetadata.h"
 #include "lldb/Utility/State.h"
+
+#include "llvm/Support/ThreadPool.h"
 
 #include <mutex>
 
@@ -435,18 +438,30 @@ ScriptedProcess::GetLoadedDynamicLibrariesInfos() {
     return ScriptedInterface::ErrorWithMessage<StructuredData::ObjectSP>(
         LLVM_PRETTY_FUNCTION, "No loaded images.", error);
 
+  size_t num_images_to_load = loaded_images_sp->GetSize();
   ModuleList module_list;
   Target &target = GetTarget();
 
-  auto reload_image = [&target, &module_list, &error_with_message](
-                          StructuredData::Object *obj) -> bool {
-    StructuredData::Dictionary *dict = obj->GetAsDictionary();
+  StructuredData::DictionarySP capabilities_sp =
+      GetInterface().GetCapabilities();
+  if (!capabilities_sp)
+    ScriptedInterface::ErrorWithMessage<StructuredData::ObjectSP>(
+        LLVM_PRETTY_FUNCTION,
+        "Couldn't fetch scripted process capabilities.\nContinuing loading "
+        "dynamic libraries.",
+        error);
 
+  bool force_lookup = false;
+  capabilities_sp->GetValueForKeyAsBoolean("force_symbol_lookup", force_lookup);
+
+  std::mutex m;
+  std::vector<ModuleSpec> module_specs(num_images_to_load);
+  Progress progress("Fetching external dependencies", num_images_to_load);
+
+  auto fetch_symbols = [&](StructuredData::Dictionary *dict,
+                           size_t index) -> bool {
     if (!dict)
       return error_with_message("Couldn't cast image object into dictionary.");
-
-    ModuleSpec module_spec;
-    llvm::StringRef value;
 
     bool has_path = dict->HasKey("path");
     bool has_uuid = dict->HasKey("uuid");
@@ -455,6 +470,8 @@ ScriptedProcess::GetLoadedDynamicLibrariesInfos() {
     if (!dict->HasKey("load_addr"))
       return error_with_message("Dictionary is missing key 'load_addr'");
 
+    ModuleSpec module_spec;
+    llvm::StringRef value;
     if (has_path) {
       dict->GetValueForKeyAsString("path", value);
       module_spec.GetFileSpec().SetPath(value);
@@ -466,12 +483,42 @@ ScriptedProcess::GetLoadedDynamicLibrariesInfos() {
     }
     module_spec.GetArchitecture() = target.GetArchitecture();
 
+    Status error;
+    bool try_download_object_and_symbols =
+        Symbols::DownloadObjectAndSymbolFile(module_spec, error, force_lookup);
+    bool has_download_succeeded =
+        FileSystem::Instance().Exists(module_spec.GetFileSpec());
+    bool try_fetching_symbols = (try_download_object_and_symbols ||
+                                 error.Success() || has_download_succeeded);
+
+    {
+      std::lock_guard<std::mutex> lock(m);
+      // We need to increment progress and append the module spec to the vector
+      // even if symbol fetching failed.
+      progress.Increment();
+      module_specs[index] = module_spec;
+    }
+
+    if (!try_fetching_symbols)
+      return error_with_message(error.AsCString());
+
+    return true;
+  };
+
+  auto load_modules = [&](StructuredData::Dictionary *dict,
+                          ModuleSpec &module_spec) -> bool {
+    if (!dict)
+      return error_with_message("Structured data object is not a dictionary.");
+
     ModuleSP module_sp =
-        target.GetOrCreateModule(module_spec, true /* notify */);
+        target.GetOrCreateModule(module_spec, true /*=notify*/);
 
     if (!module_sp)
       return error_with_message("Couldn't create or get module.");
 
+    Debugger::ReportSymbolChange(module_spec);
+
+    llvm::StringRef value;
     lldb::addr_t load_addr = LLDB_INVALID_ADDRESS;
     lldb::addr_t slide = LLDB_INVALID_OFFSET;
     dict->GetValueForKeyAsInteger("load_addr", load_addr);
@@ -490,16 +537,30 @@ ScriptedProcess::GetLoadedDynamicLibrariesInfos() {
     if (!changed && !module_sp->GetObjectFile())
       return error_with_message("Couldn't set the load address for module.");
 
-    dict->GetValueForKeyAsString("path", value);
-    FileSpec objfile(value);
-    module_sp->SetFileSpecAndObjectName(objfile, objfile.GetFilename());
+    if (dict->HasKey("path")) {
+      dict->GetValueForKeyAsString("path", value);
+      FileSpec objfile(value);
+      module_sp->SetFileSpecAndObjectName(objfile, objfile.GetFilename());
+    }
 
     return module_list.AppendIfNeeded(module_sp);
   };
 
-  if (!loaded_images_sp->ForEach(reload_image))
-    return ScriptedInterface::ErrorWithMessage<StructuredData::ObjectSP>(
-        LLVM_PRETTY_FUNCTION, "Couldn't reload all images.", error);
+  // Share one thread pool across operations to avoid the overhead of
+  // recreating the threads.
+  llvm::ThreadPoolTaskGroup task_group(Debugger::GetThreadPool());
+
+  // Create a task runner that fetches symbols and imports dynamic libraries in
+  // separate threads.
+  StructuredData::Dictionary *item = nullptr;
+  for (size_t i = 0; i < num_images_to_load; i++)
+    if (loaded_images_sp->GetItemAtIndexAsDictionary(i, item))
+      task_group.async(fetch_symbols, item, i);
+  task_group.wait();
+
+  for (size_t i = 0; i < num_images_to_load; i++)
+    if (loaded_images_sp->GetItemAtIndexAsDictionary(i, item))
+      load_modules(item, module_specs[i]);
 
   target.ModulesDidLoad(module_list);
 
