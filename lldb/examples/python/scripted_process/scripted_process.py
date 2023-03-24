@@ -140,12 +140,25 @@ class ScriptedProcess(metaclass=ABCMeta):
         """
         return 0
 
-    def launch(self):
+    def launch(self, should_stop=True):
         """ Simulate the scripted process launch.
+
+        Args:
+            should_stop (bool): If True, launch will also force the process
+            state to stopped after launching it.
 
         Returns:
             lldb.SBError: An `lldb.SBError` with error code 0.
         """
+        process = self.target.GetProcess()
+        if not process:
+            error = lldb.SBError()
+            error.SetErrorString("Invalid process.")
+            return error
+
+        process.ForceScriptedState(lldb.eStateRunning);
+        if (should_stop):
+            process.ForceScriptedState(lldb.eStateStopped);
         return lldb.SBError()
 
     def attach(self, attach_info):

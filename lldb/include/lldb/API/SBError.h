@@ -22,6 +22,8 @@ public:
   SBError();
 
   SBError(const lldb::SBError &rhs);
+  
+  SBError(const char* message);
 
 #ifndef SWIG
   SBError(const lldb_private::Status &error);

@@ -77,7 +77,8 @@ ScriptedProcessPythonInterface::Attach(const ProcessAttachInfo &attach_info) {
 }
 
 Status ScriptedProcessPythonInterface::Launch() {
-  return GetStatusFromMethod("launch");
+  // When calling ScriptedProcess.Launch from lldb we should always stop.
+  return GetStatusFromMethod("launch", /*should_stop=*/true);
 }
 
 Status ScriptedProcessPythonInterface::Resume() {
