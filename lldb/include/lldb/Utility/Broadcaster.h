@@ -405,6 +405,10 @@ public:
   virtual ConstString &GetBroadcasterClass() const;
 
   lldb::BroadcasterManagerSP GetManager();
+  
+  virtual void SetPassthroughListener(lldb::ListenerSP listener_sp) {
+    m_broadcaster_sp->m_passthrough_listener = listener_sp;
+  }
 
 protected:
   /// BroadcasterImpl contains the actual Broadcaster implementation.  The
@@ -512,6 +516,10 @@ protected:
     /// At some point we may want to have a stack or Listener collections, but
     /// for now this is just for private hijacking.
     std::vector<uint32_t> m_hijacking_masks;
+    
+    /// A optional listener that all private events get also broadcasted to,
+    /// on top the hijacked / default listeners.
+    lldb::ListenerSP m_passthrough_listener = nullptr;
 
   private:
     BroadcasterImpl(const BroadcasterImpl &) = delete;

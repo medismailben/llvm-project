@@ -210,7 +210,7 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
     listener = None
     multiplexed_processes = None
 
-    def wait_for_driving_process_to_stop(self, is_launching=False,
+    def wait_for_driving_process_to_stop(self,
                                          originator_pid=None,
                                          update_all_processes=False):
 
@@ -227,26 +227,18 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
                 child_process.ForceScriptedState(state);
 
         event = lldb.SBEvent()
-        event_received = 0
-        expected_events = 1 if is_launching else 2
-        while event_received < expected_events:
-            if self.listener.WaitForEvent(1, event):
-                event_mask = event.GetType()
-                if event.BroadcasterMatchesRef(self.driving_process.GetBroadcaster()):
-                    if event_mask & lldb.SBProcess.eBroadcastBitStateChanged:
-                        state = lldb.SBProcess.GetStateFromEvent(event)
-                        if state in [lldb.eStateRunning, lldb.eStateStopped]:
-                            print("Received expected process state event: %s" % state)
-                            handle_process_state_event(state)
-                            event_received += 1;
-
-                            if is_launching:
-                                # After launching, we'll be stopped at entry, however we should
-                                # continue the driving process and wait for other running and
-                                # stopped events.
-                                self.resume()
-                        else:
-                            print("Received unexpected process state event: %s" % state)
+        while self.listener.WaitForEvent(2, event):
+            event_mask = event.GetType()
+            if event_mask & lldb.SBProcess.eBroadcastBitStateChanged:
+                state = lldb.SBProcess.GetStateFromEvent(event)
+                if state in [lldb.eStateRunning, lldb.eStateStopped]:
+                    # If it's a stop event, iterate over the driving process
+                    # thread, looking for a breakpoint stop reason, if internal
+                    # continue.
+                    print("Received expected process state event: %s" % state)
+                    handle_process_state_event(state)
+                else:
+                    print("Received unexpected process state event: %s" % state)
             continue
 
     def __init__(self, exe_ctx: lldb.SBExecutionContext, args : lldb.SBStructuredData):
@@ -266,14 +258,9 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
                                 self.__class__.__name)
 
         listener_thread = Thread(target=self.wait_for_driving_process_to_stop,
-                                 args=[True,  # is_launching
-                                       None,  # originator_pid
+                                 args=[None,  # originator_pid
                                        True]) # update_all_processes
         listener_thread.start()
-
-        # Change multiplexer scripted process state to running before getting
-        # the driving state launch stop event.
-        self.target.GetProcess().ForceScriptedState(lldb.eStateRunning);
 
         error = lldb.SBError()
         launch_info = lldb.SBLaunchInfo(None)
@@ -287,6 +274,10 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
             return error
 
         self.driving_process = driving_process
+
+        # Change multiplexer scripted process state to running before getting
+        # the driving state launch stop event.
+        # self.target.GetProcess().ForceScriptedState(lldb.eStateRunning);
 
         dbg = self.driving_target.GetDebugger()
         for driving_thread in self.driving_process:
@@ -312,12 +303,6 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
         if not self.driving_process:
             return lldb.SBError("%s.resume: Invalid driving process." %
                                 self.__class__.__name)
-
-        listener_thread = Thread(target=self.wait_for_driving_process_to_stop,
-                                 args=[False, # is_launching
-                                       pid,   # originator_pid
-                                       True]) # update_all_processes
-        listener_thread.start()
 
         # Resume the driving process
         self.driving_process.Continue()

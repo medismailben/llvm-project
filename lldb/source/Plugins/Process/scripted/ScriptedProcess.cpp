@@ -154,7 +154,9 @@ Status ScriptedProcess::DoLaunch(Module *exe_module,
   
   /* MARK: This doesn't reflect how lldb actually launches a process.
            In reality, it attaches to debugserver, then resume the process. */
-  return GetInterface().Launch();
+  Status error = GetInterface().Launch();
+  SetPrivateState(eStateStopped);
+  return error;
 }
 
 void ScriptedProcess::DidLaunch() {
