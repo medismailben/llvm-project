@@ -214,32 +214,55 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
                                          originator_pid=None,
                                          update_all_processes=False):
 
-        def handle_process_state_event(state):
+        def handle_process_state_event():
             # Update multiplexer process
+            print("Updating interactive scripted process threads")
+            dbg = self.driving_target.GetDebugger()
+            print("Clearing interactive scripted process threads")
+            self.threads.clear()
+            for driving_thread in self.driving_process:
+                print("New thread %s" % hex(driving_thread.id))
+                structured_data = lldb.SBStructuredData()
+                structured_data.SetFromJSON(json.dumps({
+                    "driving_target_idx" : dbg.GetIndexOfTarget(self.driving_target),
+                    "thread_idx" : driving_thread.GetIndexID()
+                }))
+
+                self.threads[driving_thread.GetThreadID()] = PassthruScriptedThread(self, structured_data)
+
             mux_process = self.target.GetProcess()
-            mux_process.ForceScriptedState(state);
+            mux_process.ForceScriptedState(lldb.eStateRunning);
+            mux_process.ForceScriptedState(lldb.eStateStopped);
 
             if update_all_processes:
                 for child_process in self.multiplexed_processes:
-                    child_process.ForceScriptedState(state);
+                    child_process.ForceScriptedState(lldb.eStateRunning);
+                    child_process.ForceScriptedState(lldb.eStateStopped);
             else:
                 child_process = self.multiplexed_processes[originator_pid]
-                child_process.ForceScriptedState(state);
+                child_process.ForceScriptedState(lldb.eStateRunning);
+                child_process.ForceScriptedState(lldb.eStateStopped);
 
         event = lldb.SBEvent()
+        handled_first_stop = False
         while self.listener.WaitForEvent(2, event):
             event_mask = event.GetType()
             if event_mask & lldb.SBProcess.eBroadcastBitStateChanged:
                 state = lldb.SBProcess.GetStateFromEvent(event)
-                if state in [lldb.eStateRunning, lldb.eStateStopped]:
+                if state == lldb.eStateStopped:
+                    print("Received public process state event: %s (first_stop = %r)"
+                          % (state, not handled_first_stop))
+                    if not handled_first_stop:
+                        # Skip first stop event for launch.
+                        handled_first_stop = True
+                        continue
+
                     # If it's a stop event, iterate over the driving process
                     # thread, looking for a breakpoint stop reason, if internal
                     # continue.
-                    print("Received expected process state event: %s" % state)
-                    handle_process_state_event(state)
+                    handle_process_state_event()
                 else:
-                    print("Received unexpected process state event: %s" % state)
-            continue
+                    print("Received public process state event: %s" % state)
 
     def __init__(self, exe_ctx: lldb.SBExecutionContext, args : lldb.SBStructuredData):
         super().__init__(exe_ctx, args, launched_driving_process=False)
@@ -267,27 +290,13 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
         launch_info.SetListener(self.listener)
         # We need to stop the real process at entry so the stop even from the
         # launch gets broadcasted to us.
-        launch_info.SetLaunchFlags(lldb.eLaunchFlagStopAtEntry)
+        # launch_info.SetLaunchFlags(lldb.eLaunchFlagStopAtEntry)
         driving_process = self.driving_target.Launch(launch_info, error)
 
         if not driving_process or error.Fail():
             return error
 
         self.driving_process = driving_process
-
-        # Change multiplexer scripted process state to running before getting
-        # the driving state launch stop event.
-        # self.target.GetProcess().ForceScriptedState(lldb.eStateRunning);
-
-        dbg = self.driving_target.GetDebugger()
-        for driving_thread in self.driving_process:
-            structured_data = lldb.SBStructuredData()
-            structured_data.SetFromJSON(json.dumps({
-                "driving_target_idx" : dbg.GetIndexOfTarget(self.driving_target),
-                "thread_idx" : driving_thread.GetIndexID()
-            }))
-
-            self.threads[driving_thread.GetThreadID()] = PassthruScriptedThread(self, structured_data)
 
         for module in self.driving_target.modules:
             path = module.file.fullpath
@@ -302,13 +311,9 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
         #     return super().resume()
         if not self.driving_process:
             return lldb.SBError("%s.resume: Invalid driving process." %
-                                self.__class__.__name)
+                                self.__class__.__name__)
 
-        # Resume the driving process
-        self.driving_process.Continue()
-
-        # Update the scripted process state.
-        return lldb.SBError()
+        return self.driving_process.Continue()
 
     def get_threads_info(self, pid=None):
         # if not pid or pid not in self.multiplexed_processes.keys():

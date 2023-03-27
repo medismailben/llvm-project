@@ -91,7 +91,9 @@ public:
   void *GetImplementation() override;
 
   void ForceScriptedState(lldb::StateType state) override {
-    SetPublicState(state, false);
+//
+//    SetPublicState(state, false);
+    SetPrivateState(state);
   }
 
 protected:

@@ -3223,7 +3223,7 @@ Status Target::Launch(ProcessLaunchInfo &launch_info, Stream *stream) {
       // SyncResume hijacker.
       m_process_sp->ResumeSynchronous(stream);
     else
-      error = m_process_sp->Resume();
+      error = m_process_sp->PrivateResume();
     if (!error.Success()) {
       Status error2;
       error2.SetErrorStringWithFormat(
