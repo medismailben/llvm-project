@@ -153,7 +153,9 @@ Status ScriptedProcess::DoLaunch(Module *exe_module,
   LLDB_LOGF(GetLog(LLDBLog::Process), "ScriptedProcess::%s launching process", __FUNCTION__);
   
   /* MARK: This doesn't reflect how lldb actually launches a process.
-           In reality, it attaches to debugserver, then resume the process. */
+           In reality, it attaches to debugserver, then resume the process.
+           That's not true in all cases.  If debugserver is remote, lldb
+           asks debugserver to launch the process for it. */
   Status error = GetInterface().Launch();
   SetPrivateState(eStateStopped);
   return error;

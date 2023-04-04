@@ -1,6 +1,5 @@
+CXX_SOURCES := main.cpp
 CXXFLAGS=--std=c++17 -g
 
-all: main
+include Makefile.rules
 
-clean:
-	rm -rf main *.dSYM

@@ -213,7 +213,6 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
     def wait_for_driving_process_to_stop(self,
                                          originator_pid=None,
                                          update_all_processes=False):
-
         def handle_process_state_event():
             # Update multiplexer process
             print("Updating interactive scripted process threads")
@@ -316,7 +315,6 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
         return self.driving_process.Continue()
 
     def get_threads_info(self, pid=None):
-        # if not pid or pid not in self.multiplexed_processes.keys():
         if not pid:
             return super().get_threads_info()
         parity = pid % 2
@@ -353,7 +351,40 @@ def extract_value_from_structured_data(data, default_val):
             return int(data.GetStringValue(100))
     return None
 
-def __lldb_init_module(debugger, dict):
+def start_passthrough_process(debugger, command, exe_ctx, result, dict):
+    if not debugger.GetNumTargets() > 0:
+        return error_out("Interactive scripted processes requires one non scripted process.")
+
+    debugger.SetAsync(True)
+
+    driving_target = debugger.GetSelectedTarget()
+    if not driving_target:
+        return error_out("Driving target is invalid")
+
+    # driving_process = driving_target.GetProcess()
+    # if not driving_process:
+    #     return error_out("Driving process is invalid")
+
+    # # Check that the driving process is stopped somewhere.
+    # if not driving_process.state == lldb.eStateStopped:
+    #     return error_out("Driving process isn't stopped")
+
+    # Create a seconde target for the multiplexer scripted process
+    mux_target = duplicate_target(driving_target)
+    if not mux_target:
+        return error_out("Couldn't duplicate driving target to launch multiplexer scripted process")
+
+    class_name = __name__ + "." + MultiplexerScriptedProcess.__name__
+    dictionary = {'driving_target_idx': debugger.GetIndexOfTarget(driving_target)}
+    mux_process = launch_scripted_process(mux_target, class_name, dictionary)
+    if not mux_process:
+        return error_out("Couldn't launch multiplexer scripted process")
+
+def __lldb_init_module(dbg, dict):
+    dbg.HandleCommand(
+        'command script add -o -f interactive_scripted_process.start_passthrough_process create_mux')
+
+def __not_lldb_init_module(debugger, dict):
     def error_out(message):
         print(message)
         return
