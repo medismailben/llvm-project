@@ -237,26 +237,31 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
 
         event = lldb.SBEvent()
         handled_first_stop = False
-        while self.listener.WaitForEvent(1, event):
-            event_mask = event.GetType()
-            if event_mask & lldb.SBProcess.eBroadcastBitStateChanged:
-                state = lldb.SBProcess.GetStateFromEvent(event)
-                if state == lldb.eStateStopped:
-                    print("Received public process state event: %s" % state)
-                    # If it's a stop event, iterate over the driving process
-                    # thread, looking for a breakpoint stop reason, if internal
-                    # continue.
-                    handle_process_state_event()
-                else:
-                    print("Received public process state event: %s" % state)
+        while True:
+            if self.listener.WaitForEvent(1, event):
+                event_mask = event.GetType()
+                if event_mask & lldb.SBProcess.eBroadcastBitStateChanged:
+                    state = lldb.SBProcess.GetStateFromEvent(event)
+                    if state == lldb.eStateStopped:
+                        print("Received public process state event: %s" % state)
+                        # If it's a stop event, iterate over the driving process
+                        # thread, looking for a breakpoint stop reason, if internal
+                        # continue.
+                        handle_process_state_event()
+                    else:
+                        print("Received public process state event: %s" % state)
+            else:
+                continue
 
     def __init__(self, exe_ctx: lldb.SBExecutionContext, args : lldb.SBStructuredData):
         super().__init__(exe_ctx, args, launched_driving_process=False)
         if isinstance(self.driving_target, lldb.SBTarget) and self.driving_target:
             self.listener = lldb.SBListener("lldb.listener.multiplexer-scripted-process")
             self.multiplexed_processes = {}
-            self.listener_thread = Thread(target=self.wait_for_driving_process_to_stop)
+
+            self.listener_thread = Thread(target=self.wait_for_driving_process_to_stop, daemon=True)
             self.listener_thread.start()
+
 
     def launch(self, should_stop=True):
         # We should launch the driving process and pass our listener at launch
