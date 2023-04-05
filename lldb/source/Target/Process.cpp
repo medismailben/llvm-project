@@ -1310,10 +1310,10 @@ void Process::SetPublicState(StateType new_state, bool restarted) {
     // breakpoint you set.
     GetTarget().GetStatistics().SetFirstPublicStopTime();
   }
-
+  
   Log *log(GetLog(LLDBLog::State | LLDBLog::Process));
-  LLDB_LOGF(log, "Process::SetPublicState (state = %s, restarted = %i)",
-            StateAsCString(new_state), restarted);
+  LLDB_LOGF(log, "Process::SetPublicState (plugin = %s, state = %s, restarted = %i)",
+            GetPluginName().data(), StateAsCString(new_state), restarted);
   const StateType old_state = m_public_state.GetValue();
   m_public_state.SetValue(new_state);
 
@@ -1323,15 +1323,15 @@ void Process::SetPublicState(StateType new_state, bool restarted) {
   if (!StateChangedIsExternallyHijacked()) {
     if (new_state == eStateDetached) {
       LLDB_LOGF(log,
-                "Process::SetPublicState (%s) -- unlocking run lock for detach",
-                StateAsCString(new_state));
+                "Process::SetPublicState (plugin = %s, state = %s) -- unlocking run lock for detach",
+                GetPluginName().data(), StateAsCString(new_state));
       m_public_run_lock.SetStopped();
     } else {
       const bool old_state_is_stopped = StateIsStoppedState(old_state, false);
       if ((old_state_is_stopped != new_state_is_stopped)) {
         if (new_state_is_stopped && !restarted) {
-          LLDB_LOGF(log, "Process::SetPublicState (%s) -- unlocking run lock",
-                    StateAsCString(new_state));
+          LLDB_LOGF(log, "Process::SetPublicState (plugin = %s, state = %s) -- unlocking run lock",
+                    GetPluginName().data(), StateAsCString(new_state));
           m_public_run_lock.SetStopped();
         }
       }
@@ -1341,10 +1341,10 @@ void Process::SetPublicState(StateType new_state, bool restarted) {
 
 Status Process::Resume() {
   Log *log(GetLog(LLDBLog::State | LLDBLog::Process));
-  LLDB_LOGF(log, "Process::Resume -- locking run lock");
+  LLDB_LOGF(log, "Process::Resume (plugin = %s) -- locking run lock", GetPluginName().data());
   if (!m_public_run_lock.TrySetRunning()) {
     Status error("Resume request failed - process still running.");
-    LLDB_LOGF(log, "Process::Resume: -- TrySetRunning failed, not resuming.");
+    LLDB_LOGF(log, "Process::Resume (plugin = %s) -- TrySetRunning failed, not resuming.", GetPluginName().data());
     return error;
   }
   Status error = PrivateResume();
@@ -1421,7 +1421,8 @@ void Process::SetPrivateState(StateType new_state) {
   Log *log(GetLog(LLDBLog::State | LLDBLog::Process | LLDBLog::Unwind));
   bool state_changed = false;
 
-  LLDB_LOGF(log, "Process::SetPrivateState (%s)", StateAsCString(new_state));
+  LLDB_LOGF(log, "Process::SetPrivateState (plugin = %s, state = %s)",
+            GetPluginName().data(), StateAsCString(new_state));
 
   std::lock_guard<std::recursive_mutex> thread_guard(m_thread_list.GetMutex());
   std::lock_guard<std::recursive_mutex> guard(m_private_state.GetMutex());
@@ -1462,15 +1463,15 @@ void Process::SetPrivateState(StateType new_state) {
       if (!m_mod_id.IsLastResumeForUserExpression())
         m_mod_id.SetStopEventForLastNaturalStopID(event_sp);
       m_memory_cache.Clear();
-      LLDB_LOGF(log, "Process::SetPrivateState (%s) stop_id = %u",
-                StateAsCString(new_state), m_mod_id.GetStopID());
+      LLDB_LOGF(log, "Process::SetPrivateState (plugin = %s, state = %s, stop_id = %u",
+                GetPluginName().data(), StateAsCString(new_state), m_mod_id.GetStopID());
     }
 
     m_private_state_broadcaster.BroadcastEvent(event_sp);
   } else {
     LLDB_LOGF(log,
-              "Process::SetPrivateState (%s) state didn't change. Ignoring...",
-              StateAsCString(new_state));
+              "Process::SetPrivateState (plugin = %s, state = %s) state didn't change. Ignoring...",
+              GetPluginName().data(), StateAsCString(new_state));
   }
 }
 
