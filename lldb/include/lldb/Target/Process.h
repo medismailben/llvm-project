@@ -367,7 +367,7 @@ public:
   }
                   
   void SetPassthroughListener(lldb::ListenerSP listener_sp) override {
-    m_private_state_broadcaster.SetPassthroughListener(listener_sp);
+    Broadcaster::SetPassthroughListener(listener_sp);
   }
 
 /// A notification structure that can be used by clients to listen

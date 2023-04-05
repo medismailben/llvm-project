@@ -40,10 +40,11 @@ class TestInteractiveScriptedProcess(TestBase):
     def passthrough_launch(self):
         """Test that a simple passthrough wrapper functions correctly"""
         # First build the real target:
-        lldbutil.run_break_set_by_source_regexp(self, "Break here")
         self.assertEqual(self.dbg.GetNumTargets(), 1)
         real_target_id = 0
         real_target = self.dbg.GetTargetAtIndex(real_target_id)
+        lldbutil.run_break_set_by_source_regexp(self, "Break here")
+        self.assertEqual(real_target.GetNumBreakpoints(), 1)
 
         # Now source in the scripted module:
         script_path = os.path.join(self.getSourceDir(), self.script_file)
@@ -55,14 +56,29 @@ class TestInteractiveScriptedProcess(TestBase):
         mux_class = self.script_module + "." + "MultiplexerScriptedProcess"
         script_dict = {'driving_target_idx' : real_target_id}
         mux_launch_info = self.get_launch_info(mux_class, script_dict)
+        real_process_listener = lldb.SBListener("lldb.test.interactive-scripted-process.listener")
+        mux_launch_info.SetPassthroughListener(real_process_listener)
 
         self.dbg.SetAsync(True)
         error = lldb.SBError()
         mux_process = scripted_target.Launch(mux_launch_info, error)
-        self.assertSuccess(error, "Launched scripted process")
-
+        self.assertSuccess(error, "Launched multiplexer scripted process")
         self.assertTrue(mux_process.IsValid(), "Got a valid process")
-        self.assertState(mux_process.GetState(), lldb.eStateStopped, "Process is stopped")
+
+        # TODO: I believe we should receive a stop event first from the launch
+        # but for some reason, the first event we receive is a running event.
+        # We should investigate this.
+
+        # event = lldbutil.fetch_next_event(self, real_process_listener, mux_process.GetBroadcaster())
+        # self.assertState(lldb.SBProcess.GetStateFromEvent(event), lldb.eStateStopped)
+
+        event = lldbutil.fetch_next_event(self, real_process_listener, mux_process.GetBroadcaster())
+        self.assertState(lldb.SBProcess.GetStateFromEvent(event), lldb.eStateRunning)
+        event = lldbutil.fetch_next_event(self, real_process_listener, mux_process.GetBroadcaster())
+        self.assertState(lldb.SBProcess.GetStateFromEvent(event), lldb.eStateStopped)
+
+        # TODO: We should ensure that the test listener doesn't have more events,
+        # to handle, meaning that the process is actually stopped.
 
         real_process = real_target.GetProcess()
         self.assertTrue(real_process.IsValid(), "Got a valid process")
@@ -76,4 +92,14 @@ class TestInteractiveScriptedProcess(TestBase):
             mux_pc = mux_process.threads[id].frame[0].pc
             self.assertEqual(real_pc, mux_pc, f"PC's equal for {id}")
 
+        lldbutil.run_break_set_by_source_regexp(self, "also break here")
+        self.assertEqual(real_target.GetNumBreakpoints(), 2)
+        error = mux_process.Continue()
+        self.assertSuccess(error, "Resuming multiplexer scripted process")
+        self.assertTrue(mux_process.IsValid(), "Got a valid process")
+
+        event = lldbutil.fetch_next_event(self, real_process_listener, mux_process.GetBroadcaster())
+        self.assertState(lldb.SBProcess.GetStateFromEvent(event), lldb.eStateRunning)
+        event = lldbutil.fetch_next_event(self, real_process_listener, mux_process.GetBroadcaster())
+        self.assertState(lldb.SBProcess.GetStateFromEvent(event), lldb.eStateStopped)
 

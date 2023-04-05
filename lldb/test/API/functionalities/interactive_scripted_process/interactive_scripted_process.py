@@ -210,9 +210,7 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
     listener = None
     multiplexed_processes = None
 
-    def wait_for_driving_process_to_stop(self,
-                                         originator_pid=None,
-                                         update_all_processes=False):
+    def wait_for_driving_process_to_stop(self):
         def handle_process_state_event():
             # Update multiplexer process
             print("Updating interactive scripted process threads")
@@ -220,7 +218,7 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
             print("Clearing interactive scripted process threads")
             self.threads.clear()
             for driving_thread in self.driving_process:
-                print("New thread %s" % hex(driving_thread.id))
+                print("%d New thread %s" % (len(self.threads), hex(driving_thread.id)))
                 structured_data = lldb.SBStructuredData()
                 structured_data.SetFromJSON(json.dumps({
                     "driving_target_idx" : dbg.GetIndexOfTarget(self.driving_target),
@@ -233,29 +231,18 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
             mux_process.ForceScriptedState(lldb.eStateRunning);
             mux_process.ForceScriptedState(lldb.eStateStopped);
 
-            if update_all_processes:
-                for child_process in self.multiplexed_processes:
-                    child_process.ForceScriptedState(lldb.eStateRunning);
-                    child_process.ForceScriptedState(lldb.eStateStopped);
-            else:
-                child_process = self.multiplexed_processes[originator_pid]
+            for child_process in self.multiplexed_processes:
                 child_process.ForceScriptedState(lldb.eStateRunning);
                 child_process.ForceScriptedState(lldb.eStateStopped);
 
         event = lldb.SBEvent()
         handled_first_stop = False
-        while self.listener.WaitForEvent(2, event):
+        while self.listener.WaitForEvent(1, event):
             event_mask = event.GetType()
             if event_mask & lldb.SBProcess.eBroadcastBitStateChanged:
                 state = lldb.SBProcess.GetStateFromEvent(event)
                 if state == lldb.eStateStopped:
-                    print("Received public process state event: %s (first_stop = %r)"
-                          % (state, not handled_first_stop))
-                    if not handled_first_stop:
-                        # Skip first stop event for launch.
-                        handled_first_stop = True
-                        continue
-
+                    print("Received public process state event: %s" % state)
                     # If it's a stop event, iterate over the driving process
                     # thread, looking for a breakpoint stop reason, if internal
                     # continue.
@@ -268,6 +255,8 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
         if isinstance(self.driving_target, lldb.SBTarget) and self.driving_target:
             self.listener = lldb.SBListener("lldb.listener.multiplexer-scripted-process")
             self.multiplexed_processes = {}
+            self.listener_thread = Thread(target=self.wait_for_driving_process_to_stop)
+            self.listener_thread.start()
 
     def launch(self, should_stop=True):
         # We should launch the driving process and pass our listener at launch
@@ -278,11 +267,6 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
         if self.driving_process:
             return lldb.SBError("%s.resume: Invalid driving process." %
                                 self.__class__.__name)
-
-        listener_thread = Thread(target=self.wait_for_driving_process_to_stop,
-                                 args=[None,  # originator_pid
-                                       True]) # update_all_processes
-        listener_thread.start()
 
         error = lldb.SBError()
         launch_info = lldb.SBLaunchInfo(None)
@@ -303,11 +287,24 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
             self.loaded_images.append({"path": path, "load_addr": load_addr})
 
         # Update the scripted process state.
+        self.first_resume = True
         return error
 
-    def resume(self, should_stop=True, pid=None):
-        # if not pid or pid not in self.multiplexed_processes.keys():
-        #     return super().resume()
+    def resume(self, should_stop=True):
+        if self.first_resume:
+            # When we resume the multiplexer process for the first time,
+            # we shouldn't do anything because lldb's execution machinery
+            # will resume the driving process by itself.
+
+            # Also, no need to update the multiplexer scripted process state
+            # here because since it's listening for the real process stop events.
+            # Once it receives the stop event from the driving process,
+            # `wait_for_driving_process_to_stop` will update the multiplexer
+            # state for us.
+
+            self.first_resume = False
+            return lldb.SBError()
+
         if not self.driving_process:
             return lldb.SBError("%s.resume: Invalid driving process." %
                                 self.__class__.__name__)
