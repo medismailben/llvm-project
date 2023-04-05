@@ -3149,7 +3149,7 @@ Status Target::Launch(ProcessLaunchInfo &launch_info, Stream *stream) {
   // manually, without the platform).
   if (!launch_info.GetHijackListener())
     launch_info.SetHijackListener(
-        Listener::MakeListener("lldb.Target.Launch.hijack"));
+        Listener::MakeListener("lldb.internal.Target.Launch.hijack"));
 
   // If we're not already connected to the process, and if we have a platform
   // that can launch a process for debugging, go ahead and do that here.

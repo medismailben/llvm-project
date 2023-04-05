@@ -1355,7 +1355,8 @@ Status Process::Resume() {
   return error;
 }
 
-static const char *g_resume_sync_name = "lldb.Process.ResumeSynchronous.hijack";
+static const char *g_resume_sync_name 
+    = "lldb.internal.Process.ResumeSynchronous.hijack";
 
 Status Process::ResumeSynchronous(Stream *stream) {
   Log *log(GetLog(LLDBLog::State | LLDBLog::Process));
@@ -1395,7 +1396,7 @@ bool Process::StateChangedIsExternallyHijacked() {
   if (IsHijackedForEvent(eBroadcastBitStateChanged)) {
     const char *hijacking_name = GetHijackingListenerName();
     if (hijacking_name &&
-        strcmp(hijacking_name, g_resume_sync_name))
+        strstr(hijacking_name, "lldb.internal") != hijacking_name)
       return true;
   }
   return false;
