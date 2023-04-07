@@ -132,6 +132,13 @@ size_t SBModuleSpec::GetUUIDLength() {
   return m_opaque_up->GetUUID().GetBytes().size();
 }
 
+bool SBModuleSpec::SetUUIDFromString(const char *uuid) {
+  LLDB_INSTRUMENT_VA(this, uuid)
+
+  m_opaque_up->GetUUID().SetFromStringRef(llvm::StringRef(uuid));
+  return m_opaque_up->GetUUID().IsValid();
+}
+
 bool SBModuleSpec::SetUUIDBytes(const uint8_t *uuid, size_t uuid_len) {
   LLDB_INSTRUMENT_VA(this, uuid, uuid_len)
   m_opaque_up->GetUUID() = UUID(uuid, uuid_len);

@@ -75,6 +75,8 @@ public:
 
   size_t GetUUIDLength();
 
+  bool SetUUIDFromString(const char *uuid);
+
   bool SetUUIDBytes(const uint8_t *uuid, size_t uuid_len);
 
   bool GetDescription(lldb::SBStream &description);
