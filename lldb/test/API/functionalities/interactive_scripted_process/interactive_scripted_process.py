@@ -1,8 +1,8 @@
 # Usage:
 # ./bin/lldb $LLVM/lldb/test/API/functionalities/interactive_scripted_process/main \
-#   -o "br set -p 'Break here'" -o "run" \
-#   -o "command script import
-#   $LLVM/lldb/test/API/functionalities/interactive_scripted_process/interactive_scripted_process.py" \
+#   -o "br set -p 'Break here'" \
+#   -o "command script import $LLVM/lldb/test/API/functionalities/interactive_scripted_process/interactive_scripted_process.py" \
+#   -o "create_mux" \
 #   -o "br set -p 'also break here'" -o 'continue'
 
 import os,json,struct,signal
@@ -236,7 +236,6 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
                 child_process.ForceScriptedState(lldb.eStateStopped);
 
         event = lldb.SBEvent()
-        handled_first_stop = False
         while True:
             if self.listener.WaitForEvent(1, event):
                 event_mask = event.GetType()
@@ -264,7 +263,6 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
 
 
     def launch(self, should_stop=True):
-        # We should launch the driving process and pass our listener at launch
         if not self.driving_target:
             return lldb.SBError("%s.resume: Invalid driving target." %
                                 self.__class__.__name)
@@ -276,9 +274,6 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
         error = lldb.SBError()
         launch_info = lldb.SBLaunchInfo(None)
         launch_info.SetListener(self.listener)
-        # We need to stop the real process at entry so the stop even from the
-        # launch gets broadcasted to us.
-        # launch_info.SetLaunchFlags(lldb.eLaunchFlagStopAtEntry)
         driving_process = self.driving_target.Launch(launch_info, error)
 
         if not driving_process or error.Fail():
@@ -291,7 +286,6 @@ class MultiplexerScriptedProcess(PassthruScriptedProcess):
             load_addr = module.GetObjectFileHeaderAddress().GetLoadAddress(self.driving_target)
             self.loaded_images.append({"path": path, "load_addr": load_addr})
 
-        # Update the scripted process state.
         self.first_resume = True
         return error
 
