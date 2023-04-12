@@ -2569,7 +2569,7 @@ Status Process::LaunchPrivate(ProcessLaunchInfo &launch_info, StateType &state,
 
   // Now wait for the process to launch and return control to us, and then
   // call DidLaunch:
-  state = WaitForProcessStopPrivate(event_sp, seconds(10));
+  state = WaitForProcessStopPrivate(event_sp, minutes(10));
 
   if (state == eStateInvalid || !event_sp) {
     // We were able to launch the process, but we failed to catch the
