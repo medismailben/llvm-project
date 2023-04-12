@@ -1054,13 +1054,13 @@ bool Process::SetExitStatus(int status, const char *cstr) {
 
   Log *log(GetLog(LLDBLog::State | LLDBLog::Process));
   LLDB_LOGF(
-      log, "Process::SetExitStatus (status=%i (0x%8.8x), description=%s%s%s)",
-      status, status, cstr ? "\"" : "", cstr ? cstr : "NULL", cstr ? "\"" : "");
+      log, "Process::SetExitStatus (plugin = %s status=%i (0x%8.8x), description=%s%s%s)",
+            GetPluginName().data(), status, status, cstr ? "\"" : "", cstr ? cstr : "NULL", cstr ? "\"" : "");
 
   // We were already in the exited state
   if (m_private_state.GetValue() == eStateExited) {
-    LLDB_LOGF(log, "Process::SetExitStatus () ignoring exit status because "
-                   "state was already set to eStateExited");
+    LLDB_LOGF(log, "Process::SetExitStatus (plugin = %s) ignoring exit status because "
+                   "state was already set to eStateExited", GetPluginName().data());
     return false;
   }
 
