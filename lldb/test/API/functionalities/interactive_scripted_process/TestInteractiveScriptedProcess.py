@@ -50,8 +50,8 @@ class TestInteractiveScriptedProcess(TestBase):
         script_path = os.path.join(self.getSourceDir(), self.script_file)
         self.runCmd(f"command script import '{script_path}'")
 
-        scripted_target = self.duplicate_target(real_target)
-        self.assertTrue(scripted_target.IsValid(), "duplicate target succeeded")
+        mux_target = self.duplicate_target(real_target)
+        self.assertTrue(mux_target.IsValid(), "duplicate target succeeded")
 
         mux_class = self.script_module + "." + "MultiplexerScriptedProcess"
         script_dict = {'driving_target_idx' : real_target_id}
@@ -63,22 +63,23 @@ class TestInteractiveScriptedProcess(TestBase):
         # self.runCmd("log enable lldb event -f /tmp/event.log")
         self.dbg.SetAsync(True)
         error = lldb.SBError()
-        mux_process = scripted_target.Launch(mux_launch_info, error)
+        mux_process = mux_target.Launch(mux_launch_info, error)
         self.assertSuccess(error, "Launched multiplexer scripted process")
         self.assertTrue(mux_process.IsValid(), "Got a valid process")
 
-        breakpoint()
-        # TODO: Remove this line after fixing the issue with the multiplexer
-        # process public run lock being set to running where it should be stopped
-        # I've dup'ed the previous assert to have a way to inspect the SBProcess in lldb
-        self.assertTrue(mux_process.IsValid(), "Got a valid process")
+        # Check that the mux process started running
         event = lldbutil.fetch_next_event(self, mux_process_listener, mux_process.GetBroadcaster(), timeout=60 * 5)
         self.assertState(lldb.SBProcess.GetStateFromEvent(event), lldb.eStateRunning)
+        # Check that the real process started running
+        event = lldbutil.fetch_next_event(self, self.dbg.GetListener(), mux_process.GetBroadcaster())
+        self.assertState(lldb.SBProcess.GetStateFromEvent(event), lldb.eStateRunning)
+
+        # Check that the real process stopped
+        event = lldbutil.fetch_next_event(self, self.dbg.GetListener(), mux_process.GetBroadcaster(), timeout=60 * 5)
+        self.assertState(lldb.SBProcess.GetStateFromEvent(event), lldb.eStateStopped)
+        # Check that the mux process stopped
         event = lldbutil.fetch_next_event(self, mux_process_listener, mux_process.GetBroadcaster(), timeout=60 * 5)
         self.assertState(lldb.SBProcess.GetStateFromEvent(event), lldb.eStateStopped)
-
-        # TODO: We should ensure that the test listener doesn't have more events,
-        # to handle, meaning that the process is actually stopped.
 
         real_process = real_target.GetProcess()
         self.assertTrue(real_process.IsValid(), "Got a valid process")
@@ -88,17 +89,12 @@ class TestInteractiveScriptedProcess(TestBase):
         # Check that we got the right threads:
         self.assertEqual(len(real_process.threads), len(mux_process.threads), "Same number of threads")
         for id in range(0, len(real_process.threads)):
-            if len(mux_process.threads[id].frames) == 0:
-                # TODO: This is showing 0 frames because the public run lock says
-                # the mux process is still running so we don't event call the
-                # lldb_private method and just return 0
-                breakpoint()
             real_pc = real_process.threads[id].frame[0].pc
             mux_pc = mux_process.threads[id].frame[0].pc
             self.assertEqual(real_pc, mux_pc, f"PC's equal for {id}")
 
         lldbutil.run_break_set_by_source_regexp(self, "also break here")
-        self.assertEqual(real_target.GetNumBreakpoints(), 2)
+        self.assertEqual(mux_target.GetNumBreakpoints(), 1)
         error = mux_process.Continue()
         self.assertSuccess(error, "Resuming multiplexer scripted process")
         self.assertTrue(mux_process.IsValid(), "Got a valid process")
