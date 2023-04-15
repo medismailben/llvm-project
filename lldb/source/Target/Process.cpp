@@ -401,6 +401,24 @@ ConstString &Process::GetStaticBroadcasterClass() {
   return class_name;
 }
 
+llvm::StringRef Process::GetAttachSynchronousHijackListenerName() {
+  static ConstString class_name(
+      "lldb.internal.Process.AttachSynchronous.hijack");
+  return class_name.GetCString();
+}
+
+llvm::StringRef Process::GetLaunchSynchronousHijackListenerName() {
+  static ConstString class_name(
+      "lldb.internal.Process.LaunchSynchronous.hijack");
+  return class_name.GetCString();
+}
+
+llvm::StringRef Process::GetResumeSynchronousHijackListenerName() {
+  static ConstString class_name(
+      "lldb.internal.Process.ResumeSynchronous.hijack");
+  return class_name.GetCString();
+}
+
 Process::Process(lldb::TargetSP target_sp, ListenerSP listener_sp)
     : Process(target_sp, listener_sp, UnixSignals::CreateForHost()) {
   // This constructor just delegates to the full Process constructor,
@@ -1368,8 +1386,6 @@ Status Process::Resume() {
   return error;
 }
 
-static const char *g_resume_sync_name = "lldb.Process.ResumeSynchronous.hijack";
-
 Status Process::ResumeSynchronous(Stream *stream) {
   Log *log(GetLog(LLDBLog::State | LLDBLog::Process));
   LLDB_LOGF(log, "Process::ResumeSynchronous -- locking run lock");
@@ -1380,7 +1396,7 @@ Status Process::ResumeSynchronous(Stream *stream) {
   }
 
   ListenerSP listener_sp(
-      Listener::MakeListener(g_resume_sync_name));
+      Listener::MakeListener(GetResumeSynchronousHijackListenerName().data()));
   HijackProcessEvents(listener_sp);
 
   Status error = PrivateResume();
@@ -1408,7 +1424,7 @@ bool Process::StateChangedIsExternallyHijacked() {
   if (IsHijackedForEvent(eBroadcastBitStateChanged)) {
     const char *hijacking_name = GetHijackingListenerName();
     if (hijacking_name &&
-        strcmp(hijacking_name, g_resume_sync_name))
+        strstr(hijacking_name, "lldb.internal") != hijacking_name)
       return true;
   }
   return false;
@@ -1418,7 +1434,8 @@ bool Process::StateChangedIsHijackedForSynchronousResume() {
   if (IsHijackedForEvent(eBroadcastBitStateChanged)) {
     const char *hijacking_name = GetHijackingListenerName();
     if (hijacking_name &&
-        strcmp(hijacking_name, g_resume_sync_name) == 0)
+        strcmp(hijacking_name,
+               GetResumeSynchronousHijackListenerName().data()) == 0)
       return true;
   }
   return false;

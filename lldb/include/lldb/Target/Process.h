@@ -369,6 +369,10 @@ public:
 
   static ConstString &GetStaticBroadcasterClass();
 
+  static llvm::StringRef GetAttachSynchronousHijackListenerName();
+  static llvm::StringRef GetLaunchSynchronousHijackListenerName();
+  static llvm::StringRef GetResumeSynchronousHijackListenerName();
+
   ConstString &GetBroadcasterClass() const override {
     return GetStaticBroadcasterClass();
   }
