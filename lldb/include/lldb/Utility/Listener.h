@@ -95,6 +95,10 @@ public:
 
   size_t HandleBroadcastEvent(lldb::EventSP &event_sp);
 
+  void SetPassthrough(bool is_passthrough) {
+    m_is_passthrough = is_passthrough;
+  }
+
 private:
   // Classes that inherit from Listener can see and modify these
   struct BroadcasterInfo {
@@ -134,6 +138,7 @@ private:
   std::mutex m_events_mutex; // Protects m_broadcasters and m_events
   std::condition_variable m_events_condition;
   broadcaster_manager_collection m_broadcaster_managers;
+  bool m_is_passthrough = false;
 
   void BroadcasterWillDestruct(Broadcaster *);
 

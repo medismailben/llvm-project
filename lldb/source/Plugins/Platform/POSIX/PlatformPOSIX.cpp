@@ -401,6 +401,8 @@ lldb::ProcessSP PlatformPOSIX::Attach(ProcessAttachInfo &attach_info,
           attach_info.SetHijackListener(listener_sp);
         }
         process_sp->HijackProcessEvents(listener_sp);
+        process_sp->SetPassthroughListener(
+            attach_info.GetPassthroughListener());
         error = process_sp->Attach(attach_info);
       }
     }
@@ -458,6 +460,7 @@ lldb::ProcessSP PlatformPOSIX::DebugProcess(ProcessLaunchInfo &launch_info,
   LLDB_LOG(log, "successfully created process");
 
   process_sp->HijackProcessEvents(launch_info.GetHijackListener());
+  process_sp->SetPassthroughListener(launch_info.GetPassthroughListener());
 
   // Log file actions.
   if (log) {

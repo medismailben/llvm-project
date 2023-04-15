@@ -254,6 +254,24 @@ void SBAttachInfo::SetListener(SBListener &listener) {
   m_opaque_sp->SetListener(listener.GetSP());
 }
 
+SBListener SBAttachInfo::GetPassthroughListener() {
+  LLDB_INSTRUMENT_VA(this);
+
+  return SBListener(m_opaque_sp->GetPassthroughListener());
+}
+
+void SBAttachInfo::SetPassthroughListener(SBListener &listener) {
+  LLDB_INSTRUMENT_VA(this, listener);
+
+  ListenerSP listener_sp = listener.GetSP();
+  if (listener_sp && listener.IsValid())
+    listener_sp->SetPassthrough(true);
+  else
+    listener_sp = nullptr;
+
+  m_opaque_sp->SetPassthroughListener(listener_sp);
+}
+
 const char *SBAttachInfo::GetScriptedProcessClassName() const {
   LLDB_INSTRUMENT_VA(this);
 

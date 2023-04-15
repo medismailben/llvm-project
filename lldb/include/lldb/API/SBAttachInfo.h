@@ -168,6 +168,25 @@ public:
   /// allows a different listener to be used to listen for process events.
   void SetListener(SBListener &listener);
 
+  /// Get the passthrough listener that receive public process events,
+  /// additionally to the default process event listener.
+  ///
+  /// If no listener has been set via a call to
+  /// SBLaunchInfo::SetPassthroughListener(), then an invalid SBListener will
+  /// be returned (SBListener::IsValid() will return false). If a listener
+  /// has been set, then the valid listener object will be returned.
+  SBListener GetPassthroughListener();
+
+  /// Set the passthrough listener that will receive public process events,
+  /// additionally to the default process event listener.
+  ///
+  /// By default a process have no passthrough event listener.
+  /// Calling this function allows public process events to be broadcasted to an
+  /// additional listener on top of the default process event listener.
+  /// If the `listener` argument is invalid (SBListener::IsValid() will
+  /// return false), this will clear the passthrough listener.
+  void SetPassthroughListener(SBListener &listener);
+
   const char *GetScriptedProcessClassName() const;
 
   void SetScriptedProcessClassName(const char *class_name);

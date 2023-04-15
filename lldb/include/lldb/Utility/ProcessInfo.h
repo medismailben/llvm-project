@@ -110,6 +110,14 @@ public:
     m_hijack_listener_sp = listener_sp;
   }
 
+  lldb::ListenerSP GetPassthroughListener() const {
+    return m_passthrough_listener_sp;
+  }
+
+  void SetPassthroughListener(const lldb::ListenerSP &listener_sp) {
+    m_passthrough_listener_sp = listener_sp;
+  }
+
 protected:
   FileSpec m_executable;
   std::string m_arg0; // argv[0] if supported. If empty, then use m_executable.
@@ -124,6 +132,7 @@ protected:
   lldb::ScriptedMetadataSP m_scripted_metadata_sp = nullptr;
   lldb::ListenerSP m_listener_sp = nullptr;
   lldb::ListenerSP m_hijack_listener_sp = nullptr;
+  lldb::ListenerSP m_passthrough_listener_sp = nullptr;
 };
 
 // ProcessInstanceInfo
