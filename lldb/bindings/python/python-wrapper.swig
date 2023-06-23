@@ -821,6 +821,19 @@ void *lldb_private::python::LLDBSWIGPython_CastPyObjectToSBMemoryRegionInfo(PyOb
   return sb_ptr;
 }
 
+void *lldb_private::python::LLDBSWIGPython_CastPyObjectToSBThreadPlan(PyObject *
+                                                                    data) {
+  lldb::SBThreadPlan *sb_ptr = NULL;
+
+  int valid_cast = SWIG_ConvertPtr(data, (void **)&sb_ptr,
+                                   SWIGTYPE_p_lldb__SBThreadPlan, 0);
+
+  if (valid_cast == -1)
+    return NULL;
+
+  return sb_ptr;
+}
+
 bool lldb_private::python::SWIGBridge::LLDBSwigPythonCallCommand(
     const char *python_function_name, const char *session_dictionary_name,
     lldb::DebuggerSP debugger, const char *args,

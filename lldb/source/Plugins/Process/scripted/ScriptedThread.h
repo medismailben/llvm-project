@@ -60,6 +60,74 @@ public:
 
   StructuredData::ObjectSP FetchThreadExtendedInfo() override;
 
+  lldb::ThreadPlanSP QueueThreadPlanForStepSingleInstruction(
+      bool step_over, bool abort_other_plans, bool stop_other_threads,
+      Status &status) override;
+
+  lldb::ThreadPlanSP QueueThreadPlanForStepOverRange(
+      bool abort_other_plans, const AddressRange &range,
+      const SymbolContext &addr_context, lldb::RunMode stop_other_threads,
+      Status &status,
+      LazyBool step_out_avoids_code_without_debug_info =
+          eLazyBoolCalculate) override;
+
+  lldb::ThreadPlanSP QueueThreadPlanForStepOverRange(
+      bool abort_other_plans, const LineEntry &line_entry,
+      const SymbolContext &addr_context, lldb::RunMode stop_other_threads,
+      Status &status,
+      LazyBool step_out_avoids_code_without_debug_info =
+          eLazyBoolCalculate) override;
+
+  lldb::ThreadPlanSP QueueThreadPlanForStepInRange(
+      bool abort_other_plans, const AddressRange &range,
+      const SymbolContext &addr_context, const char *step_in_target,
+      lldb::RunMode stop_other_threads, Status &status,
+      LazyBool step_in_avoids_code_without_debug_info = eLazyBoolCalculate,
+      LazyBool step_out_avoids_code_without_debug_info =
+          eLazyBoolCalculate) override;
+
+  lldb::ThreadPlanSP QueueThreadPlanForStepInRange(
+      bool abort_other_plans, const LineEntry &line_entry,
+      const SymbolContext &addr_context, const char *step_in_target,
+      lldb::RunMode stop_other_threads, Status &status,
+      LazyBool step_in_avoids_code_without_debug_info = eLazyBoolCalculate,
+      LazyBool step_out_avoids_code_without_debug_info =
+          eLazyBoolCalculate) override;
+
+  lldb::ThreadPlanSP
+  QueueThreadPlanForStepOut(bool abort_other_plans, SymbolContext *addr_context,
+                            bool first_insn, bool stop_other_threads,
+                            Vote report_stop_vote, Vote report_run_vote,
+                            uint32_t frame_idx, Status &status,
+                            LazyBool step_out_avoids_code_without_debug_info =
+                                eLazyBoolCalculate) override;
+
+  lldb::ThreadPlanSP QueueThreadPlanForStepOutNoShouldStop(
+      bool abort_other_plans, SymbolContext *addr_context, bool first_insn,
+      bool stop_other_threads, Vote report_stop_vote, Vote report_run_vote,
+      uint32_t frame_idx, Status &status,
+      bool continue_to_next_branch = false) override;
+
+  lldb::ThreadPlanSP QueueThreadPlanForStepThrough(StackID &return_stack_id,
+                                                   bool abort_other_plans,
+                                                   bool stop_other_threads,
+                                                   Status &status) override;
+
+  lldb::ThreadPlanSP QueueThreadPlanForRunToAddress(bool abort_other_plans,
+                                                    Address &target_addr,
+                                                    bool stop_other_threads,
+                                                    Status &status) override;
+
+  lldb::ThreadPlanSP QueueThreadPlanForStepUntil(
+      bool abort_other_plans, lldb::addr_t *address_list, size_t num_addresses,
+      bool stop_others, uint32_t frame_idx, Status &status) override;
+
+  lldb::ThreadPlanSP
+  QueueThreadPlanForStepScripted(bool abort_other_plans, const char *class_name,
+                                 StructuredData::ObjectSP extra_args_sp,
+                                 bool stop_other_threads,
+                                 Status &status) override;
+
 private:
   void CheckInterpreterAndScriptObject() const;
   lldb::ScriptedThreadInterfaceSP GetInterface() const;

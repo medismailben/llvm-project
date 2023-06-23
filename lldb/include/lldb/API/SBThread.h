@@ -214,6 +214,11 @@ public:
 
   SBValue GetSiginfo();
 
+  SBError QueueThreadPlan(const SBThreadPlan &thread_plan,
+                          bool abort_other_plans);
+  
+  lldb::StateType GetState() const;
+
 private:
   friend class SBBreakpoint;
   friend class SBBreakpointLocation;

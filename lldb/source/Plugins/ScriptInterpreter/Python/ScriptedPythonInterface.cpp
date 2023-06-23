@@ -134,4 +134,21 @@ ScriptedPythonInterface::ExtractValueFromPythonObject<
   return m_interpreter.GetOpaqueTypeFromSBMemoryRegionInfo(*sb_mem_reg_info);
 }
 
+template <>
+lldb::ThreadPlanSP
+ScriptedPythonInterface::ExtractValueFromPythonObject<lldb::ThreadPlanSP>(
+    python::PythonObject &p, Status &error) {
+
+  lldb::SBThreadPlan *sb_thread_plan = reinterpret_cast<lldb::SBThreadPlan *>(
+      python::LLDBSWIGPython_CastPyObjectToSBThreadPlan(p.get()));
+
+  if (!sb_thread_plan) {
+    error.SetErrorString(
+        "Couldn't cast lldb::SBMemoryRegionInfo to lldb::MemoryRegionInfoSP.");
+    return {};
+  }
+
+  return m_interpreter.GetOpaqueTypeFromSBThreadPlan(*sb_thread_plan);
+}
+
 #endif

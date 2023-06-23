@@ -109,6 +109,10 @@ public:
   }
 
   virtual StructuredData::ArraySP GetExtendedInfo() { return {}; }
+
+  virtual Status QueueThreadPlan(lldb::ThreadPlanSP, bool abort_other_plans) {
+    return {};
+  }
 };
 } // namespace lldb_private
 

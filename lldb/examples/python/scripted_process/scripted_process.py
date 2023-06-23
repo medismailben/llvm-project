@@ -382,6 +382,20 @@ class ScriptedThread(metaclass=ABCMeta):
         """
         return self.extended_info
 
+    def queue_thread_plan(self, thread_plan, abort_other_plans):
+        """Queue a thread plan.
+
+        Args:
+            thread_plan (lldb.SBThreadPlan): The thread plan to be queue.
+            abort_other_plans (bool): If True, the queued thread plan will abort
+            the previous thread plans.
+
+        Returns:
+            lldb.SBError: An `lldb.SBError` with error code 0 if the thread plan
+                          queuing succeeded. Otherwise, contains an error message.
+        """
+        return lldb.SBError("ScriptedProcess doesn't support queuing thread plans")
+
 
 class PassthroughScriptedProcess(ScriptedProcess):
     driving_target = None
@@ -537,6 +551,16 @@ class PassthroughScriptedThread(ScriptedThread):
             self.register_ctx[reg.name] = int(reg.value, base=16)
 
         return struct.pack(f"{len(self.register_ctx)}Q", *self.register_ctx.values())
+
+    def queue_thread_plan(self, thread_plan, abort_other_plans):
+        if not self.driving_thread:
+            return lldb.SBError("Couldn't queue thread plan: invalid driving thread")
+        return self.driving_thread.QueueThreadPlan(thread_plan, abort_other_plans)
+
+    def get_state(self):
+        if not self.driving_thread:
+            return lldb.eStateInvalid
+        return self.driving_thread.GetState()
 
 
 ARM64_GPR = [

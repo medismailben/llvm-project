@@ -360,3 +360,139 @@ StructuredData::ObjectSP ScriptedThread::FetchThreadExtendedInfo() {
 
   return extended_info_sp;
 }
+
+lldb::ThreadPlanSP ScriptedThread::QueueThreadPlanForStepSingleInstruction(
+    bool step_over, bool abort_other_plans, bool stop_other_threads,
+    Status &status) {
+  lldb::ThreadPlanSP thread_plan_sp =
+      Thread::QueueThreadPlanForStepSingleInstruction(
+          step_over, abort_other_plans, stop_other_threads, status);
+  Status error =
+      GetInterface()->QueueThreadPlan(thread_plan_sp, abort_other_plans);
+  return error.Success() ? thread_plan_sp : nullptr;
+}
+
+lldb::ThreadPlanSP ScriptedThread::QueueThreadPlanForStepOverRange(
+    bool abort_other_plans, const AddressRange &range,
+    const SymbolContext &addr_context, lldb::RunMode stop_other_threads,
+    Status &status, LazyBool step_out_avoids_code_without_debug_info) {
+  lldb::ThreadPlanSP thread_plan_sp = Thread::QueueThreadPlanForStepOverRange(
+      abort_other_plans, range, addr_context, stop_other_threads, status,
+      step_out_avoids_code_without_debug_info);
+  Status error =
+      GetInterface()->QueueThreadPlan(thread_plan_sp, abort_other_plans);
+  return error.Success() ? thread_plan_sp : nullptr;
+}
+
+lldb::ThreadPlanSP ScriptedThread::QueueThreadPlanForStepOverRange(
+    bool abort_other_plans, const LineEntry &line_entry,
+    const SymbolContext &addr_context, lldb::RunMode stop_other_threads,
+    Status &status, LazyBool step_out_avoids_code_without_debug_info) {
+  lldb::ThreadPlanSP thread_plan_sp = Thread::QueueThreadPlanForStepOverRange(
+      abort_other_plans, line_entry, addr_context, stop_other_threads, status,
+      step_out_avoids_code_without_debug_info);
+  Status error =
+      GetInterface()->QueueThreadPlan(thread_plan_sp, abort_other_plans);
+  return error.Success() ? thread_plan_sp : nullptr;
+}
+
+lldb::ThreadPlanSP ScriptedThread::QueueThreadPlanForStepInRange(
+    bool abort_other_plans, const AddressRange &range,
+    const SymbolContext &addr_context, const char *step_in_target,
+    lldb::RunMode stop_other_threads, Status &status,
+    LazyBool step_in_avoids_code_without_debug_info,
+    LazyBool step_out_avoids_code_without_debug_info) {
+  lldb::ThreadPlanSP thread_plan_sp = Thread::QueueThreadPlanForStepInRange(
+      abort_other_plans, range, addr_context, step_in_target,
+      stop_other_threads, status, step_in_avoids_code_without_debug_info,
+      step_out_avoids_code_without_debug_info);
+  Status error =
+      GetInterface()->QueueThreadPlan(thread_plan_sp, abort_other_plans);
+  return error.Success() ? thread_plan_sp : nullptr;
+}
+
+lldb::ThreadPlanSP ScriptedThread::QueueThreadPlanForStepInRange(
+    bool abort_other_plans, const LineEntry &line_entry,
+    const SymbolContext &addr_context, const char *step_in_target,
+    lldb::RunMode stop_other_threads, Status &status,
+    LazyBool step_in_avoids_code_without_debug_info,
+    LazyBool step_out_avoids_code_without_debug_info) {
+  lldb::ThreadPlanSP thread_plan_sp = Thread::QueueThreadPlanForStepInRange(
+      abort_other_plans, line_entry, addr_context, step_in_target,
+      stop_other_threads, status, step_in_avoids_code_without_debug_info,
+      step_out_avoids_code_without_debug_info);
+  Status error =
+      GetInterface()->QueueThreadPlan(thread_plan_sp, abort_other_plans);
+  return error.Success() ? thread_plan_sp : nullptr;
+}
+
+lldb::ThreadPlanSP ScriptedThread::QueueThreadPlanForStepOut(
+    bool abort_other_plans, SymbolContext *addr_context, bool first_insn,
+    bool stop_other_threads, Vote report_stop_vote, Vote report_run_vote,
+    uint32_t frame_idx, Status &status,
+    LazyBool step_out_avoids_code_without_debug_info) {
+  lldb::ThreadPlanSP thread_plan_sp = Thread::QueueThreadPlanForStepOut(
+      abort_other_plans, addr_context, first_insn, stop_other_threads,
+      report_stop_vote, report_run_vote, frame_idx, status,
+      step_out_avoids_code_without_debug_info);
+  Status error =
+      GetInterface()->QueueThreadPlan(thread_plan_sp, abort_other_plans);
+  return error.Success() ? thread_plan_sp : nullptr;
+}
+
+lldb::ThreadPlanSP ScriptedThread::QueueThreadPlanForStepOutNoShouldStop(
+    bool abort_other_plans, SymbolContext *addr_context, bool first_insn,
+    bool stop_other_threads, Vote report_stop_vote, Vote report_run_vote,
+    uint32_t frame_idx, Status &status, bool continue_to_next_branch) {
+  lldb::ThreadPlanSP thread_plan_sp =
+      Thread::QueueThreadPlanForStepOutNoShouldStop(
+          abort_other_plans, addr_context, first_insn, stop_other_threads,
+          report_stop_vote, report_run_vote, frame_idx, status,
+          continue_to_next_branch);
+  Status error =
+      GetInterface()->QueueThreadPlan(thread_plan_sp, abort_other_plans);
+  return error.Success() ? thread_plan_sp : nullptr;
+}
+
+lldb::ThreadPlanSP ScriptedThread::QueueThreadPlanForStepThrough(
+    StackID &return_stack_id, bool abort_other_plans, bool stop_other_threads,
+    Status &status) {
+  lldb::ThreadPlanSP thread_plan_sp = Thread::QueueThreadPlanForStepThrough(
+      return_stack_id, abort_other_plans, stop_other_threads, status);
+  Status error =
+      GetInterface()->QueueThreadPlan(thread_plan_sp, abort_other_plans);
+  return error.Success() ? thread_plan_sp : nullptr;
+}
+
+lldb::ThreadPlanSP ScriptedThread::QueueThreadPlanForRunToAddress(
+    bool abort_other_plans, Address &target_addr, bool stop_other_threads,
+    Status &status) {
+  lldb::ThreadPlanSP thread_plan_sp = Thread::QueueThreadPlanForRunToAddress(
+      abort_other_plans, target_addr, stop_other_threads, status);
+  Status error =
+      GetInterface()->QueueThreadPlan(thread_plan_sp, abort_other_plans);
+  return error.Success() ? thread_plan_sp : nullptr;
+}
+
+lldb::ThreadPlanSP ScriptedThread::QueueThreadPlanForStepUntil(
+    bool abort_other_plans, lldb::addr_t *address_list, size_t num_addresses,
+    bool stop_others, uint32_t frame_idx, Status &status) {
+  lldb::ThreadPlanSP thread_plan_sp = Thread::QueueThreadPlanForStepUntil(
+      abort_other_plans, address_list, num_addresses, stop_others, frame_idx,
+      status);
+  Status error =
+      GetInterface()->QueueThreadPlan(thread_plan_sp, abort_other_plans);
+  return error.Success() ? thread_plan_sp : nullptr;
+}
+
+lldb::ThreadPlanSP ScriptedThread::QueueThreadPlanForStepScripted(
+    bool abort_other_plans, const char *class_name,
+    StructuredData::ObjectSP extra_args_sp, bool stop_other_threads,
+    Status &status) {
+  lldb::ThreadPlanSP thread_plan_sp = Thread::QueueThreadPlanForStepScripted(
+      abort_other_plans, class_name, extra_args_sp, stop_other_threads, status);
+
+  Status error =
+      GetInterface()->QueueThreadPlan(thread_plan_sp, abort_other_plans);
+  return error.Success() ? thread_plan_sp : nullptr;
+}

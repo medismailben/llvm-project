@@ -156,4 +156,10 @@ StructuredData::ArraySP ScriptedThreadPythonInterface::GetExtendedInfo() {
   return arr;
 }
 
+Status ScriptedThreadPythonInterface::QueueThreadPlan(
+    lldb::ThreadPlanSP thread_plan_sp, bool abort_other_plans) {
+  return GetStatusFromMethod("queue_thread_plan", thread_plan_sp,
+                             abort_other_plans);
+}
+
 #endif

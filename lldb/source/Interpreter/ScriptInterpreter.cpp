@@ -112,6 +112,11 @@ ScriptInterpreter::GetOpaqueTypeFromSBMemoryRegionInfo(
   return *mem_region.m_opaque_up.get();
 }
 
+lldb::ThreadPlanSP ScriptInterpreter::GetOpaqueTypeFromSBThreadPlan(
+    const lldb::SBThreadPlan &thread_plan) const {
+  return thread_plan.GetSP();
+}
+
 lldb::ScriptLanguage
 ScriptInterpreter::StringToLanguage(const llvm::StringRef &language) {
   if (language.equals_insensitive(LanguageToString(eScriptLanguageNone)))

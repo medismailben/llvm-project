@@ -45,6 +45,9 @@ public:
   std::optional<std::string> GetRegisterContext() override;
 
   StructuredData::ArraySP GetExtendedInfo() override;
+
+  Status QueueThreadPlan(lldb::ThreadPlanSP thread_plan_sp,
+                         bool abort_other_plans) override;
 };
 } // namespace lldb_private
 

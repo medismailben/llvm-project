@@ -264,6 +264,7 @@ void *LLDBSWIGPython_CastPyObjectToSBLaunchInfo(PyObject *data);
 void *LLDBSWIGPython_CastPyObjectToSBError(PyObject *data);
 void *LLDBSWIGPython_CastPyObjectToSBValue(PyObject *data);
 void *LLDBSWIGPython_CastPyObjectToSBMemoryRegionInfo(PyObject *data);
+void *LLDBSWIGPython_CastPyObjectToSBThreadPlan(PyObject *data);
 } // namespace python
 
 } // namespace lldb_private

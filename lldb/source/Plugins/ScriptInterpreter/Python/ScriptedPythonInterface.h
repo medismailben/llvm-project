@@ -134,6 +134,10 @@ protected:
     return python::SWIGBridge::ToSWIGWrapper(arg);
   }
 
+  python::PythonObject Transform(lldb::ThreadPlanSP arg) {
+    return python::SWIGBridge::ToSWIGWrapper(arg);
+  }
+
   template <typename T, typename U>
   void ReverseTransform(T &original_arg, U transformed_arg, Status &error) {
     // If U is not a PythonObject, don't touch it!
@@ -250,6 +254,11 @@ template <>
 std::optional<MemoryRegionInfo>
 ScriptedPythonInterface::ExtractValueFromPythonObject<
     std::optional<MemoryRegionInfo>>(python::PythonObject &p, Status &error);
+
+template <>
+lldb::ThreadPlanSP
+ScriptedPythonInterface::ExtractValueFromPythonObject<lldb::ThreadPlanSP>(
+    python::PythonObject &p, Status &error);
 
 } // namespace lldb_private
 

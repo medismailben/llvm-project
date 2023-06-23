@@ -180,6 +180,11 @@ void *lldb_private::python::LLDBSWIGPython_CastPyObjectToSBMemoryRegionInfo(
   return nullptr;
 }
 
+void *lldb_private::python::LLDBSWIGPython_CastPyObjectToSBThreadPlan(
+    PyObject *data) {
+  return nullptr;
+}
+
 lldb::ValueObjectSP
 lldb_private::python::SWIGBridge::LLDBSWIGPython_GetValueObjectSPFromSBValue(
     void *data) {

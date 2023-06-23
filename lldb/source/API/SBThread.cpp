@@ -1323,3 +1323,26 @@ SBValue SBThread::GetSiginfo() {
     return SBValue();
   return thread_sp->GetSiginfoValue();
 }
+
+SBError SBThread::QueueThreadPlan(const SBThreadPlan &thread_plan,
+                                  bool abort_other_plans) {
+  LLDB_INSTRUMENT_VA(this, thread_plan, abort_other_plans);
+
+  ThreadSP thread_sp = m_opaque_sp->GetThreadSP();
+  if (!thread_sp)
+    return SBError("Couldn't get thread opaque pointer.");
+  ThreadPlanSP thread_plan_sp = thread_plan.GetSP();
+  if (!thread_plan_sp)
+    return SBError("Couldn't get thread plan opaque pointer.");
+
+  return thread_sp->QueueThreadPlan(thread_plan_sp, abort_other_plans);
+}
+
+lldb::StateType SBThread::GetState() const {
+  LLDB_INSTRUMENT_VA(this);
+
+  ThreadSP thread_sp = m_opaque_sp->GetThreadSP();
+  if (!thread_sp)
+    return eStateInvalid;
+  return thread_sp->GetState();
+}
