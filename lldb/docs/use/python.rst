@@ -11,6 +11,15 @@ some of these things by going through an example, explaining how to use
 Python scripting to find a bug in a program that searches for text in a
 large binary tree.
 
+Operating System Thread Plugins
+-------------------------------
+
+.. literalinclude:: ../../examples/python/templates/operating_system.py
+   :language: python
+   :linenos:
+   :encoding: utf-8
+   :pyobject: OperatingSystem
+
 The Test Program and Input
 --------------------------
 
