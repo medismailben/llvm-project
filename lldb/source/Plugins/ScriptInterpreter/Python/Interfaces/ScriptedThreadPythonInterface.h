@@ -22,7 +22,7 @@ class ScriptedThreadPythonInterface : public ScriptedThreadInterface,
                                       public ScriptedPythonInterface {
 public:
   ScriptedThreadPythonInterface(ScriptInterpreterPythonImpl &interpreter);
-
+                                      
   StructuredData::GenericSP
   CreatePluginObject(llvm::StringRef class_name, ExecutionContext &exe_ctx,
                      StructuredData::DictionarySP args_sp,

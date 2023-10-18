@@ -23,7 +23,7 @@ class OperatingSystemPythonInterface
       virtual public ScriptedThreadPythonInterface {
 public:
   OperatingSystemPythonInterface(ScriptInterpreterPythonImpl &interpreter);
-
+        
   StructuredData::GenericSP
   CreatePluginObject(llvm::StringRef class_name, ExecutionContext &exe_ctx,
                      StructuredData::DictionarySP args_sp,

@@ -22,10 +22,10 @@ public:
   StructuredData::GenericSP
   CreatePluginObject(llvm::StringRef class_name, ExecutionContext &exe_ctx,
                      StructuredData::DictionarySP args_sp,
-                     StructuredData::Generic *script_obj = nullptr) override {
+                     StructuredData::Generic *script_obj = nullptr) {
     return {};
   }
-
+  
   virtual StructuredData::DictionarySP ListProcesses() { return {}; }
 
   virtual StructuredData::DictionarySP GetProcessInfo(lldb::pid_t) {

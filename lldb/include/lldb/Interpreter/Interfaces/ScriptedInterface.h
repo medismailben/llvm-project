@@ -10,25 +10,14 @@
 #define LLDB_INTERPRETER_INTERFACES_SCRIPTEDINTERFACE_H
 
 #include "lldb/Core/StructuredDataImpl.h"
-#include "lldb/Target/ExecutionContext.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
-#include "lldb/lldb-private.h"
-
-#include "llvm/Support/Compiler.h"
-
-#include <string>
 
 namespace lldb_private {
 class ScriptedInterface {
 public:
   ScriptedInterface() = default;
   virtual ~ScriptedInterface() = default;
-
-  virtual StructuredData::GenericSP
-  CreatePluginObject(llvm::StringRef class_name, ExecutionContext &exe_ctx,
-                     StructuredData::DictionarySP args_sp,
-                     StructuredData::Generic *script_obj = nullptr) = 0;
 
   StructuredData::GenericSP GetScriptObjectInstance() {
     return m_object_instance_sp;
@@ -54,7 +43,7 @@ public:
   }
 
   template <typename T = StructuredData::ObjectSP>
-  bool CheckStructuredDataObject(llvm::StringRef caller, T obj, Status &error) {
+  static bool CheckStructuredDataObject(llvm::StringRef caller, T obj, Status &error) {
     if (!obj)
       return ErrorWithMessage<bool>(caller, "Null Structured Data object",
                                     error);

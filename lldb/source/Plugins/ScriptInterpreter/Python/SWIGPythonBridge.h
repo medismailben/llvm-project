@@ -152,21 +152,6 @@ public:
                                     const char *session_dictionary_name,
                                     lldb::DebuggerSP debugger_sp);
 
-  static python::PythonObject LLDBSwigPythonCreateScriptedThreadPlan(
-      const char *python_class_name, const char *session_dictionary_name,
-      const StructuredDataImpl &args_data, std::string &error_string,
-      const lldb::ThreadPlanSP &thread_plan_sp);
-
-  static bool LLDBSWIGPythonCallThreadPlan(void *implementor,
-                                           const char *method_name,
-                                           lldb_private::Event *event_sp,
-                                           bool &got_error);
-
-  static bool LLDBSWIGPythonCallThreadPlan(void *implementor,
-                                           const char *method_name,
-                                           lldb_private::Stream *stream,
-                                           bool &got_error);
-
   static python::PythonObject LLDBSwigPythonCreateScriptedBreakpointResolver(
       const char *python_class_name, const char *session_dictionary_name,
       const StructuredDataImpl &args, const lldb::BreakpointSP &bkpt_sp);

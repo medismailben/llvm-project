@@ -22,12 +22,6 @@ class ScriptedPlatformPythonInterface : public ScriptedPlatformInterface,
 public:
   ScriptedPlatformPythonInterface(ScriptInterpreterPythonImpl &interpreter);
 
-  StructuredData::GenericSP
-  CreatePluginObject(const llvm::StringRef class_name,
-                     ExecutionContext &exe_ctx,
-                     StructuredData::DictionarySP args_sp,
-                     StructuredData::Generic *script_obj = nullptr) override;
-
   StructuredData::DictionarySP ListProcesses() override;
 
   StructuredData::DictionarySP GetProcessInfo(lldb::pid_t) override;

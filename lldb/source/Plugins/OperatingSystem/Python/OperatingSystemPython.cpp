@@ -116,8 +116,7 @@ OperatingSystemPython::OperatingSystemPython(lldb_private::Process *process,
 
   ExecutionContext exe_ctx(process);
   StructuredData::GenericSP owned_script_object_sp =
-      operating_system_interface->CreatePluginObject(os_plugin_class_name,
-                                                     exe_ctx, nullptr);
+      operating_system_interface->CreatePluginObject(os_plugin_class_name, exe_ctx, nullptr);
 
   if (!owned_script_object_sp)
     //    return llvm::createStringError(llvm::inconvertibleErrorCode(),

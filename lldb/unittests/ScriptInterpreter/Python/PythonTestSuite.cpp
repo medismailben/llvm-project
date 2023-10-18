@@ -96,26 +96,6 @@ lldb_private::python::SWIGBridge::LLDBSwigPythonCreateCommandObject(
   return python::PythonObject();
 }
 
-python::PythonObject
-lldb_private::python::SWIGBridge::LLDBSwigPythonCreateScriptedThreadPlan(
-    const char *python_class_name, const char *session_dictionary_name,
-    const StructuredDataImpl &args_data, std::string &error_string,
-    const lldb::ThreadPlanSP &thread_plan_sp) {
-  return python::PythonObject();
-}
-
-bool lldb_private::python::SWIGBridge::LLDBSWIGPythonCallThreadPlan(
-    void *implementor, const char *method_name, Event *event_sp,
-    bool &got_error) {
-  return false;
-}
-
-bool lldb_private::python::SWIGBridge::LLDBSWIGPythonCallThreadPlan(
-    void *implementor, const char *method_name, Stream *event_sp,
-    bool &got_error) {
-  return false;
-}
-
 python::PythonObject lldb_private::python::SWIGBridge::
     LLDBSwigPythonCreateScriptedBreakpointResolver(
         const char *python_class_name, const char *session_dictionary_name,

@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "lldb/Host/Config.h"
+#include "lldb/Target/ExecutionContext.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/lldb-enumerations.h"
 
@@ -28,11 +29,11 @@ OperatingSystemPythonInterface::OperatingSystemPythonInterface(
     ScriptInterpreterPythonImpl &interpreter)
     : OperatingSystemInterface(), ScriptedThreadPythonInterface(interpreter) {}
 
-StructuredData::GenericSP OperatingSystemPythonInterface::CreatePluginObject(
-    llvm::StringRef class_name, ExecutionContext &exe_ctx,
-    StructuredData::DictionarySP args_sp, StructuredData::Generic *script_obj) {
-  return ScriptedThreadPythonInterface::CreatePluginObject(class_name, exe_ctx,
-                                                           args_sp, script_obj);
+StructuredData::GenericSP
+OperatingSystemPythonInterface::CreatePluginObject(llvm::StringRef class_name, ExecutionContext &exe_ctx,
+                                                   StructuredData::DictionarySP args_sp,
+                                                   StructuredData::Generic *script_obj) {
+  return ScriptedPythonInterface::CreatePluginObject(class_name, nullptr, exe_ctx.GetProcessSP());
 }
 
 StructuredData::DictionarySP
@@ -42,7 +43,7 @@ OperatingSystemPythonInterface::CreateThread(lldb::tid_t tid,
   StructuredData::DictionarySP dict = Dispatch<StructuredData::DictionarySP>(
       "create_thread", error, tid, context);
 
-  if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, dict, error))
+  if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, dict, error))
     return {};
 
   return dict;
@@ -53,7 +54,7 @@ StructuredData::ArraySP OperatingSystemPythonInterface::GetThreadInfo() {
   StructuredData::ArraySP arr =
       Dispatch<StructuredData::ArraySP>("get_thread_info", error);
 
-  if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, arr, error))
+  if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, arr, error))
     return {};
 
   return arr;
@@ -68,7 +69,7 @@ OperatingSystemPythonInterface::GetRegisterContextForTID(lldb::tid_t tid) {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("get_register_data", error, tid);
 
-  if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj, error))
+  if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj, error))
     return {};
 
   return obj->GetAsString()->GetValue().str();
