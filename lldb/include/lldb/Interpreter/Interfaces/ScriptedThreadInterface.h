@@ -18,15 +18,15 @@
 #include <string>
 
 namespace lldb_private {
-class ScriptedThreadInterface : virtual public ScriptedInterface {
+class ScriptedThreadInterface : public ScriptedInterface {
 public:
-  StructuredData::GenericSP
+  virtual StructuredData::GenericSP
   CreatePluginObject(llvm::StringRef class_name, ExecutionContext &exe_ctx,
                      StructuredData::DictionarySP args_sp,
-                     StructuredData::Generic *script_obj = nullptr) override {
+                     StructuredData::Generic *script_obj = nullptr) {
     return {};
   }
-
+  
   virtual lldb::tid_t GetThreadID() { return LLDB_INVALID_THREAD_ID; }
 
   virtual std::optional<std::string> GetName() { return std::nullopt; }

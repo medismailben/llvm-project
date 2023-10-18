@@ -21,13 +21,13 @@
 namespace lldb_private {
 class ScriptedProcessInterface : virtual public ScriptedInterface {
 public:
-  StructuredData::GenericSP
+  virtual StructuredData::GenericSP
   CreatePluginObject(llvm::StringRef class_name, ExecutionContext &exe_ctx,
                      StructuredData::DictionarySP args_sp,
-                     StructuredData::Generic *script_obj = nullptr) override {
+                     StructuredData::Generic *script_obj = nullptr) {
     return {};
   }
-
+  
   virtual StructuredData::DictionarySP GetCapabilities() { return {}; }
 
   virtual Status Attach(const ProcessAttachInfo &attach_info) {

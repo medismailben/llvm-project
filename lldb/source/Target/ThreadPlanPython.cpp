@@ -32,6 +32,24 @@ ThreadPlanPython::ThreadPlanPython(Thread &thread, const char *class_name,
                  eVoteNoOpinion, eVoteNoOpinion),
       m_class_name(class_name), m_args_data(args_data), m_did_push(false),
       m_stop_others(false) {
+  ScriptInterpreter* interpreter = GetScriptInterpreter();
+  if (!interpreter) {
+    SetPlanComplete(false);
+    // FIXME: error handling
+    return;
+  }
+
+        
+  m_interface = interpreter->CreateScriptedThreadPlanInterface();
+  if (!m_interface) {
+    SetPlanComplete(false);
+    // FIXME: error handling
+    // error.SetErrorStringWithFormat(
+    //     "ThreadPlanPython::%s () - ERROR: %s", __FUNCTION__,
+    //     "Script interpreter couldn't create Scripted Thread Plan Interface");
+    return;
+  }
+        
   SetIsControllingPlan(true);
   SetOkayToDiscard(true);
   SetPrivate(false);
@@ -60,14 +78,8 @@ void ThreadPlanPython::DidPush() {
   // We set up the script side in DidPush, so that it can push other plans in
   // the constructor, and doesn't have to care about the details of DidPush.
   m_did_push = true;
-  if (!m_class_name.empty()) {
-    ScriptInterpreter *script_interp = GetScriptInterpreter();
-    if (script_interp) {
-      m_implementation_sp = script_interp->CreateScriptedThreadPlan(
-          m_class_name.c_str(), m_args_data, m_error_str, 
-          this->shared_from_this());
-    }
-  }
+  if (m_interface)
+    m_implementation_sp = m_interface->CreatePluginObject(m_class_name, this->shared_from_this(), m_args_data);
 }
 
 bool ThreadPlanPython::ShouldStop(Event *event_ptr) {
@@ -80,10 +92,9 @@ bool ThreadPlanPython::ShouldStop(Event *event_ptr) {
     ScriptInterpreter *script_interp = GetScriptInterpreter();
     if (script_interp) {
       bool script_error;
-      should_stop = script_interp->ScriptedThreadPlanShouldStop(
-          m_implementation_sp, event_ptr, script_error);
-      if (script_error)
-        SetPlanComplete(false);
+      should_stop = m_interface->ShouldStop(event_ptr);
+//      if (script_error)
+//        SetPlanComplete(false);
     }
   }
   return should_stop;
@@ -99,10 +110,9 @@ bool ThreadPlanPython::IsPlanStale() {
     ScriptInterpreter *script_interp = GetScriptInterpreter();
     if (script_interp) {
       bool script_error;
-      is_stale = script_interp->ScriptedThreadPlanIsStale(m_implementation_sp,
-                                                          script_error);
-      if (script_error)
-        SetPlanComplete(false);
+      is_stale = m_interface->IsStale();
+//      if (script_error)
+//        SetPlanComplete(false);
     }
   }
   return is_stale;
@@ -118,10 +128,9 @@ bool ThreadPlanPython::DoPlanExplainsStop(Event *event_ptr) {
     ScriptInterpreter *script_interp = GetScriptInterpreter();
     if (script_interp) {
       bool script_error;
-      explains_stop = script_interp->ScriptedThreadPlanExplainsStop(
-          m_implementation_sp, event_ptr, script_error);
-      if (script_error)
-        SetPlanComplete(false);
+      explains_stop = m_interface->ExplainsStop(event_ptr);
+//      if (script_error)
+//        SetPlanComplete(false);
     }
   }
   return explains_stop;
@@ -154,8 +163,7 @@ lldb::StateType ThreadPlanPython::GetPlanRunState() {
     ScriptInterpreter *script_interp = GetScriptInterpreter();
     if (script_interp) {
       bool script_error;
-      run_state = script_interp->ScriptedThreadPlanGetRunState(
-          m_implementation_sp, script_error);
+      run_state = m_interface->GetRunState();
     }
   }
   return run_state;
@@ -168,9 +176,8 @@ void ThreadPlanPython::GetDescription(Stream *s, lldb::DescriptionLevel level) {
   if (m_implementation_sp) {
     ScriptInterpreter *script_interp = GetScriptInterpreter();
     if (script_interp) {
-      bool script_error;
-      bool added_desc = script_interp->ScriptedThreadPlanGetStopDescription(
-          m_implementation_sp, s, script_error);
+      bool script_error = true;
+      bool added_desc = m_interface->GetStopDescription(s);
       if (script_error || !added_desc)
         s->Printf("Python thread plan implemented by class %s.",
             m_class_name.c_str());
