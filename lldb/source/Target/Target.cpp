@@ -3899,10 +3899,11 @@ void Target::StopHookScripted::GetSubclassDescription(
   s.Indent("Args:\n");
   s.SetIndentLevel(s.GetIndentLevel() + 4);
 
-  auto print_one_element = [&s](llvm::StringRef key,
+  auto print_one_element = [&s](ConstString key,
                                 StructuredData::Object *object) {
     s.Indent();
-    s.Format("{0} : {1}\n", key, object->GetStringValue());
+    s.Printf("%s : %s\n", key.GetCString(),
+              object->GetStringValue().str().c_str());
     return true;
   };
 
