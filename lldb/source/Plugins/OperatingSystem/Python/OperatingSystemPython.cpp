@@ -115,13 +115,15 @@ OperatingSystemPython::OperatingSystemPython(lldb_private::Process *process,
     return;
 
   ExecutionContext exe_ctx(process);
-  StructuredData::GenericSP owned_script_object_sp =
-      operating_system_interface->CreatePluginObject(os_plugin_class_name, exe_ctx, nullptr);
+  auto obj_or_err = operating_system_interface->CreatePluginObject(
+      os_plugin_class_name, exe_ctx, nullptr);
 
-  if (!owned_script_object_sp)
-    //    return llvm::createStringError(llvm::inconvertibleErrorCode(),
-    //                                   "Failed to create script object.");
+  if (!obj_or_err) {
+    llvm::consumeError(obj_or_err.takeError());
     return;
+  }
+
+  StructuredData::GenericSP owned_script_object_sp = *obj_or_err;
   if (!owned_script_object_sp->IsValid())
     //    return llvm::createStringError(llvm::inconvertibleErrorCode(),
     //                                   "Created script object is invalid.");

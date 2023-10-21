@@ -78,8 +78,15 @@ void ThreadPlanPython::DidPush() {
   // We set up the script side in DidPush, so that it can push other plans in
   // the constructor, and doesn't have to care about the details of DidPush.
   m_did_push = true;
-  if (m_interface)
-    m_implementation_sp = m_interface->CreatePluginObject(m_class_name, this->shared_from_this(), m_args_data);
+  if (m_interface) {
+    auto obj_or_err = m_interface->CreatePluginObject(
+        m_class_name, this->shared_from_this(), m_args_data);
+    if (!obj_or_err) {
+      m_error_str = llvm::toString(obj_or_err.takeError());
+      SetPlanComplete(false);
+    } else
+      m_implementation_sp = *obj_or_err;
+  }
 }
 
 bool ThreadPlanPython::ShouldStop(Event *event_ptr) {
@@ -89,13 +96,12 @@ bool ThreadPlanPython::ShouldStop(Event *event_ptr) {
 
   bool should_stop = true;
   if (m_implementation_sp) {
-    ScriptInterpreter *script_interp = GetScriptInterpreter();
-    if (script_interp) {
-      bool script_error;
-      should_stop = m_interface->ShouldStop(event_ptr);
-//      if (script_error)
-//        SetPlanComplete(false);
-    }
+    auto should_stop_or_err = m_interface->ShouldStop(event_ptr);
+    if (!should_stop_or_err) {
+      llvm::consumeError(should_stop_or_err.takeError());
+      SetPlanComplete(false);
+    } else
+      should_stop = *should_stop_or_err;
   }
   return should_stop;
 }
@@ -107,13 +113,12 @@ bool ThreadPlanPython::IsPlanStale() {
 
   bool is_stale = true;
   if (m_implementation_sp) {
-    ScriptInterpreter *script_interp = GetScriptInterpreter();
-    if (script_interp) {
-      bool script_error;
-      is_stale = m_interface->IsStale();
-//      if (script_error)
-//        SetPlanComplete(false);
-    }
+    auto is_stale_or_err = m_interface->IsStale();
+    if (!is_stale_or_err) {
+      llvm::consumeError(is_stale_or_err.takeError());
+      SetPlanComplete(false);
+    } else
+      is_stale = *is_stale_or_err;
   }
   return is_stale;
 }
@@ -125,13 +130,12 @@ bool ThreadPlanPython::DoPlanExplainsStop(Event *event_ptr) {
 
   bool explains_stop = true;
   if (m_implementation_sp) {
-    ScriptInterpreter *script_interp = GetScriptInterpreter();
-    if (script_interp) {
-      bool script_error;
-      explains_stop = m_interface->ExplainsStop(event_ptr);
-//      if (script_error)
-//        SetPlanComplete(false);
-    }
+    auto explains_stop_or_error = m_interface->ExplainsStop(event_ptr);
+    if (!explains_stop_or_error) {
+      llvm::consumeError(explains_stop_or_error.takeError());
+      SetPlanComplete(false);
+    } else
+      explains_stop = *explains_stop_or_error;
   }
   return explains_stop;
 }
@@ -159,13 +163,8 @@ lldb::StateType ThreadPlanPython::GetPlanRunState() {
   LLDB_LOGF(log, "%s called on Python Thread Plan: %s )", LLVM_PRETTY_FUNCTION,
             m_class_name.c_str());
   lldb::StateType run_state = eStateRunning;
-  if (m_implementation_sp) {
-    ScriptInterpreter *script_interp = GetScriptInterpreter();
-    if (script_interp) {
-      bool script_error;
-      run_state = m_interface->GetRunState();
-    }
-  }
+  if (m_implementation_sp)
+    run_state = m_interface->GetRunState();
   return run_state;
 }
 
@@ -176,11 +175,12 @@ void ThreadPlanPython::GetDescription(Stream *s, lldb::DescriptionLevel level) {
   if (m_implementation_sp) {
     ScriptInterpreter *script_interp = GetScriptInterpreter();
     if (script_interp) {
-      bool script_error = true;
-      bool added_desc = m_interface->GetStopDescription(s);
-      if (script_error || !added_desc)
+      auto desc_or_err = m_interface->GetStopDescription(s);
+      if (!desc_or_err || !*desc_or_err) {
+        llvm::consumeError(desc_or_err.takeError());
         s->Printf("Python thread plan implemented by class %s.",
             m_class_name.c_str());
+      }
     }
     return;
   }

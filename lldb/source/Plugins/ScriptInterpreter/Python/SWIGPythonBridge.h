@@ -96,12 +96,13 @@ public:
   static PythonObject ToSWIGWrapper(lldb::ExecutionContextRefSP ctx_sp);
   static PythonObject ToSWIGWrapper(const TypeSummaryOptions &summary_options);
   static PythonObject ToSWIGWrapper(const SymbolContext &sym_ctx);
+  static PythonObject ToSWIGWrapper(const Stream *stream);
+  static PythonObject ToSWIGWrapper(Event *arg);
 
   static PythonObject ToSWIGWrapper(lldb::ProcessAttachInfoSP attach_info_sp);
   static PythonObject ToSWIGWrapper(lldb::ProcessLaunchInfoSP launch_info_sp);
   static PythonObject ToSWIGWrapper(lldb::DataExtractorSP data_extractor_sp);
 
-  static PythonObject ToSWIGWrapper(std::unique_ptr<lldb::SBStream> stream_sb);
   static PythonObject
   ToSWIGWrapper(std::unique_ptr<lldb::SBStructuredData> data_sb);
   static PythonObject
@@ -111,7 +112,6 @@ public:
 
   static python::ScopedPythonObject<lldb::SBCommandReturnObject>
   ToSWIGWrapper(CommandReturnObject &cmd_retobj);
-  static python::ScopedPythonObject<lldb::SBEvent> ToSWIGWrapper(Event *event);
   // These prototypes are the Pythonic implementations of the required
   // callbacks. Although these are scripting-language specific, their definition
   // depends on the public API.
@@ -253,6 +253,8 @@ void *LLDBSWIGPython_CastPyObjectToSBBreakpoint(PyObject *data);
 void *LLDBSWIGPython_CastPyObjectToSBAttachInfo(PyObject *data);
 void *LLDBSWIGPython_CastPyObjectToSBLaunchInfo(PyObject *data);
 void *LLDBSWIGPython_CastPyObjectToSBError(PyObject *data);
+void *LLDBSWIGPython_CastPyObjectToSBEvent(PyObject *data);
+void *LLDBSWIGPython_CastPyObjectToSBStream(PyObject *data);
 void *LLDBSWIGPython_CastPyObjectToSBValue(PyObject *data);
 void *LLDBSWIGPython_CastPyObjectToSBMemoryRegionInfo(PyObject *data);
 } // namespace python

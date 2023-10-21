@@ -20,13 +20,13 @@
 namespace lldb_private {
 class ScriptedThreadInterface : public ScriptedInterface {
 public:
-  virtual StructuredData::GenericSP
+  virtual llvm::Expected<StructuredData::GenericSP>
   CreatePluginObject(llvm::StringRef class_name, ExecutionContext &exe_ctx,
                      StructuredData::DictionarySP args_sp,
                      StructuredData::Generic *script_obj = nullptr) {
-    return {};
+    llvm_unreachable("unimplemented!");
   }
-  
+
   virtual lldb::tid_t GetThreadID() { return LLDB_INVALID_THREAD_ID; }
 
   virtual std::optional<std::string> GetName() { return std::nullopt; }

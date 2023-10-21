@@ -30,7 +30,8 @@ ScriptedThreadPythonInterface::ScriptedThreadPythonInterface(
     ScriptInterpreterPythonImpl &interpreter)
     : ScriptedThreadInterface(), ScriptedPythonInterface(interpreter) {}
 
-StructuredData::GenericSP ScriptedThreadPythonInterface::CreatePluginObject(
+llvm::Expected<StructuredData::GenericSP>
+ScriptedThreadPythonInterface::CreatePluginObject(
     const llvm::StringRef class_name, ExecutionContext &exe_ctx,
     StructuredData::DictionarySP args_sp, StructuredData::Generic *script_obj) {
   ExecutionContextRefSP exe_ctx_ref_sp = std::make_shared<ExecutionContextRef>(exe_ctx);

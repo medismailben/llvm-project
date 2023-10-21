@@ -27,41 +27,41 @@ ScriptedThreadPlanPythonInterface::ScriptedThreadPlanPythonInterface(
     ScriptInterpreterPythonImpl &interpreter)
     : ScriptedThreadPlanInterface(), ScriptedPythonInterface(interpreter) {}
 
-
-StructuredData::GenericSP ScriptedThreadPlanPythonInterface::CreatePluginObject(
-                                                                            const llvm::StringRef class_name,
-                                                                                               lldb::ThreadPlanSP thread_plan_sp,
-                                                                                const StructuredDataImpl& args_sp) {
-  // FIXME: Not working
+llvm::Expected<StructuredData::GenericSP>
+ScriptedThreadPlanPythonInterface::CreatePluginObject(
+    const llvm::StringRef class_name, lldb::ThreadPlanSP thread_plan_sp,
+    const StructuredDataImpl &args_sp) {
   return ScriptedPythonInterface::CreatePluginObject(class_name, nullptr, thread_plan_sp, args_sp);
 }
 
-bool ScriptedThreadPlanPythonInterface::ExplainsStop(Event *event) {
+llvm::Expected<bool>
+ScriptedThreadPlanPythonInterface::ExplainsStop(Event *event) {
   Status error;
-  StructuredData::ObjectSP obj = Dispatch("explains_stop", error);
+  StructuredData::ObjectSP obj = Dispatch("explains_stop", error, event);
 
   if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj, error))
-    return false;
+    return error.ToError();
 
   return obj->GetBooleanValue();
 }
 
-bool ScriptedThreadPlanPythonInterface::ShouldStop(Event *event) {
+llvm::Expected<bool>
+ScriptedThreadPlanPythonInterface::ShouldStop(Event *event) {
   Status error;
-  StructuredData::ObjectSP obj = Dispatch("should_stop", error);
+  StructuredData::ObjectSP obj = Dispatch("should_stop", error, event);
 
   if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj, error))
-    return false;
+    return error.ToError();
 
   return obj->GetBooleanValue();
 }
 
-bool ScriptedThreadPlanPythonInterface::IsStale() {
+llvm::Expected<bool> ScriptedThreadPlanPythonInterface::IsStale() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("is_stale", error);
 
   if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj, error))
-    return false;
+    return error.ToError();
 
   return obj->GetBooleanValue();
 }
@@ -76,14 +76,15 @@ lldb::StateType ScriptedThreadPlanPythonInterface::GetRunState() {
   return static_cast<lldb::StateType>(obj->GetUnsignedIntegerValue(static_cast<uint32_t>(lldb::eStateStepping)));
 }
 
-bool ScriptedThreadPlanPythonInterface::GetStopDescription(lldb_private::Stream *s) {
+llvm::Expected<bool>
+ScriptedThreadPlanPythonInterface::GetStopDescription(lldb_private::Stream *s) {
   Status error;
-  StructuredData::ObjectSP obj = Dispatch("stop_description", error);
+  Dispatch("stop_description", error, s);
 
-  if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj, error))
-    return false;
+  if (error.Fail())
+    return error.ToError();
 
-  return obj->GetBooleanValue();
+  return true;
 }
 
 #endif

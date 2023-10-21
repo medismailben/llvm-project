@@ -16,22 +16,24 @@
 namespace lldb_private {
 class ScriptedThreadPlanInterface : public ScriptedInterface {
 public:
-  virtual StructuredData::GenericSP
+  virtual llvm::Expected<StructuredData::GenericSP>
   CreatePluginObject(llvm::StringRef class_name,
                      lldb::ThreadPlanSP thread_plan_sp,
-                     const StructuredDataImpl& args_sp) {
-    return {};
+                     const StructuredDataImpl &args_sp) {
+    llvm_unreachable("unimplemented!");
   }
-  
-  virtual bool ExplainsStop(Event *event) { return true; }
 
-  virtual bool ShouldStop(Event *event) { return true; }
+  virtual llvm::Expected<bool> ExplainsStop(Event *event) { return true; }
 
-  virtual bool IsStale() { return true; };
+  virtual llvm::Expected<bool> ShouldStop(Event *event) { return true; }
+
+  virtual llvm::Expected<bool> IsStale() { return true; };
 
   virtual lldb::StateType GetRunState() { return lldb::eStateStepping; }
 
-  virtual bool GetStopDescription(lldb_private::Stream *s) { return true; }
+  virtual llvm::Expected<bool> GetStopDescription(lldb_private::Stream *s) {
+    return true;
+  }
 };
 } // namespace lldb_private
 
