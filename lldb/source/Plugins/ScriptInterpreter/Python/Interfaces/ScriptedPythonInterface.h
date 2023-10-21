@@ -31,17 +31,20 @@ class ScriptedPythonInterface : virtual public ScriptedInterface {
 public:
   ScriptedPythonInterface(ScriptInterpreterPythonImpl &interpreter);
   ~ScriptedPythonInterface() override = default;
-  
-  template <typename ...Args>
-  StructuredData::GenericSP
+
+  template <typename... Args>
+  llvm::Expected<StructuredData::GenericSP>
   CreatePluginObject(llvm::StringRef class_name,
-                     StructuredData::Generic *script_obj, Args ...args) {
+                     StructuredData::Generic *script_obj, Args... args) {
     using namespace python;
     using Locker = ScriptInterpreterPythonImpl::Locker;
     
     std::string error_string;
     if (class_name.empty() && llvm::StringRef(m_interpreter.GetDictionaryName()).empty() && !script_obj)
-      return {};
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "ScriptedPythonInterface::CreatePluginObject - missing script class "
+          "name, dictionary or object.");
 
     Locker py_lock(&m_interpreter, Locker::AcquireLock | Locker::NoSTDIN,
                    Locker::FreeLock);
@@ -53,9 +56,10 @@ public:
       auto pfunc = PythonObject::ResolveNameWithDictionary<python::PythonCallable>(class_name, dict);
 
       if (!pfunc.IsAllocated()) {
-        error_string.append("could not find script class: ");
+        error_string.append("Could not find script class: ");
         error_string.append(class_name);
-        return {};
+        return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                       error_string);
       }
       
       std::tuple<Args...> original_args = std::forward_as_tuple(args...);
@@ -69,36 +73,31 @@ public:
             [&](const llvm::ErrorInfoBase &E) {
               error_string.append(E.message());
             });
-        return {};
+        return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                       error_string);
       }
       
       llvm::Expected<PythonObject> expected_return_object =
           llvm::make_error<llvm::StringError>("Not initialized.",
                                               llvm::inconvertibleErrorCode());
-      
+
       std::apply(
           [&pfunc, &expected_return_object](auto &&...args) {
             llvm::consumeError(expected_return_object.takeError());
             expected_return_object = pfunc(args...);
           },
           transformed_args);
-      
-      if (llvm::Error e = expected_return_object.takeError()) {
-        error_string.append(llvm::toString(std::move(e)));
-        return {};
-  //      return ErrorWithMessage<T>(caller_signature,
-  //                                 "Python method could not be called.", error);
-      }
 
+      if (llvm::Error e = expected_return_object.takeError())
+        return e;
       result = std::move(expected_return_object.get());
-      
     } else
       result = PythonObject(PyRefType::Borrowed,
                              static_cast<PyObject *>(script_obj->GetValue()));
-      
-    
+
     if (!result.IsValid())
-      return {};
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                     "python object result is invalid.");
 
     m_object_instance_sp = StructuredData::GenericSP(new StructuredPythonObject(std::move(result)));
     return m_object_instance_sp;
@@ -155,10 +154,6 @@ protected:
 
     PythonObject py_return = std::move(expected_return_object.get());
 
-    if (!py_return.IsAllocated())
-      return ErrorWithMessage<T>(caller_signature, "Returned object is null.",
-                                 error);
-
     // Now that we called the python method with the transformed arguments,
     // we need to interate again over both the original and transformed
     // parameter pack, and transform back the parameter that were passed in
@@ -169,6 +164,8 @@ protected:
             caller_signature,
             "Couldn't re-assign reference and pointer arguments.", error);
 
+    if (!py_return.IsAllocated())
+      return {};
     return ExtractValueFromPythonObject<T>(py_return, error);
   }
 
@@ -215,6 +212,10 @@ protected:
   }
 
   python::PythonObject Transform(lldb::ProcessLaunchInfoSP arg) {
+    return python::SWIGBridge::ToSWIGWrapper(arg);
+  }
+
+  python::PythonObject Transform(Event *arg) {
     return python::SWIGBridge::ToSWIGWrapper(arg);
   }
 
@@ -317,6 +318,10 @@ ScriptedPythonInterface::ExtractValueFromPythonObject<
 
 template <>
 Status ScriptedPythonInterface::ExtractValueFromPythonObject<Status>(
+    python::PythonObject &p, Status &error);
+
+template <>
+Event *ScriptedPythonInterface::ExtractValueFromPythonObject<Event *>(
     python::PythonObject &p, Status &error);
 
 template <>

@@ -111,13 +111,12 @@ SWIGBridge::ToSWIGWrapper(CommandReturnObject &cmd_retobj) {
       SWIGTYPE_p_lldb__SBCommandReturnObject);
 }
 
-ScopedPythonObject<lldb::SBEvent> SWIGBridge::ToSWIGWrapper(Event *event) {
-  return ScopedPythonObject<lldb::SBEvent>(new lldb::SBEvent(event),
-                                           SWIGTYPE_p_lldb__SBEvent);
-}
-
 PythonObject SWIGBridge::ToSWIGWrapper(const Stream *s) {
   return ToSWIGHelper(new lldb::SBStream(), SWIGTYPE_p_lldb__SBStream);
+}
+
+PythonObject SWIGBridge::ToSWIGWrapper(Event *event) {
+  return ToSWIGHelper(new lldb::SBEvent(event), SWIGTYPE_p_lldb__SBEvent);
 }
 
 PythonObject SWIGBridge::ToSWIGWrapper(

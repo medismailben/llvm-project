@@ -104,6 +104,11 @@ ScriptInterpreter::GetStatusFromSBError(const lldb::SBError &error) const {
   return Status();
 }
 
+Event *
+ScriptInterpreter::GetOpaqueTypeFromSBEvent(const lldb::SBEvent &event) const {
+  return event.get();
+}
+
 Stream *ScriptInterpreter::GetOpaqueTypeFromSBStream(
     const lldb::SBStream &stream) const {
   if (stream.m_opaque_up)

@@ -678,6 +678,18 @@ void *lldb_private::python::LLDBSWIGPython_CastPyObjectToSBError(PyObject * data
   return sb_ptr;
 }
 
+void *lldb_private::python::LLDBSWIGPython_CastPyObjectToSBEvent(PyObject * data) {
+  lldb::SBEvent *sb_ptr = nullptr;
+
+  int valid_cast =
+      SWIG_ConvertPtr(data, (void **)&sb_ptr, SWIGTYPE_p_lldb__SBEvent, 0);
+
+  if (valid_cast == -1)
+    return NULL;
+
+  return sb_ptr;
+}
+
 void *lldb_private::python::LLDBSWIGPython_CastPyObjectToSBStream(PyObject * data) {
   lldb::SBStream *sb_ptr = nullptr;
 

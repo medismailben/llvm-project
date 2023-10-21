@@ -22,22 +22,21 @@ class ScriptedThreadPlanPythonInterface : public ScriptedThreadPlanInterface,
                                           public ScriptedPythonInterface {
 public:
   ScriptedThreadPlanPythonInterface(ScriptInterpreterPythonImpl &interpreter);
-                                      
-  StructuredData::GenericSP
+
+  llvm::Expected<StructuredData::GenericSP>
   CreatePluginObject(const llvm::StringRef class_name,
                      lldb::ThreadPlanSP thread_plan_sp,
-                     const StructuredDataImpl& args_sp) override;
-                                        
-  bool ExplainsStop(Event *event) override;
+                     const StructuredDataImpl &args_sp) override;
 
-  bool ShouldStop(Event *event) override;
+  llvm::Expected<bool> ExplainsStop(Event *event) override;
 
-  bool IsStale() override;
+  llvm::Expected<bool> ShouldStop(Event *event) override;
+
+  llvm::Expected<bool> IsStale() override;
 
   lldb::StateType GetRunState() override;
 
-  bool GetStopDescription(lldb_private::Stream *s) override;
-
+  llvm::Expected<bool> GetStopDescription(lldb_private::Stream *s) override;
 };
 } // namespace lldb_private
 

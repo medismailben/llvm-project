@@ -13,6 +13,7 @@
 #include "lldb/API/SBBreakpoint.h"
 #include "lldb/API/SBData.h"
 #include "lldb/API/SBError.h"
+#include "lldb/API/SBEvent.h"
 #include "lldb/API/SBLaunchInfo.h"
 #include "lldb/API/SBMemoryRegionInfo.h"
 #include "lldb/API/SBStream.h"
@@ -567,6 +568,8 @@ public:
   GetDataExtractorFromSBData(const lldb::SBData &data) const;
 
   Status GetStatusFromSBError(const lldb::SBError &error) const;
+
+  Event *GetOpaqueTypeFromSBEvent(const lldb::SBEvent &event) const;
 
   Stream *GetOpaqueTypeFromSBStream(const lldb::SBStream &stream) const;
 

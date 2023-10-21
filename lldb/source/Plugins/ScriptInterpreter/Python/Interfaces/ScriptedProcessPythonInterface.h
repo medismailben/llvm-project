@@ -22,12 +22,12 @@ class ScriptedProcessPythonInterface : public ScriptedProcessInterface,
                                        public ScriptedPythonInterface {
 public:
   ScriptedProcessPythonInterface(ScriptInterpreterPythonImpl &interpreter);
-                                         
-  StructuredData::GenericSP
+
+  llvm::Expected<StructuredData::GenericSP>
   CreatePluginObject(const llvm::StringRef class_name,
-                    ExecutionContext &exe_ctx,
-                    StructuredData::DictionarySP args_sp,
-                    StructuredData::Generic *script_obj = nullptr) override;
+                     ExecutionContext &exe_ctx,
+                     StructuredData::DictionarySP args_sp,
+                     StructuredData::Generic *script_obj = nullptr) override;
 
   StructuredData::DictionarySP GetCapabilities() override;
 

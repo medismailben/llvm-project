@@ -27,6 +27,15 @@ ScriptedPythonInterface::ScriptedPythonInterface(
     : ScriptedInterface(), m_interpreter(interpreter) {}
 
 template <>
+void ScriptedPythonInterface::ReverseTransform(
+    lldb_private::Stream *&original_arg, python::PythonObject transformed_arg,
+    Status &error) {
+  Stream *s = ExtractValueFromPythonObject<Stream *>(transformed_arg, error);
+  *original_arg = *s;
+  original_arg->PutCString(static_cast<StreamString *>(s)->GetData());
+}
+
+template <>
 StructuredData::ArraySP
 ScriptedPythonInterface::ExtractValueFromPythonObject<StructuredData::ArraySP>(
     python::PythonObject &p, Status &error) {
@@ -52,6 +61,18 @@ Status ScriptedPythonInterface::ExtractValueFromPythonObject<Status>(
     error.SetErrorString("Couldn't cast lldb::SBError to lldb::Status.");
 
   return {};
+}
+
+template <>
+Event *ScriptedPythonInterface::ExtractValueFromPythonObject<Event *>(
+    python::PythonObject &p, Status &error) {
+  if (lldb::SBEvent *sb_event = reinterpret_cast<lldb::SBEvent *>(
+          python::LLDBSWIGPython_CastPyObjectToSBEvent(p.get())))
+    return m_interpreter.GetOpaqueTypeFromSBEvent(*sb_event);
+  else
+    error.SetErrorString("Couldn't cast lldb::SBEvent to lldb_private::Event.");
+
+  return nullptr;
 }
 
 template <>

@@ -29,10 +29,10 @@ OperatingSystemPythonInterface::OperatingSystemPythonInterface(
     ScriptInterpreterPythonImpl &interpreter)
     : OperatingSystemInterface(), ScriptedThreadPythonInterface(interpreter) {}
 
-StructuredData::GenericSP
-OperatingSystemPythonInterface::CreatePluginObject(llvm::StringRef class_name, ExecutionContext &exe_ctx,
-                                                   StructuredData::DictionarySP args_sp,
-                                                   StructuredData::Generic *script_obj) {
+llvm::Expected<StructuredData::GenericSP>
+OperatingSystemPythonInterface::CreatePluginObject(
+    llvm::StringRef class_name, ExecutionContext &exe_ctx,
+    StructuredData::DictionarySP args_sp, StructuredData::Generic *script_obj) {
   return ScriptedPythonInterface::CreatePluginObject(class_name, nullptr, exe_ctx.GetProcessSP());
 }
 
