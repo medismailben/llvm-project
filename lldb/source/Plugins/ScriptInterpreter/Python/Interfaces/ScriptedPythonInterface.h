@@ -218,6 +218,10 @@ protected:
     return python::SWIGBridge::ToSWIGWrapper(arg);
   }
 
+  python::PythonObject Transform(Stream *arg) {
+    return python::SWIGBridge::ToSWIGWrapper(arg);
+  }
+
   python::PythonObject Transform(lldb::DataExtractorSP arg) {
     return python::SWIGBridge::ToSWIGWrapper(arg);
   }
@@ -313,6 +317,10 @@ ScriptedPythonInterface::ExtractValueFromPythonObject<
 
 template <>
 Status ScriptedPythonInterface::ExtractValueFromPythonObject<Status>(
+    python::PythonObject &p, Status &error);
+
+template <>
+Stream *ScriptedPythonInterface::ExtractValueFromPythonObject<Stream *>(
     python::PythonObject &p, Status &error);
 
 template <>

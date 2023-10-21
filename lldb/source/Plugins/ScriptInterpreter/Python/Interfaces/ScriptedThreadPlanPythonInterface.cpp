@@ -78,7 +78,7 @@ lldb::StateType ScriptedThreadPlanPythonInterface::GetRunState() {
 
 bool ScriptedThreadPlanPythonInterface::GetStopDescription(lldb_private::Stream *s) {
   Status error;
-  StructuredData::ObjectSP obj = Dispatch("stop_description", error);
+  StructuredData::ObjectSP obj = Dispatch("stop_description", error, s);
 
   if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj, error))
     return false;

@@ -55,6 +55,19 @@ Status ScriptedPythonInterface::ExtractValueFromPythonObject<Status>(
 }
 
 template <>
+Stream *ScriptedPythonInterface::ExtractValueFromPythonObject<Stream *>(
+    python::PythonObject &p, Status &error) {
+  if (lldb::SBStream *sb_stream = reinterpret_cast<lldb::SBStream *>(
+          python::LLDBSWIGPython_CastPyObjectToSBStream(p.get())))
+    return m_interpreter.GetOpaqueTypeFromSBStream(*sb_stream);
+  else
+    error.SetErrorString(
+        "Couldn't cast lldb::SBStream to lldb_private::Stream.");
+
+  return nullptr;
+}
+
+template <>
 lldb::DataExtractorSP
 ScriptedPythonInterface::ExtractValueFromPythonObject<lldb::DataExtractorSP>(
     python::PythonObject &p, Status &error) {

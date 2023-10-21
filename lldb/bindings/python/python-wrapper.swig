@@ -427,7 +427,7 @@ bool lldb_private::python::SWIGBridge::LLDBSwigPythonStopHookCallHandleStop(
 
   auto *sb_stream = new lldb::SBStream();
   PythonObject sb_stream_arg =
-      SWIGBridge::ToSWIGWrapper(std::unique_ptr<lldb::SBStream>(sb_stream));
+      SWIGBridge::ToSWIGWrapper(stream.get());
   PythonObject result =
       pfunc(SWIGBridge::ToSWIGWrapper(std::move(exc_ctx_sp)), sb_stream_arg);
 
@@ -671,6 +671,18 @@ void *lldb_private::python::LLDBSWIGPython_CastPyObjectToSBError(PyObject * data
 
   int valid_cast =
       SWIG_ConvertPtr(data, (void **)&sb_ptr, SWIGTYPE_p_lldb__SBError, 0);
+
+  if (valid_cast == -1)
+    return NULL;
+
+  return sb_ptr;
+}
+
+void *lldb_private::python::LLDBSWIGPython_CastPyObjectToSBStream(PyObject * data) {
+  lldb::SBStream *sb_ptr = nullptr;
+
+  int valid_cast =
+      SWIG_ConvertPtr(data, (void **)&sb_ptr, SWIGTYPE_p_lldb__SBStream, 0);
 
   if (valid_cast == -1)
     return NULL;
