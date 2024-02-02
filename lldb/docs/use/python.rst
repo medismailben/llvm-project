@@ -11,6 +11,51 @@ some of these things by going through an example, explaining how to use
 Python scripting to find a bug in a program that searches for text in a
 large binary tree.
 
+Operating System Thread Plugins
+-------------------------------
+
+.. automodapi:: lldb.plugins.operating_system
+    :no-heading:    
+    :members:
+    :undoc-members:
+    :skip: command
+    :skip: declaration
+    :skip: in_range
+    :skip: is_numeric_type
+    :skip: lldb_iter
+    :no-inheritance-diagram:
+
+Scripted Process Plugins
+-------------------------------
+
+.. automodapi:: lldb.plugins.scripted_process
+    :no-heading:
+    :members:
+    :undoc-members:
+    :skip: ABCMeta
+    :skip: command
+    :skip: declaration
+    :skip: in_range
+    :skip: is_numeric_type
+    :skip: lldb_iter
+    :no-inheritance-diagram:
+
+Scripted Platform Plugins
+-------------------------------
+
+.. automodapi:: lldb.plugins.scripted_platform
+    :no-heading:
+    :members:
+    :undoc-members:
+    :skip: ABCMeta
+    :skip: command
+    :skip: declaration
+    :skip: in_range
+    :skip: is_numeric_type
+    :skip: lldb_iter
+    :no-inheritance-diagram:
+
+
 The Test Program and Input
 --------------------------
 
