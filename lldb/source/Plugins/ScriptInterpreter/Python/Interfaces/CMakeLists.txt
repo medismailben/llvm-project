@@ -19,6 +19,8 @@ if (LLDB_ENABLE_LIBEDIT)
   list(APPEND LLDB_LIBEDIT_LIBS LibEdit::LibEdit)
 endif()
 
+set_property(GLOBAL PROPERTY LLDB_EXTRA_SCRIPT_PLUGINS lldbPluginScriptedProcessPythonInterface)
+
 add_lldb_library(lldbPluginScriptInterpreterPythonInterfaces
   OperatingSystemPythonInterface.cpp
   ScriptedPythonInterface.cpp

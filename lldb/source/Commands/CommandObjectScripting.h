@@ -44,6 +44,37 @@ private:
   CommandOptions m_options;
 };
 
+class CommandObjectMultiwordScriptingTemplate : public CommandObjectMultiword {
+public:
+  CommandObjectMultiwordScriptingTemplate(CommandInterpreter &interpreter);
+
+  ~CommandObjectMultiwordScriptingTemplate() override;
+};
+
+class CommandObjectScriptingTemplateList : public CommandObjectParsed {
+public:
+  CommandObjectScriptingTemplateList(CommandInterpreter &interpreter);
+  ~CommandObjectScriptingTemplateList() override;
+  Options *GetOptions() override { return &m_options; }
+
+  class CommandOptions : public Options {
+  public:
+    CommandOptions() = default;
+    ~CommandOptions() override = default;
+    Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
+                          ExecutionContext *execution_context) override;
+    void OptionParsingStarting(ExecutionContext *execution_context) override;
+    llvm::ArrayRef<OptionDefinition> GetDefinitions() override;
+    lldb::ScriptLanguage language = lldb::eScriptLanguageNone;
+  };
+
+protected:
+  void DoExecute(Args &command, CommandReturnObject &result) override;
+
+private:
+  CommandOptions m_options;
+};
+
 } // namespace lldb_private
 
 #endif // LLDB_SOURCE_INTERPRETER_COMMANDOBJECTSCRIPT_H

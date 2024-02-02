@@ -830,7 +830,13 @@ let Command = "container add" in {
 }
 
 let Command = "scripting execute" in {
-  def script_language : Option<"language", "l">,
+  def scripting_execute_language : Option<"language", "l">,
+    EnumArg<"ScriptLang">, Desc<"Specify the scripting "
+    " language. If none is specific the default scripting language is used.">;
+}
+
+let Command = "scripting template list" in {
+  def scripting_template_list_language : Option<"language", "l">,
     EnumArg<"ScriptLang">, Desc<"Specify the scripting "
     " language. If none is specific the default scripting language is used.">;
 }
