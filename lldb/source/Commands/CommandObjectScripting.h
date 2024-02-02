@@ -1,4 +1,4 @@
-//===-- CommandObjectScript.h -----------------------------------*- C++ -*-===//
+//===-- CommandObjectScripting.h --------------------------------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -9,14 +9,21 @@
 #ifndef LLDB_SOURCE_INTERPRETER_COMMANDOBJECTSCRIPT_H
 #define LLDB_SOURCE_INTERPRETER_COMMANDOBJECTSCRIPT_H
 
-#include "lldb/Interpreter/CommandObject.h"
+#include "lldb/Interpreter/CommandObjectMultiword.h"
 
 namespace lldb_private {
 
-class CommandObjectScript : public CommandObjectRaw {
+class CommandObjectMultiwordScripting : public CommandObjectMultiword {
 public:
-  CommandObjectScript(CommandInterpreter &interpreter);
-  ~CommandObjectScript() override;
+  CommandObjectMultiwordScripting(CommandInterpreter &interpreter);
+
+  ~CommandObjectMultiwordScripting() override;
+};
+
+class CommandObjectScriptingExecute : public CommandObjectRaw {
+public:
+  CommandObjectScriptingExecute(CommandInterpreter &interpreter);
+  ~CommandObjectScriptingExecute() override;
   Options *GetOptions() override { return &m_options; }
 
   class CommandOptions : public Options {

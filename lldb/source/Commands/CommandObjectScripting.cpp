@@ -1,4 +1,4 @@
-//===-- CommandObjectScript.cpp -------------------------------------------===//
+//===-- CommandObjectScripting.cpp ----------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "CommandObjectScript.h"
+#include "CommandObjectScripting.h"
 #include "lldb/Core/Debugger.h"
 #include "lldb/DataFormatters/DataVisualization.h"
 #include "lldb/Host/Config.h"
@@ -21,10 +21,10 @@
 using namespace lldb;
 using namespace lldb_private;
 
-#define LLDB_OPTIONS_script
+#define LLDB_OPTIONS_scripting_execute
 #include "CommandOptions.inc"
 
-Status CommandObjectScript::CommandOptions::SetOptionValue(
+Status CommandObjectScriptingExecute::CommandOptions::SetOptionValue(
     uint32_t option_idx, llvm::StringRef option_arg,
     ExecutionContext *execution_context) {
   Status error;
@@ -46,27 +46,29 @@ Status CommandObjectScript::CommandOptions::SetOptionValue(
   return error;
 }
 
-void CommandObjectScript::CommandOptions::OptionParsingStarting(
+void CommandObjectScriptingExecute::CommandOptions::OptionParsingStarting(
     ExecutionContext *execution_context) {
   language = lldb::eScriptLanguageNone;
 }
 
 llvm::ArrayRef<OptionDefinition>
-CommandObjectScript::CommandOptions::GetDefinitions() {
-  return llvm::ArrayRef(g_script_options);
+CommandObjectScriptingExecute::CommandOptions::GetDefinitions() {
+  return llvm::ArrayRef(g_scripting_execute_options);
 }
 
-CommandObjectScript::CommandObjectScript(CommandInterpreter &interpreter)
+CommandObjectScriptingExecute::CommandObjectScriptingExecute(
+    CommandInterpreter &interpreter)
     : CommandObjectRaw(
-          interpreter, "script",
+          interpreter, "scripting execute",
           "Invoke the script interpreter with provided code and display any "
           "results.  Start the interactive interpreter if no code is supplied.",
-          "script [--language <scripting-language> --] [<script-code>]") {}
+          "scripting execute [--language <scripting-language> --] "
+          "[<script-code>]") {}
 
-CommandObjectScript::~CommandObjectScript() = default;
+CommandObjectScriptingExecute::~CommandObjectScriptingExecute() = default;
 
-void CommandObjectScript::DoExecute(llvm::StringRef command,
-                                    CommandReturnObject &result) {
+void CommandObjectScriptingExecute::DoExecute(llvm::StringRef command,
+                                              CommandReturnObject &result) {
   // Try parsing the language option but when the command contains a raw part
   // separated by the -- delimiter.
   OptionsWithRaw raw_args(command);
@@ -111,3 +113,19 @@ void CommandObjectScript::DoExecute(llvm::StringRef command,
   else
     result.SetStatus(eReturnStatusFailed);
 }
+
+#pragma mark CommandObjectMultiwordScripting
+
+// CommandObjectMultiwordScripting
+
+CommandObjectMultiwordScripting::CommandObjectMultiwordScripting(
+    CommandInterpreter &interpreter)
+    : CommandObjectMultiword(
+          interpreter, "scripting",
+          "Commands for operating on the scripting functionnalities.",
+          "scripting <subcommand> [<subcommand-options>]") {
+  LoadSubCommand("execute", CommandObjectSP(new CommandObjectScriptingExecute(
+                                interpreter)));
+}
+
+CommandObjectMultiwordScripting::~CommandObjectMultiwordScripting() = default;

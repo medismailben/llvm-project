@@ -32,7 +32,7 @@
 #include "Commands/CommandObjectQuit.h"
 #include "Commands/CommandObjectRegexCommand.h"
 #include "Commands/CommandObjectRegister.h"
-#include "Commands/CommandObjectScript.h"
+#include "Commands/CommandObjectScripting.h"
 #include "Commands/CommandObjectSession.h"
 #include "Commands/CommandObjectSettings.h"
 #include "Commands/CommandObjectSource.h"
@@ -504,6 +504,11 @@ void CommandInterpreter::Initialize() {
     AddAlias("re", cmd_obj_sp);
   }
 
+  cmd_obj_sp = GetCommandSPExact("scripting execute");
+  if (cmd_obj_sp) {
+    AddAlias("script", cmd_obj_sp);
+  }
+
   cmd_obj_sp = GetCommandSPExact("session history");
   if (cmd_obj_sp) {
     AddAlias("history", cmd_obj_sp);
@@ -555,7 +560,7 @@ void CommandInterpreter::LoadCommandDictionary() {
   REGISTER_COMMAND_OBJECT("process", CommandObjectMultiwordProcess);
   REGISTER_COMMAND_OBJECT("quit", CommandObjectQuit);
   REGISTER_COMMAND_OBJECT("register", CommandObjectRegister);
-  REGISTER_COMMAND_OBJECT("script", CommandObjectScript);
+  REGISTER_COMMAND_OBJECT("scripting", CommandObjectMultiwordScripting);
   REGISTER_COMMAND_OBJECT("settings", CommandObjectMultiwordSettings);
   REGISTER_COMMAND_OBJECT("session", CommandObjectSession);
   REGISTER_COMMAND_OBJECT("source", CommandObjectMultiwordSource);
