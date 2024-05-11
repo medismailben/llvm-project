@@ -71,7 +71,7 @@ bool GetAssertLocation(llvm::Triple::OSType os, SymbolLocation &location) {
   switch (os) {
   case llvm::Triple::Darwin:
   case llvm::Triple::MacOSX:
-    location.module_spec = FileSpec("libsystem_c.dylib");
+    location.module_spec = FileSpec("libsystem_kernel.dylib");
     location.symbols.push_back(ConstString("__assert_rtn"));
     break;
   case llvm::Triple::Linux:

@@ -72,6 +72,7 @@
 
 #include "lldb/Target/Language.h"
 #include "lldb/Target/Process.h"
+#include "lldb/Target/StackFrameRecognizer.h"
 #include "lldb/Target/StopInfo.h"
 #include "lldb/Target/TargetList.h"
 #include "lldb/Target/Thread.h"
@@ -3106,6 +3107,11 @@ void CommandInterpreter::IOHandlerInputComplete(IOHandler &io_handler,
   ExecutionContext exe_ctx = m_debugger.GetSelectedExecutionContext();
   bool pushed_exe_ctx = false;
   if (exe_ctx.HasTargetScope()) {
+    if (exe_ctx.HasFrameScope()) {
+      if (auto recognizer_sp = exe_ctx.GetFrameRef().GetRecognizedFrame())
+        if (auto most_relevant_frame_sp = recognizer_sp->GetMostRelevantFrame())
+          exe_ctx.SetFrameSP(most_relevant_frame_sp);
+    }
     OverrideExecutionContext(exe_ctx);
     pushed_exe_ctx = true;
   }
