@@ -1404,3 +1404,28 @@ lldb::SBScriptObject SBProcess::GetScriptedImplementation() {
                                            : nullptr,
                               eScriptLanguageDefault);
 }
+
+lldb::SBStructuredData SBProcess::GetHostOSVersion() const {
+  LLDB_INSTRUMENT_VA(this);
+  ProcessSP process_sp(GetSP());
+  if (!process_sp)
+    return {};
+
+  llvm::VersionTuple v = process_sp->GetHostOSVersion();
+  if (v.empty())
+    return {};
+
+  StructuredData::DictionarySP dict_sp =
+      std::make_shared<StructuredData::Dictionary>();
+  dict_sp->AddIntegerItem("major", v.getMajor());
+  if (auto minor = v.getMinor())
+    dict_sp->AddIntegerItem("minor", *minor);
+  if (auto subminor = v.getSubminor())
+    dict_sp->AddIntegerItem("subminor", *subminor);
+  if (auto build = v.getBuild())
+    dict_sp->AddIntegerItem("build", *build);
+
+  SBStructuredData data;
+  data.m_impl_up->SetObjectSP(dict_sp);
+  return data;
+}

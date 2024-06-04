@@ -213,6 +213,16 @@ class ScriptedProcess(metaclass=ABCMeta):
         """
         return self.metadata
 
+    def get_host_os_version(self):
+        """Get the host os version for the scripted process.
+
+        Returns:
+            Dict: A dictionary containing the major, minor, subminor & build
+                  host os versions for the scripted process.
+                  None if the host os version is unknown.
+        """
+        return None
+
     def create_breakpoint(self, addr, error):
         """Create a breakpoint in the scripted process from an address.
             This is mainly used with interactive scripted process debugging.
@@ -420,6 +430,7 @@ class PassthroughScriptedProcess(ScriptedProcess):
                     ] = PassthroughScriptedThread(self, structured_data)
 
                 for module in self.driving_target.modules:
+                    breakpoint()
                     path = module.file.fullpath
                     load_addr = module.GetObjectFileHeaderAddress().GetLoadAddress(
                         self.driving_target
@@ -463,6 +474,8 @@ class PassthroughScriptedProcess(ScriptedProcess):
     def get_scripted_thread_plugin(self):
         return f"{PassthroughScriptedThread.__module__}.{PassthroughScriptedThread.__name__}"
 
+    # def get_host_os_version(self):
+    #     return self.driving_process.GetHostOSVersion()
 
 class PassthroughScriptedThread(ScriptedThread):
     def __init__(self, process, args):

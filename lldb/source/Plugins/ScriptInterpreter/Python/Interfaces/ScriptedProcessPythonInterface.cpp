@@ -199,4 +199,16 @@ StructuredData::DictionarySP ScriptedProcessPythonInterface::GetMetadata() {
   return dict;
 }
 
+StructuredData::DictionarySP
+ScriptedProcessPythonInterface::GetHostOSVersion() {
+  Status error;
+  StructuredData::DictionarySP dict =
+      Dispatch<StructuredData::DictionarySP>("get_host_os_version", error);
+
+  if (!CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, dict, error))
+    return {};
+
+  return dict;
+}
+
 #endif

@@ -72,6 +72,8 @@ public:
 
   virtual StructuredData::DictionarySP GetMetadata() { return {}; }
 
+  virtual StructuredData::DictionarySP GetHostOSVersion() { return {}; }
+
 protected:
   friend class ScriptedThread;
   virtual lldb::ScriptedThreadInterfaceSP CreateScriptedThreadInterface() {

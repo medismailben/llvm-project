@@ -67,6 +67,8 @@ public:
 
   StructuredData::DictionarySP GetMetadata() override;
 
+  StructuredData::DictionarySP GetHostOSVersion() override;
+
 private:
   lldb::ScriptedThreadInterfaceSP CreateScriptedThreadInterface() override;
 };

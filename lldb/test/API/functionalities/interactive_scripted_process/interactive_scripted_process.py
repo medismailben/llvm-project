@@ -110,7 +110,41 @@ class MultiplexerScriptedProcess(PassthroughScriptedProcess):
                     log(f"Removing old thread {hex(thread_id)}")
                     del self.threads[thread_id]
 
-            print(f"New thread count: {len(self.threads)}")
+            log(f"New thread count: {len(self.threads)}")
+
+            # Delete modules that are not loaded in the driving target
+            for old_module in self.loaded_images:
+                delete_module = True
+                for new_module in self.driving_target.modules:
+                    if old_module["path"] == new_module.file.fullpath:
+                        delete_module = False
+                        break
+                if delete_module:
+                    log("Removing old module " + old_module["path"])
+                    del self.loaded_images[old_module]
+
+            # Copy modules from the driving target to the scripted process and
+            # update the ones that have a new load address.
+            for module in self.driving_target.modules:
+                path = module.file.fullpath
+                load_addr = module.GetObjectFileHeaderAddress().GetLoadAddress(
+                    self.driving_target
+                )
+
+                module_is_loaded = False
+                for loaded_image in self.loaded_images:
+                    if loaded_image["path"] == path:
+                        module_is_loaded = True
+                        if loaded_image["load_addr"] != load_addr:
+                            log(f"Updating module {old_module['path']} load \
+                                address ({hex(loaded_image['load_addr'])} -> {hex(load_addr)})")
+                            loaded_image["load_addr"] = load_addr
+
+                if not module_is_loaded:
+                    log(f"Adding new module {path} at {hex(load_addr)}")
+                    self.loaded_images.append({"path": path, "load_addr": load_addr})
+
+            print(f"New module count: {len(self.loaded_images)}")
 
             mux_process = self.target.GetProcess()
             mux_process.ForceScriptedState(lldb.eStateRunning)
@@ -120,13 +154,22 @@ class MultiplexerScriptedProcess(PassthroughScriptedProcess):
                 child_process.ForceScriptedState(lldb.eStateRunning)
                 child_process.ForceScriptedState(lldb.eStateStopped)
 
+        reload_modules = False
         event = lldb.SBEvent()
         while True:
             if not self.driving_process:
+                # NOTE: Can we have a module load event without a process ?
+                # Probably not.
                 continue
             if self.listener.WaitForEvent(1, event):
                 event_mask = event.GetType()
-                if event_mask & lldb.SBProcess.eBroadcastBitStateChanged:
+                if event.GetBroadcaster() == self.driving_target.GetBroadcaster():
+                    if event_mask == lldb.SBTarget.eBroadcastBitModulesLoaded:
+                        log("Received target modules loaded event")
+                    elif event_mask == lldb.SBTarget.eBroadcastBitModulesUnloaded:
+                        log("Received target modules unloaded event")
+
+                elif event_mask & lldb.SBProcess.eBroadcastBitStateChanged:
                     state = lldb.SBProcess.GetStateFromEvent(event)
                     log(f"Received public process state event: {state}")
                     if state == lldb.eStateStopped:
@@ -142,6 +185,11 @@ class MultiplexerScriptedProcess(PassthroughScriptedProcess):
         if isinstance(self.driving_target, lldb.SBTarget) and self.driving_target:
             self.listener = lldb.SBListener(
                 "lldb.listener.multiplexer-scripted-process"
+            )
+            self.listener.StartListeningForEvents(
+                self.driving_target.GetBroadcaster(),
+                lldb.SBTarget.eBroadcastBitModulesLoaded
+                | lldb.SBTarget.eBroadcastBitModulesUnloaded,
             )
             self.multiplexed_processes = {}
 
@@ -205,12 +253,17 @@ class MultiplexerScriptedProcess(PassthroughScriptedProcess):
 
         self.driving_process = driving_process
 
+        # Copy modules from the driving target to the scripted process.
         for module in self.driving_target.modules:
             path = module.file.fullpath
             load_addr = module.GetObjectFileHeaderAddress().GetLoadAddress(
                 self.driving_target
             )
+
+            log(f"Adding new module {path} at {hex(load_addr)}")
             self.loaded_images.append({"path": path, "load_addr": load_addr})
+
+        log(f"New module count: {len(self.loaded_images)}")
 
         self.first_resume = True
         return error
@@ -391,7 +444,7 @@ def create_child_processes(debugger, command, exe_ctx, result, dict):
 def log(message):
     # FIXME: For now, we discard the log message until we can pass it to an lldb
     # logging channel.
-    should_log = False
+    should_log = True
     if should_log:
         print(message)
 

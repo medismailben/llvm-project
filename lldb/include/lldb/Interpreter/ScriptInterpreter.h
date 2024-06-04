@@ -15,6 +15,7 @@
 #include "lldb/API/SBError.h"
 #include "lldb/API/SBLaunchInfo.h"
 #include "lldb/API/SBMemoryRegionInfo.h"
+#include "lldb/API/SBStructuredData.h"
 #include "lldb/Breakpoint/BreakpointOptions.h"
 #include "lldb/Core/PluginInterface.h"
 #include "lldb/Core/SearchFilter.h"
@@ -621,6 +622,9 @@ public:
 
   std::optional<MemoryRegionInfo> GetOpaqueTypeFromSBMemoryRegionInfo(
       const lldb::SBMemoryRegionInfo &mem_region) const;
+
+  StructuredData::ObjectSP
+  GetOpaqueTypeFromSBStructuredData(const lldb::SBStructuredData &data) const;
 
 protected:
   Debugger &m_debugger;

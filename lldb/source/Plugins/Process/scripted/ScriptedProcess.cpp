@@ -175,11 +175,20 @@ Status ScriptedProcess::DoLaunch(Module *exe_module,
   return error;
 }
 
-void ScriptedProcess::DidLaunch() { m_pid = GetInterface().GetProcessID(); }
+void ScriptedProcess::DidLaunch() {
+  m_pid = GetInterface().GetProcessID();
+  GetLoadedDynamicLibrariesInfos();
+}
 
 void ScriptedProcess::DidResume() {
   // Update the PID again, in case the user provided a placeholder pid at launch
   m_pid = GetInterface().GetProcessID();
+  StructuredData::DictionarySP capabilities_sp =
+      GetInterface().GetCapabilities();
+  if (capabilities_sp->HasKey("always_reload_dylibs") &&
+      capabilities_sp->GetValueForKey("always_reload_dylibs")
+          ->GetBooleanValue())
+    GetLoadedDynamicLibrariesInfos();
 }
 
 Status ScriptedProcess::DoResume() {
@@ -403,6 +412,29 @@ void ScriptedProcess::RefreshStateAfterStop() {
   // Let all threads recover from stopping and do any clean up based on the
   // previous thread state (if any).
   m_thread_list.RefreshStateAfterStop();
+}
+
+llvm::VersionTuple ScriptedProcess::GetHostOSVersion() {
+  StructuredData::DictionarySP version_dict = GetInterface().GetHostOSVersion();
+  if (!version_dict)
+    return {};
+
+  unsigned int major;
+  if (!version_dict->GetValueForKeyAsInteger("major", major))
+    return {};
+  unsigned int minor;
+  if (!version_dict->HasKey("minor") ||
+      !version_dict->GetValueForKeyAsInteger("minor", minor))
+    return llvm::VersionTuple(major);
+  unsigned int subminor;
+  if (!version_dict->HasKey("subminor") ||
+      !version_dict->GetValueForKeyAsInteger("subminor", subminor))
+    return llvm::VersionTuple(major, minor);
+  unsigned int build;
+  if (!version_dict->HasKey("build") ||
+      !version_dict->GetValueForKeyAsInteger("build", build))
+    return llvm::VersionTuple(major, minor, subminor);
+  return llvm::VersionTuple(major, minor, subminor, build);
 }
 
 bool ScriptedProcess::GetProcessInfo(ProcessInstanceInfo &info) {

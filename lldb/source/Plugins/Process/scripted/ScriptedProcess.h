@@ -40,8 +40,6 @@ public:
   bool CanDebug(lldb::TargetSP target_sp,
                 bool plugin_specified_by_name) override;
 
-  DynamicLoader *GetDynamicLoader() override { return nullptr; }
-
   llvm::StringRef GetPluginName() override { return GetPluginNameStatic(); }
 
   Status DoLoadCore() override;
@@ -66,6 +64,8 @@ public:
   Status DoDestroy() override;
 
   void RefreshStateAfterStop() override;
+
+  llvm::VersionTuple GetHostOSVersion() override;
 
   bool IsAlive() override;
 

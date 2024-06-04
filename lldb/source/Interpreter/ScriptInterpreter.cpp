@@ -109,6 +109,11 @@ ScriptInterpreter::GetOpaqueTypeFromSBMemoryRegionInfo(
   return *mem_region.m_opaque_up.get();
 }
 
+StructuredData::ObjectSP ScriptInterpreter::GetOpaqueTypeFromSBStructuredData(
+    const lldb::SBStructuredData &data) const {
+  return data.m_impl_up ? data.m_impl_up->GetObjectSP() : nullptr;
+}
+
 lldb::ScriptLanguage
 ScriptInterpreter::StringToLanguage(const llvm::StringRef &language) {
   if (language.equals_insensitive(LanguageToString(eScriptLanguageNone)))

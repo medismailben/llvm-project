@@ -31,7 +31,14 @@ StructuredData::ArraySP
 ScriptedPythonInterface::ExtractValueFromPythonObject<StructuredData::ArraySP>(
     python::PythonObject &p, Status &error) {
   python::PythonList result_list(python::PyRefType::Borrowed, p.get());
-  return result_list.CreateStructuredArray();
+  if (result_list.IsValid())
+    return result_list.CreateStructuredArray();
+  if (lldb::SBStructuredData *sb_data =
+          reinterpret_cast<lldb::SBStructuredData *>(
+              python::LLDBSWIGPython_CastPyObjectToSBStructuredData(p.get())))
+    return std::static_pointer_cast<StructuredData::Array>(
+        m_interpreter.GetOpaqueTypeFromSBStructuredData(*sb_data));
+  return {};
 }
 
 template <>
@@ -39,7 +46,14 @@ StructuredData::DictionarySP
 ScriptedPythonInterface::ExtractValueFromPythonObject<
     StructuredData::DictionarySP>(python::PythonObject &p, Status &error) {
   python::PythonDictionary result_dict(python::PyRefType::Borrowed, p.get());
-  return result_dict.CreateStructuredDictionary();
+  if (result_dict.IsValid())
+    return result_dict.CreateStructuredDictionary();
+  if (lldb::SBStructuredData *sb_data =
+          reinterpret_cast<lldb::SBStructuredData *>(
+              python::LLDBSWIGPython_CastPyObjectToSBStructuredData(p.get())))
+    return std::static_pointer_cast<StructuredData::Dictionary>(
+        m_interpreter.GetOpaqueTypeFromSBStructuredData(*sb_data));
+  return {};
 }
 
 template <>

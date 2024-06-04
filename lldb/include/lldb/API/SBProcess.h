@@ -564,6 +564,8 @@ public:
 
   void GetStatus(SBStream &status);
 
+  lldb::SBStructuredData GetHostOSVersion() const;
+
 protected:
   friend class SBAddress;
   friend class SBBreakpoint;
