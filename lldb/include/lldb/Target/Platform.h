@@ -36,6 +36,7 @@
 
 namespace lldb_private {
 
+class PlatformMetadata;
 class ProcessInstanceInfo;
 class ProcessInstanceInfoMatch;
 typedef std::vector<ProcessInstanceInfo> ProcessInstanceInfoList;
@@ -633,6 +634,10 @@ public:
 
   virtual const char *GetLocalCacheDirectory();
 
+  void SetMetadata(std::unique_ptr<PlatformMetadata> metadata);
+
+  virtual bool ReloadMetadata() { return true; }
+
   virtual std::string GetPlatformSpecificConnectionInformation() { return ""; }
 
   virtual llvm::ErrorOr<llvm::MD5::MD5Result>
@@ -963,6 +968,7 @@ protected:
   bool m_calculated_trap_handlers;
   const std::unique_ptr<ModuleCache> m_module_cache;
   LocateModuleCallback m_locate_module_callback;
+  std::unique_ptr<PlatformMetadata> m_metadata;
 
   /// Ask the Platform subclass to fill in the list of trap handler names
   ///
@@ -1002,6 +1008,21 @@ private:
                              lldb::ModuleSP &module_sp, bool *did_create_ptr);
 
   FileSpec GetModuleCacheRoot();
+};
+
+class PlatformMetadata {
+public:
+  PlatformMetadata(Debugger &debugger, const ScriptedMetadata metadata);
+  ~PlatformMetadata() = default;
+
+  Debugger &GetDebugger() const { return m_debugger; }
+  const ScriptedMetadata GetScriptedMetadata() const {
+    return m_scripted_metadata;
+  }
+
+protected:
+  Debugger &m_debugger;
+  const ScriptedMetadata m_scripted_metadata;
 };
 
 class PlatformList {

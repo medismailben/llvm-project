@@ -39,10 +39,8 @@ ScriptedPlatformInterface &ScriptedPlatform::GetInterface() const {
   return *m_interface_up;
 }
 
-lldb::PlatformSP
-ScriptedPlatform::CreateInstance(bool force, const ArchSpec *arch,
-                                 const Debugger *debugger,
-                                 const ScriptedMetadata *metadata) {
+lldb::PlatformSP ScriptedPlatform::CreateInstance(bool force,
+                                                  const ArchSpec *arch) {
   Log *log = GetLog(LLDBLog::Platform);
   if (log) {
     const char *arch_name;
@@ -54,85 +52,66 @@ ScriptedPlatform::CreateInstance(bool force, const ArchSpec *arch,
     const char *triple_cstr =
         arch ? arch->GetTriple().getTriple().c_str() : "<null>";
 
-    LLDB_LOGF(log,
-              "ScriptedPlatform::%s(force=%s, arch={%s,%s}, debugger=%" PRIxPTR
-              ")",
+    LLDB_LOGF(log, "ScriptedPlatform::%s(force=%s, arch={%s,%s})",
               __PRETTY_FUNCTION__, force ? "true" : "false", arch_name,
-              triple_cstr, (uintptr_t)debugger);
+              triple_cstr);
   }
 
-  if (!debugger || !IsScriptLanguageSupported(debugger->GetScriptLanguage()))
-    return {};
-
-  if (!metadata)
-    return {};
-
-  Status error;
-  std::shared_ptr<ScriptedPlatform> scripted_platform_sp =
-      std::make_shared<ScriptedPlatform>(const_cast<Debugger *>(debugger),
-                                         metadata, error);
-
-  if (error.Success())
-    return scripted_platform_sp;
-
-  LLDB_LOGF(log, "ScriptedPlatform::%s() aborting creation of platform",
-            __PRETTY_FUNCTION__);
-
-  return {};
+  return std::make_shared<ScriptedPlatform>();
 }
 
-ScriptedPlatform::ScriptedPlatform(Debugger *debugger,
-                                   const ScriptedMetadata *scripted_metadata,
-                                   Status &error)
-    : Platform(false), m_scripted_metadata(scripted_metadata) {
-  if (!debugger) {
-    error.SetErrorStringWithFormat("ScriptedPlatform::%s () - ERROR: %s",
-                                   __FUNCTION__, "Invalid debugger");
-    return;
-  }
+ScriptedPlatform::ScriptedPlatform() : Platform(false) {}
 
-  ScriptInterpreter *interpreter = debugger->GetScriptInterpreter();
+bool ScriptedPlatform::SetupScriptedObject(Status &error) {
 
-  if (!interpreter) {
-    error.SetErrorStringWithFormat("ScriptedProcess::%s () - ERROR: %s",
-                                   __FUNCTION__,
-                                   "Debugger has no Script Interpreter");
-    return;
-  }
+  auto error_with_message = [&error](llvm::StringRef message) {
+    return ScriptedInterface::ErrorWithMessage<bool>(
+        LLVM_PRETTY_FUNCTION, message, error, LLDBLog::Platform);
+  };
+
+  Debugger &debugger = m_metadata->GetDebugger();
+
+  if (!IsScriptLanguageSupported(debugger.GetScriptLanguage()))
+    return error_with_message("Debugger language not supported");
+
+  ScriptInterpreter *interpreter = debugger.GetScriptInterpreter();
+  if (!interpreter)
+    return error_with_message("Debugger has no Script Interpreter");
 
   // Create platform instance interface
   m_interface_up = interpreter->CreateScriptedPlatformInterface();
-  if (!m_interface_up) {
-    error.SetErrorStringWithFormat(
-        "ScriptedProcess::%s () - ERROR: %s", __FUNCTION__,
+  if (!m_interface_up)
+    return error_with_message(
         "Script interpreter couldn't create Scripted Process Interface");
-    return;
-  }
 
-  // Create platform script object
+  const ScriptedMetadata scripted_metadata = m_metadata->GetScriptedMetadata();
+
   ExecutionContext e;
   auto obj_or_err = GetInterface().CreatePluginObject(
-      m_scripted_metadata->GetClassName(), e, m_scripted_metadata->GetArgsSP());
+      scripted_metadata.GetClassName(), e, scripted_metadata.GetArgsSP());
 
   if (!obj_or_err) {
     llvm::consumeError(obj_or_err.takeError());
-    error.SetErrorString("Failed to create script object.");
-    return;
+    return error_with_message("Failed to create script object.");
   }
 
   StructuredData::GenericSP object_sp = *obj_or_err;
-
-  if (!object_sp || !object_sp->IsValid()) {
-    error.SetErrorStringWithFormat("ScriptedPlatform::%s () - ERROR: %s",
-                                   __FUNCTION__,
-                                   "Failed to create valid script object");
-    return;
-  }
+  if (!object_sp || !object_sp->IsValid())
+    return error_with_message("Failed to create valid script object");
 
   m_hostname = GetHostPlatform()->GetHostname();
+  return true;
 }
 
 ScriptedPlatform::~ScriptedPlatform() {}
+
+bool ScriptedPlatform::ReloadMetadata() {
+  if (!m_metadata)
+    return false;
+
+  Status error;
+  return SetupScriptedObject(error);
+}
 
 void ScriptedPlatform::Initialize() {
   if (g_initialize_count++ == 0) {
@@ -299,7 +278,7 @@ bool ScriptedPlatform::GetProcessInfo(lldb::pid_t pid,
 }
 
 Status ScriptedPlatform::LaunchProcess(ProcessLaunchInfo &launch_info) {
-  ProcessLaunchInfoSP launch_info_sp =
+  lldb::ProcessLaunchInfoSP launch_info_sp =
       std::make_shared<ProcessLaunchInfo>(launch_info);
   return GetInterface().LaunchProcess(launch_info_sp);
 }

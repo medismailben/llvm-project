@@ -10,6 +10,7 @@
 #define LLDB_SOURCE_COMMANDS_COMMANDOBJECTPLATFORM_H
 
 #include "lldb/Interpreter/CommandObjectMultiword.h"
+#include "lldb/Interpreter/OptionGroupPlatform.h"
 
 namespace lldb_private {
 

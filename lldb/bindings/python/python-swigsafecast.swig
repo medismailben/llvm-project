@@ -114,16 +114,6 @@ PythonObject ToSWIGWrapper(lldb::ProcessAttachInfoSP attach_info_sp) {
                       SWIGTYPE_p_lldb__SBAttachInfo);
 }
 
-PythonObject ToSWIGWrapper(lldb::ProcessLaunchInfoSP launch_info_sp) {
-  return ToSWIGHelper(new lldb::ProcessLaunchInfoSP(std::move(launch_info_sp)),
-                      SWIGTYPE_p_lldb__SBLaunchInfo);
-}
-
-PythonObject ToSWIGWrapper(lldb::ProcessAttachInfoSP attach_info_sp) {
-  return ToSWIGHelper(new lldb::ProcessAttachInfoSP(std::move(attach_info_sp)),
-                      SWIGTYPE_p_lldb__SBAttachInfo);
-}
-
 ScopedPythonObject<lldb::SBCommandReturnObject>
 SWIGBridge::ToSWIGWrapper(CommandReturnObject &cmd_retobj) {
   return ScopedPythonObject<lldb::SBCommandReturnObject>(

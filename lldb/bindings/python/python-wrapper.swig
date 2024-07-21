@@ -675,7 +675,7 @@ void *lldb_private::python::LLDBSWIGPython_CastPyObjectToSBMemoryRegionInfo(PyOb
   return sb_ptr;
 }
 
-void *lldb_private::LLDBSWIGPython_CastPyObjectToSBDebugger(PyObject * data) {
+void *lldb_private::python::LLDBSWIGPython_CastPyObjectToSBDebugger(PyObject * data) {
   lldb::SBDebugger *sb_ptr = nullptr;
 
   int valid_cast =
@@ -687,7 +687,7 @@ void *lldb_private::LLDBSWIGPython_CastPyObjectToSBDebugger(PyObject * data) {
   return sb_ptr;
 }
 
-void *lldb_private::LLDBSWIGPython_CastPyObjectToSBTarget(PyObject * data) {
+void *lldb_private::python::LLDBSWIGPython_CastPyObjectToSBTarget(PyObject * data) {
   lldb::SBTarget *sb_ptr = nullptr;
 
   int valid_cast =
@@ -699,7 +699,7 @@ void *lldb_private::LLDBSWIGPython_CastPyObjectToSBTarget(PyObject * data) {
   return sb_ptr;
 }
 
-void *lldb_private::LLDBSWIGPython_CastPyObjectToSBProcess(PyObject * data) {
+void *lldb_private::python::LLDBSWIGPython_CastPyObjectToSBProcess(PyObject * data) {
   lldb::SBProcess *sb_ptr = nullptr;
 
   int valid_cast =

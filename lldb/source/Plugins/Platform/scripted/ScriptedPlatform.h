@@ -16,14 +16,13 @@ namespace lldb_private {
 
 class ScriptedPlatform : public Platform {
 public:
-  ScriptedPlatform(Debugger *debugger,
-                   const ScriptedMetadata *scripted_metadata, Status &error);
+  ScriptedPlatform();
 
   ~ScriptedPlatform() override;
 
-  static lldb::PlatformSP CreateInstance(bool force, const ArchSpec *arch,
-                                         const Debugger *debugger,
-                                         const ScriptedMetadata *metadata);
+  bool SetupScriptedObject(Status &error);
+
+  static lldb::PlatformSP CreateInstance(bool force, const ArchSpec *arch);
 
   static void Initialize();
 
@@ -60,6 +59,8 @@ public:
 
   void CalculateTrapHandlerSymbolNames() override {}
 
+  bool ReloadMetadata() override;
+
 private:
   inline void CheckInterpreterAndScriptObject() const {
     assert(m_interface_up && "Invalid Scripted Platform Interface.");
@@ -75,7 +76,6 @@ private:
 
   static bool IsScriptLanguageSupported(lldb::ScriptLanguage language);
 
-  const ScriptedMetadata *m_scripted_metadata = nullptr;
   lldb::ScriptedPlatformInterfaceUP m_interface_up;
 };
 
