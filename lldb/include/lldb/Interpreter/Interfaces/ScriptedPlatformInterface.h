@@ -30,8 +30,11 @@ public:
     return {};
   }
 
-  virtual Status AttachToProcess(lldb::ProcessAttachInfoSP attach_info) {
-    return Status("ScriptedPlatformInterface cannot attach to a process");
+  virtual lldb::ProcessSP
+  AttachToProcess(lldb::ProcessAttachInfoSP attach_info_sp,
+                  lldb::TargetSP target_sp, lldb::DebuggerSP debugger_sp,
+                  Status &error) {
+    return {};
   }
 
   virtual Status LaunchProcess(lldb::ProcessLaunchInfoSP launch_info) {

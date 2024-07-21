@@ -120,7 +120,7 @@ private:
   friend class ScriptedThread;
 
   inline void CheckScriptedInterface() const {
-    lldbassert(m_interface_up && "Invalid scripted process interface.");
+    assert(m_interface_up && "Invalid Scripted Process Interface.");
   }
 
   ScriptedProcessInterface &GetInterface() const;

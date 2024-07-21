@@ -19,6 +19,9 @@ class MyScriptedPlatform(ScriptedPlatform):
 
     def list_processes(self):
         return self.processes
+        
+    def attach_to_process(self, attach_info, target, debugger, error):
+        return None
 
     def get_process_info(self, pid):
         return self.processes[pid]

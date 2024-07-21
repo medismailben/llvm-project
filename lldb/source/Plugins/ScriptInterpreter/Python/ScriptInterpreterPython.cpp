@@ -1528,6 +1528,11 @@ lldb::ValueObjectListSP ScriptInterpreterPythonImpl::GetRecognizedArguments(
   return ValueObjectListSP();
 }
 
+ScriptedPlatformInterfaceUP
+ScriptInterpreterPythonImpl::CreateScriptedPlatformInterface() {
+  return std::make_unique<ScriptedPlatformPythonInterface>(*this);
+}
+
 ScriptedProcessInterfaceUP
 ScriptInterpreterPythonImpl::CreateScriptedProcessInterface() {
   return std::make_unique<ScriptedProcessPythonInterface>(*this);

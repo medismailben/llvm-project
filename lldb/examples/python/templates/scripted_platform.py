@@ -60,14 +60,17 @@ class ScriptedPlatform(metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    def attach_to_process(self, attach_info):
-        """Attach to a process.
-
+    def attach_to_process(self, attach_info, target, debugger, error):
+        """ Attach to a process.
+ 
         Args:
             attach_info (lldb.SBAttachInfo): The information related to attach to a process.
-
+            target (lldb.SBTarget): The optional target that we are trying to attach to.
+            debugger (lldb.SBDebugger): The debugger instance.
+            error (lldb.SBError): A status object notifying if the attach succeeded.
+ 
         Returns:
-            lldb.SBError: A status object notifying if the attach succeeded.
+            lldb.SBProcess: The process that the platform attached to, or None.
         """
         pass
 
