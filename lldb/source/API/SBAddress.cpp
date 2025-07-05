@@ -8,6 +8,7 @@
 
 #include "lldb/API/SBAddress.h"
 #include "Utils.h"
+#include "lldb/API/SBOptional.h"
 #include "lldb/API/SBProcess.h"
 #include "lldb/API/SBSection.h"
 #include "lldb/API/SBStream.h"
@@ -84,6 +85,8 @@ void SBAddress::Clear() {
 
   m_opaque_up = std::make_unique<Address>();
 }
+
+SBOptional SBAddress::GetOptional() { return SBOptional(*this); }
 
 void SBAddress::SetAddress(lldb::SBSection section, lldb::addr_t offset) {
   LLDB_INSTRUMENT_VA(this, section, offset);
