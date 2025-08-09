@@ -99,8 +99,10 @@ DNBProcessMemoryReadCStringFixed(nub_process_t pid, nub_addr_t addr,
                                  nub_size_t fixed_length) DNB_EXPORT;
 nub_size_t DNBProcessMemoryWrite(nub_process_t pid, nub_addr_t addr,
                                  nub_size_t size, const void *buf) DNB_EXPORT;
-nub_addr_t DNBProcessMemoryAllocate(nub_process_t pid, nub_size_t size,
-                                    uint32_t permissions) DNB_EXPORT;
+nub_addr_t
+DNBProcessMemoryAllocate(nub_process_t pid, nub_size_t size,
+                         uint32_t permissions,
+                         nub_addr_t addr = INVALID_NUB_ADDRESS) DNB_EXPORT;
 nub_bool_t DNBProcessMemoryDeallocate(nub_process_t pid,
                                       nub_addr_t addr) DNB_EXPORT;
 int DNBProcessMemoryRegionInfo(nub_process_t pid, nub_addr_t addr,

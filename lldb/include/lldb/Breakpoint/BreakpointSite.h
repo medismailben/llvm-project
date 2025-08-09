@@ -48,6 +48,16 @@ public:
   typedef lldb::break_id_t SiteID;
   typedef lldb::break_id_t ConstituentID;
 
+  /// Discriminator for LLVM-style RTTI (dyn_cast<> et al.)
+  enum BreakpointSiteKind {
+    eKindBreakpointSite,
+    eKindBreakpointInjectedSite,
+  };
+
+  static bool classof(const BreakpointSite *bp_site) {
+    return bp_site->getKind() == eKindBreakpointSite;
+  }
+
   ~BreakpointSite() override;
 
   // This section manages the breakpoint traps
@@ -137,7 +147,7 @@ public:
   /// \param[in] thread
   ///     The thread against which to test.
   ///
-  /// return
+  /// \return
   ///     \b true if the collection contains at least one location that
   ///     would be valid for this thread, false otherwise.
   bool ValidForThisThread(Thread &thread);
@@ -192,6 +202,9 @@ public:
 
   BreakpointSite::Type GetType() const { return m_type; }
 
+  /// LLVM-style RTTI support.
+  BreakpointSiteKind getKind() const { return m_kind; }
+
   void SetType(BreakpointSite::Type type) { m_type = type; }
 
 private:
@@ -201,6 +214,7 @@ private:
   // a site, so let it be the one to manage setting the location hit count once
   // and only once.
   friend class StopInfoBreakpoint;
+  friend class BreakpointInjectedSite;
 
   void BumpHitCounts();
 
@@ -231,12 +245,15 @@ private:
   std::recursive_mutex m_constituents_mutex; ///< This mutex protects the
                                              ///< constituents collection.
 
+  const BreakpointSiteKind m_kind;
+
   static lldb::break_id_t GetNextID();
 
   // Only the Process can create breakpoint sites in
   // Process::CreateBreakpointSite (lldb::BreakpointLocationSP &, bool).
   BreakpointSite(const lldb::BreakpointLocationSP &constituent,
-                 lldb::addr_t m_addr, bool use_hardware);
+                 lldb::addr_t m_addr, bool use_hardware,
+                 BreakpointSiteKind kind = eKindBreakpointSite);
 
   BreakpointSite(const BreakpointSite &) = delete;
   const BreakpointSite &operator=(const BreakpointSite &) = delete;

@@ -290,6 +290,8 @@ public:
                                 lldb::ModuleSP module,
                                 const CompilerDeclContext &namespace_decl);
 
+  ExpressionVariableList &GetStructMembers(void) { return m_struct_members; }
+
 protected:
   /// Retrieves the declaration with the given name from the storage of
   /// persistent declarations.

@@ -114,7 +114,9 @@ public:
         m_location.constant_value = value;
       }
 
-      uint64_t GetConstant() const { return m_location.constant_value; }
+      uint64_t GetConstant() const {
+        return m_type == isConstant ? m_location.constant_value : LLDB_INVALID_ADDRESS;
+      }
 
       void SetAtCFAPlusOffset(int32_t offset) {
         m_type = atCFAPlusOffset;
@@ -368,6 +370,9 @@ public:
 
     const FAValue &GetAFAValue() const { return m_afa_value; }
     FAValue &GetAFAValue() { return m_afa_value; }
+
+    bool SetRegisterLocationToConstantValue(uint32_t reg_num, lldb::addr_t addr,
+                                            bool can_replace);
 
     bool SetRegisterLocationToAtCFAPlusOffset(uint32_t reg_num, int32_t offset,
                                               bool can_replace);

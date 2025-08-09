@@ -561,8 +561,10 @@ size_t ProcessWindows::DoWriteMemory(lldb::addr_t vm_addr, const void *buf,
   return bytes_written;
 }
 
-lldb::addr_t ProcessWindows::DoAllocateMemory(size_t size, uint32_t permissions,
-                                              Status &error) {
+lldb::addr_t
+ProcessWindows::DoAllocateMemory(size_t size, uint32_t permissions,
+                                 Status &error,
+                                 lldb::addr_t addr = LLDB_INVALID_ADDRESS) {
   lldb::addr_t vm_addr = LLDB_INVALID_ADDRESS;
   error = ProcessDebugger::AllocateMemory(size, permissions, vm_addr);
   return vm_addr;

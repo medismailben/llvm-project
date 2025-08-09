@@ -437,13 +437,14 @@ void AllocatedMemoryCache::Clear(bool deallocate_memory) {
 
 AllocatedMemoryCache::AllocatedBlockSP
 AllocatedMemoryCache::AllocatePage(uint32_t byte_size, uint32_t permissions,
-                                   uint32_t chunk_size, Status &error) {
+                                   uint32_t chunk_size, Status &error,
+                                   lldb::addr_t addr) {
   AllocatedBlockSP block_sp;
   const size_t page_size = 4096;
   const size_t num_pages = (byte_size + page_size - 1) / page_size;
   const size_t page_byte_size = num_pages * page_size;
 
-  addr_t addr = m_process.DoAllocateMemory(page_byte_size, permissions, error);
+  addr = m_process.DoAllocateMemory(page_byte_size, permissions, error, addr);
 
   Log *log = GetLog(LLDBLog::Process);
   LLDB_LOGF(log,
@@ -462,22 +463,28 @@ AllocatedMemoryCache::AllocatePage(uint32_t byte_size, uint32_t permissions,
 
 lldb::addr_t AllocatedMemoryCache::AllocateMemory(size_t byte_size,
                                                   uint32_t permissions,
-                                                  Status &error) {
+                                                  Status &error, addr_t addr) {
   std::lock_guard<std::recursive_mutex> guard(m_mutex);
 
-  addr_t addr = LLDB_INVALID_ADDRESS;
   std::pair<PermissionsToBlockMap::iterator, PermissionsToBlockMap::iterator>
       range = m_memory_map.equal_range(permissions);
 
+  bool reserved_block = false;
   for (PermissionsToBlockMap::iterator pos = range.first; pos != range.second;
        ++pos) {
-    addr = (*pos).second->ReserveBlock(byte_size);
-    if (addr != LLDB_INVALID_ADDRESS)
+    if (addr == LLDB_INVALID_ADDRESS ||
+        (addr != LLDB_INVALID_ADDRESS && (*pos).second->Contains(addr))) {
+      addr = (*pos).second->ReserveBlock(byte_size);
+      reserved_block = true;
+    }
+
+    if (reserved_block)
       break;
   }
 
-  if (addr == LLDB_INVALID_ADDRESS) {
-    AllocatedBlockSP block_sp(AllocatePage(byte_size, permissions, 16, error));
+  if (!reserved_block) {
+    AllocatedBlockSP block_sp(
+        AllocatePage(byte_size, permissions, 16, error, addr));
 
     if (block_sp)
       addr = block_sp->ReserveBlock(byte_size);

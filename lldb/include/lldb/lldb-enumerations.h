@@ -514,7 +514,8 @@ FLAGS_ENUM(BreakpointEventType){
     eBreakpointEventTypeConditionChanged = (1u << 9),
     eBreakpointEventTypeIgnoreChanged = (1u << 10),
     eBreakpointEventTypeThreadChanged = (1u << 11),
-    eBreakpointEventTypeAutoContinueChanged = (1u << 12)};
+    eBreakpointEventTypeAutoContinueChanged = (1u << 12),
+    eBreakpointEventTypeInjectedCondition = (1u << 13)};
 
 FLAGS_ENUM(WatchpointEventType){
     eWatchpointEventTypeInvalidType = (1u << 0),

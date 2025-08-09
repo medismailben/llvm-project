@@ -841,10 +841,10 @@ size_t SymbolFileCTF::ParseFunctions(CompileUnit &cu) {
   return m_functions.size();
 }
 
-static DWARFExpression CreateDWARFExpression(ModuleSP module_sp,
-                                             const Symbol &symbol) {
+static lldb_private::DWARFExpression
+CreateDWARFExpression(ModuleSP module_sp, const Symbol &symbol) {
   if (!module_sp)
-    return DWARFExpression();
+    return lldb_private::DWARFExpression();
 
   const ArchSpec &architecture = module_sp->GetArchitecture();
   ByteOrder byte_order = architecture.GetByteOrder();
@@ -857,7 +857,7 @@ static DWARFExpression CreateDWARFExpression(ModuleSP module_sp,
   DataBufferSP buffer =
       std::make_shared<DataBufferHeap>(stream.GetData(), stream.GetSize());
   lldb_private::DataExtractor extractor(buffer, byte_order, address_size);
-  DWARFExpression result(extractor);
+  lldb_private::DWARFExpression result(extractor);
   result.SetRegisterKind(eRegisterKindDWARF);
 
   return result;

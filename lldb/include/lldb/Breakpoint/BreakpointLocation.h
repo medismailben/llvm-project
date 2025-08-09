@@ -39,6 +39,7 @@ namespace lldb_private {
 class BreakpointLocation
     : public std::enable_shared_from_this<BreakpointLocation> {
   friend class BreakpointSite;
+  friend class BreakpointInjectedSite;
   friend class BreakpointLocationList;
   friend class Breakpoint;
   friend class Process;
@@ -162,6 +163,16 @@ public:
 
   /// Return the breakpoint condition.
   const StopCondition &GetCondition() const;
+
+  /// Check if the breakpoint condition should be injected
+  ///
+  /// \return
+  ///    If condition is injected \b true, \b false otherwise.
+  bool GetInjectCondition() const;
+
+  /// If \a inject_condition is \b true, inject the breakpoint condition in the
+  /// process.
+  void SetInjectCondition(bool inject_condition);
 
   bool ConditionSaysStop(ExecutionContext &exe_ctx, Status &error);
 

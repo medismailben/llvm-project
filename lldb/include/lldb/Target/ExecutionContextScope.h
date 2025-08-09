@@ -13,7 +13,7 @@
 
 namespace lldb_private {
 
-/// @class ExecutionContextScope ExecutionContextScope.h
+/// \class ExecutionContextScope ExecutionContextScope.h
 /// "lldb/Target/ExecutionContextScope.h" Inherit from this if your object can
 /// reconstruct its execution context.
 ///

@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "llvm/Support/FormatProviders.h"
+#include "lldb/Core/AddressRange.h"
 
 #include "lldb/Expression/ExpressionTypeSystemHelper.h"
 #include "lldb/lldb-forward.h"
@@ -84,6 +85,16 @@ public:
   // LLVM RTTI support
   virtual bool isA(const void *ClassID) const = 0;
 
+  /// LLVM-style RTTI support.
+  //  ExpressionKind getKind() const { return m_kind; }
+
+  const AddressRange GetJITAddressRange(void) const {
+    return AddressRange(m_jit_start_addr, m_jit_end_addr - m_jit_start_addr);
+  }
+
+private:
+  /// LLVM-style RTTI support.
+  //  const ExpressionKind m_kind;
 protected:
   lldb::TargetWP m_target_wp; /// Expression's always have to have a target...
   lldb::ProcessWP m_jit_process_wp; /// An expression might have a process, but

@@ -151,7 +151,8 @@ public:
   void Clear(bool deallocate_memory);
 
   lldb::addr_t AllocateMemory(size_t byte_size, uint32_t permissions,
-                              Status &error);
+                              Status &error,
+                              lldb::addr_t addr = LLDB_INVALID_ADDRESS);
 
   bool DeallocateMemory(lldb::addr_t ptr);
 
@@ -161,7 +162,8 @@ protected:
   typedef std::shared_ptr<AllocatedBlock> AllocatedBlockSP;
 
   AllocatedBlockSP AllocatePage(uint32_t byte_size, uint32_t permissions,
-                                uint32_t chunk_size, Status &error);
+                                uint32_t chunk_size, Status &error,
+                                lldb::addr_t addr = LLDB_INVALID_ADDRESS);
 
   // Classes that inherit from MemoryCache can see and modify these
   Process &m_process;

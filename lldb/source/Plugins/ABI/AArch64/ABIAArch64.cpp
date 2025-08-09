@@ -34,6 +34,16 @@ void ABIAArch64::Terminate() {
   ABIMacOSX_arm64::Terminate();
 }
 
+llvm::Expected<ABIAArch64::OpcodeArray> ABIAArch64::GetDebugTrapOpcode() {
+  static const llvm::SmallVector<uint8_t, 8> g_aarch64_opcode[] = {
+      {0x00, 0x00, 0x20, 0xd4}, // brk #0 = 0xd4200000
+      {0x20, 0x00, 0x20, 0xd4}, // brk #1 = 0xd4200020
+      {0x00, 0x00, 0x3e, 0xd4}, // brk #0xf000 = 0xd43e0000
+  };
+
+  return llvm::ArrayRef(g_aarch64_opcode);
+}
+
 lldb::addr_t ABIAArch64::FixCodeAddress(lldb::addr_t pc) {
   if (lldb::ProcessSP process_sp = GetProcessSP()) {
     // b55 is the highest bit outside TBI (if it's enabled), use
@@ -78,6 +88,7 @@ std::string ABIAArch64::GetMCName(std::string reg) {
   MapRegisterName(reg, "v", "q");
   MapRegisterName(reg, "x29", "fp");
   MapRegisterName(reg, "x30", "lr");
+  MapRegisterName(reg, "x31", "sp");
   return reg;
 }
 

@@ -407,6 +407,12 @@ public:
     m_ignore_breakpoints = ignore;
   }
 
+  void SetInjectCondition(bool inject_condition) {
+    m_inject_condition = inject_condition;
+  }
+
+  bool GetInjectCondition() const { return m_inject_condition; }
+
   bool DoesKeepInMemory() const { return m_keep_in_memory; }
 
   void SetKeepInMemory(bool keep = true) { m_keep_in_memory = keep; }
@@ -552,6 +558,7 @@ private:
   bool m_ansi_color_errors = false;
   bool m_suppress_persistent_result = false;
   bool m_auto_apply_fixits = true;
+  bool m_inject_condition = false;
   uint64_t m_retries_with_fixits = 1;
   /// True if the executed code should be treated as utility code that is only
   /// used by LLDB internally.

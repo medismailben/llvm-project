@@ -99,30 +99,29 @@ BreakpointOptions::CommandData::CreateFromStructuredData(
 
 const char *BreakpointOptions::g_option_names[(
     size_t)BreakpointOptions::OptionNames::LastOptionName]{
-    "ConditionText", "IgnoreCount", "EnabledState", "OneShotState",
-    "AutoContinue"};
+    "ConditionText", "IgnoreCount",  "EnabledState",
+    "OneShotState",  "AutoContinue", "InjectCondition"};
 
 // BreakpointOptions constructor
 BreakpointOptions::BreakpointOptions(bool all_flags_set)
     : m_callback(nullptr), m_baton_is_command_baton(false),
       m_callback_is_synchronous(false), m_enabled(true), m_one_shot(false),
-      m_ignore_count(0), m_inject_condition(false), m_auto_continue(false),
-      m_set_flags(0) {
+      m_ignore_count(0), m_auto_continue(false), m_set_flags(0), m_inject_condition(false) {
   if (all_flags_set)
     m_set_flags.Set(~((Flags::ValueType)0));
 }
 
 BreakpointOptions::BreakpointOptions(const char *condition, bool enabled,
                                      int32_t ignore, bool one_shot,
-                                     bool auto_continue)
+                                     bool auto_continue, bool inject_condition)
     : m_callback(nullptr), m_baton_is_command_baton(false),
       m_callback_is_synchronous(false), m_enabled(enabled),
-      m_one_shot(one_shot), m_ignore_count(ignore), m_condition(condition),
-      m_inject_condition(false), m_auto_continue(auto_continue) {
+      m_one_shot(one_shot), m_ignore_count(ignore), m_auto_continue(auto_continue),
+      m_inject_condition(inject_condition) {
   m_set_flags.Set(eEnabled | eIgnoreCount | eOneShot | eAutoContinue);
-    if (condition && *condition != '\0') {
-      SetCondition(StopCondition(condition));
-    }
+  if (condition && *condition != '\0') {
+    SetCondition(StopCondition(condition));
+  }
 }
 
 // BreakpointOptions copy constructor
@@ -131,8 +130,8 @@ BreakpointOptions::BreakpointOptions(const BreakpointOptions &rhs)
       m_baton_is_command_baton(rhs.m_baton_is_command_baton),
       m_callback_is_synchronous(rhs.m_callback_is_synchronous),
       m_enabled(rhs.m_enabled), m_one_shot(rhs.m_one_shot),
-      m_ignore_count(rhs.m_ignore_count), m_inject_condition(false),
-      m_auto_continue(rhs.m_auto_continue), m_set_flags(rhs.m_set_flags) {
+      m_ignore_count(rhs.m_ignore_count), m_auto_continue(rhs.m_auto_continue),
+      m_set_flags(rhs.m_set_flags), m_inject_condition(rhs.m_inject_condition) {
   if (rhs.m_thread_spec_up != nullptr)
     m_thread_spec_up = std::make_unique<ThreadSpec>(*rhs.m_thread_spec_up);
   m_condition = rhs.m_condition;
@@ -154,6 +153,7 @@ operator=(const BreakpointOptions &rhs) {
   m_inject_condition = rhs.m_inject_condition;
   m_auto_continue = rhs.m_auto_continue;
   m_set_flags = rhs.m_set_flags;
+  m_inject_condition = rhs.m_inject_condition;
   return *this;
 }
 
@@ -188,10 +188,16 @@ void BreakpointOptions::CopyOverSetOptions(const BreakpointOptions &incoming)
     if (!incoming.m_condition) {
       m_condition = StopCondition();
       m_set_flags.Clear(eCondition);
+      m_inject_condition = false;
     } else {
       m_condition = incoming.m_condition;
       m_set_flags.Set(eCondition);
+      m_inject_condition = incoming.m_inject_condition;
     }
+  }
+  if (incoming.m_set_flags.Test(eInjectCondition)) {
+    m_inject_condition = incoming.m_inject_condition;
+    m_set_flags.Set(eInjectCondition);
   }
   if (incoming.m_set_flags.Test(eAutoContinue))
   {
@@ -357,9 +363,13 @@ StructuredData::ObjectSP BreakpointOptions::SerializeToStructuredData() {
   if (m_set_flags.Test(eIgnoreCount))
     options_dict_sp->AddIntegerItem(GetKey(OptionNames::IgnoreCount),
                                     m_ignore_count);
-  if (m_set_flags.Test(eCondition))
+  if (m_set_flags.Test(eCondition)) {
     options_dict_sp->AddStringItem(GetKey(OptionNames::ConditionText),
                                    m_condition.GetText());
+    if (m_set_flags.Test(eInjectCondition))
+      options_dict_sp->AddBooleanItem(GetKey(OptionNames::InjectCondition),
+                                      m_inject_condition);
+  }
 
   if (m_set_flags.Test(eCallback) && m_baton_is_command_baton) {
     auto cmd_baton =
@@ -446,6 +456,10 @@ bool BreakpointOptions::HasCallback() const {
   return static_cast<bool>(m_callback);
 }
 
+bool BreakpointOptions::GetInjectCondition() const {
+  return m_inject_condition;
+}
+
 bool BreakpointOptions::GetCommandLineCallbacks(StringList &command_list) {
   if (!HasCallback())
     return false;
@@ -461,8 +475,10 @@ bool BreakpointOptions::GetCommandLineCallbacks(StringList &command_list) {
 }
 
 void BreakpointOptions::SetCondition(StopCondition condition) {
-  if (!condition)
+  if (!condition) {
     m_set_flags.Clear(eCondition);
+    m_set_flags.Clear(eInjectCondition);
+  }
   else
     m_set_flags.Set(eCondition);
 
@@ -545,8 +561,9 @@ void BreakpointOptions::GetDescription(Stream *s,
   }
   if (m_condition) {
     if (level != eDescriptionLevelBrief) {
+      std::string fast = (m_inject_condition) ? " (FAST)" : "";
       s->EOL();
-      s->Printf("Condition: %s\n", m_condition.GetText().data());
+      s->Printf("Condition: %s%s\n", m_condition.GetText().data(), fast.c_str());
     }
   }
 }
@@ -641,4 +658,5 @@ void BreakpointOptions::Clear()
   m_callback_is_synchronous = false;
   m_enabled = false;
   m_condition = StopCondition();
+  m_inject_condition = false;
 }

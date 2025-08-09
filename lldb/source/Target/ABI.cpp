@@ -7,16 +7,20 @@
 //===----------------------------------------------------------------------===//
 
 #include "lldb/Target/ABI.h"
+#include "lldb/Core/Debugger.h"
+#include "lldb/Core/Module.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/Value.h"
 #include "lldb/Expression/ExpressionVariable.h"
 #include "lldb/Symbol/CompilerType.h"
+#include "lldb/Symbol/FuncUnwinders.h"
 #include "lldb/Symbol/TypeSystem.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/ValueObject/ValueObjectConstResult.h"
+#include "Plugins/ObjectFile/Trampoline/ObjectFileTrampoline.h"
 #include "llvm/MC/TargetRegistry.h"
 #include <cctype>
 
@@ -56,6 +60,118 @@ bool RegInfoBasedABI::GetRegisterInfoByName(llvm::StringRef name,
     }
   }
   return false;
+}
+
+lldb::WritableDataBufferSP ABI::EmitAssembly(llvm::StringRef name,
+                                             std::stringstream &expr,
+                                             ExecutionContext exe_ctx) {
+  Log *log = GetLog(LLDBLog::JITLoader);
+  std::string symbol_name = "$__lldb_";
+  symbol_name += name.data();
+
+  Target &target = GetProcessSP()->GetTarget();
+
+  auto utility_fn_or_error = target.CreateUtilityFunction(
+      expr.str(), symbol_name, eLanguageTypeC, exe_ctx);
+
+  if (!utility_fn_or_error) {
+    std::string error_str = llvm::toString(utility_fn_or_error.takeError());
+    LLDB_LOG(log, "Error creating utility function: {0}.", error_str);
+    return nullptr;
+  }
+
+  lldb::UtilityFunctionSP emitted_function_sp = std::move(*utility_fn_or_error);
+
+  const AddressRange &jit_addr_range =
+      emitted_function_sp->GetJITAddressRange();
+
+  WritableDataBufferSP buffer(
+      new DataBufferHeap(jit_addr_range.GetByteSize(), 0));
+
+  lldb::addr_t jit_addr =
+      jit_addr_range.GetBaseAddress().GetCallableLoadAddress(&target);
+
+  Status error;
+  size_t memory_read = GetProcessSP()->ReadMemory(jit_addr, buffer->GetBytes(),
+                                                  buffer->GetByteSize(), error);
+
+  if (memory_read != jit_addr_range.GetByteSize() || error.Fail()) {
+    error = Status::FromErrorString("Couldn't read jit memory");
+    return nullptr;
+  }
+
+  const ArchSpec &arch = target.GetArchitecture();
+
+  auto dis = Disassembler::DisassembleRange(
+      arch, /*plugin_name=*/nullptr, /*flavor=*/nullptr, /*cpu=*/nullptr,
+      /*features=*/nullptr, target, jit_addr_range);
+
+  if (!dis)
+    return nullptr;
+
+  StreamString s;
+  Debugger &dbg = target.GetDebugger();
+  dis->PrintInstructions(dbg, arch, exe_ctx, false, 0, 0, s);
+  if (log)
+    log->PutString(s.GetString());
+
+  return buffer;
+}
+
+lldb::ModuleSP ABI::CreateModuleForFastConditionalBreakpointTrampoline(
+    lldb::addr_t address, std::size_t size, lldb::addr_t return_address) {
+  Log *log = GetLog(LLDBLog::JITLoader);
+
+  if (!SupportsFCB()) {
+    LLDB_LOG(log, "JIT: ABI {0} does not implement JIT-ed breakpoint condition",
+             GetPluginName().data());
+    return nullptr;
+  }
+
+  ProcessSP process_sp = m_process_wp.lock();
+
+  lldb::ModuleSP trampoline_module_sp =
+      Module::CreateModuleFromObjectFile<ObjectFileTrampoline>(process_sp,
+                                                               address, size);
+
+  if (!trampoline_module_sp) {
+    LLDB_LOG(log, "JIT: Couldn't create module from trampoline ObjectFile");
+    return nullptr;
+  }
+
+  bool changed = false;
+  trampoline_module_sp->SetLoadAddress(process_sp->GetTarget(), 0, true,
+                                       changed);
+
+  Symtab *symtab = trampoline_module_sp->GetObjectFile()->GetSymtab();
+
+  if (!symtab || !symtab->GetNumSymbols()) {
+    LLDB_LOG(log, "JIT: Couldn't find any symbol or symbol table");
+    return nullptr;
+  }
+
+  Symbol *symbol = symtab->SymbolAtIndex(0);
+
+  SymbolContext sc(trampoline_module_sp, nullptr, nullptr, nullptr, nullptr,
+                   symbol);
+  UnwindTable &unwind_table = trampoline_module_sp->GetUnwindTable();
+  FuncUnwindersSP func_unwinders_sp =
+      unwind_table.GetFuncUnwindersContainingAddress(address, sc);
+
+  if (!func_unwinders_sp) {
+    LLDB_LOG(log, "JIT: Couldn't find any function unwinder for {0} ({1})",
+             symbol->GetName().AsCString(), address);
+    return nullptr;
+  }
+
+  if (UnwindPlanSP trampoline_unwind_plan_sp =
+          CreateTrampolineUnwindPlan(return_address)) {
+    func_unwinders_sp->SetTrampolineUnwindPlan(trampoline_unwind_plan_sp);
+    return trampoline_module_sp;
+  }
+
+  LLDB_LOG(log, "JIT: Couldn't create trampoline unwind plan");
+  return nullptr;
 }
 
 ValueObjectSP ABI::GetReturnValueObject(Thread &thread, CompilerType &ast_type,

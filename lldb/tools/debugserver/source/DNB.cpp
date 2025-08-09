@@ -1354,10 +1354,10 @@ nub_size_t DNBProcessMemoryWrite(nub_process_t pid, nub_addr_t addr,
 }
 
 nub_addr_t DNBProcessMemoryAllocate(nub_process_t pid, nub_size_t size,
-                                    uint32_t permissions) {
+                                    uint32_t permissions, nub_addr_t addr) {
   MachProcessSP procSP;
   if (GetProcessSP(pid, procSP))
-    return procSP->Task().AllocateMemory(size, permissions);
+    return procSP->Task().AllocateMemory(size, permissions, addr);
   return 0;
 }
 

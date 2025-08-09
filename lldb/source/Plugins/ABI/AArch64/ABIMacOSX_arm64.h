@@ -15,6 +15,43 @@
 
 class ABIMacOSX_arm64 : public ABIAArch64 {
 public:
+  static constexpr const std::size_t aarch64_instr_size = 4;
+
+  static constexpr const char *register_context = R"(typedef struct {
+                                                      intptr_t x0;
+                                                      intptr_t x1;
+                                                      intptr_t x2;
+                                                      intptr_t x3;
+                                                      intptr_t x4;
+                                                      intptr_t x5;
+                                                      intptr_t x6;
+                                                      intptr_t x7;
+                                                      intptr_t x8;
+                                                      intptr_t x9;
+                                                      intptr_t x10;
+                                                      intptr_t x11;
+                                                      intptr_t x12;
+                                                      intptr_t x13;
+                                                      intptr_t x14;
+                                                      intptr_t x15;
+                                                      intptr_t x16;
+                                                      intptr_t x17;
+                                                      intptr_t x18;
+                                                      intptr_t x19;
+                                                      intptr_t x20;
+                                                      intptr_t x21;
+                                                      intptr_t x22;
+                                                      intptr_t x23;
+                                                      intptr_t x24;
+                                                      intptr_t x25;
+                                                      intptr_t x26;
+                                                      intptr_t x27;
+                                                      intptr_t x28;
+                                                      intptr_t fp;
+                                                      intptr_t lr;
+                                                      intptr_t sp;
+                                                      } register_context;)";
+
   ~ABIMacOSX_arm64() override = default;
 
   size_t GetRedZoneSize() const override;
@@ -26,6 +63,8 @@ public:
 
   bool GetArgumentValues(lldb_private::Thread &thread,
                          lldb_private::ValueList &values) const override;
+
+  lldb::UnwindPlanSP CreateTrampolineUnwindPlan(lldb::addr_t return_address) override;
 
   bool RegisterIsVolatile(const lldb_private::RegisterInfo *reg_info) override;
 
@@ -57,8 +96,35 @@ public:
     return true;
   }
 
+  llvm::Expected<std::string> GetRegisterName(uint32_t num) override;
+
+  bool GetFramePointerRegister(const char *&name) override;
+
   lldb::addr_t FixCodeAddress(lldb::addr_t pc) override;
   lldb::addr_t FixDataAddress(lldb::addr_t pc) override;
+
+  /// Allocate a memory stub for the fast condition breakpoint trampoline, and
+  /// build it by saving the register context, calling the argument structure
+  /// builder, passing the resulting structure to the condition checker,
+  /// restoring the register context, running the copied instructions and]
+  /// jumping back to the user source code.
+  ///
+  /// \param[in] instrs_size
+  ///    The size in bytes of the copied instructions.
+  ///
+  /// \return
+  ///    \b true If building the Trampoline succeeded, \b false otherwise.
+  ///
+  bool SetupFastConditionalBreakpointTrampoline(
+      lldb_private::BreakpointInjectedSite *bp_inject_site) override;
+
+  size_t GetJumpSize() override { return aarch64_instr_size; };
+
+  llvm::StringRef GetRegisterContextAsString() override {
+    return register_context;
+  }
+
+  bool SupportsFCB() override { return true; }
 
   // Static Functions
 
@@ -82,6 +148,10 @@ protected:
   lldb::ValueObjectSP
   GetReturnValueObjectImpl(lldb_private::Thread &thread,
                            lldb_private::CompilerType &ast_type) const override;
+
+  lldb::WritableDataBufferSP
+  EmitBranchToAddressAssembly(lldb_private::ExecutionContext &exe_ctx,
+                              ssize_t return_addr = LLDB_INVALID_ADDRESS);
 
 private:
   using ABIAArch64::ABIAArch64; // Call CreateInstance instead.

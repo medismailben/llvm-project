@@ -482,6 +482,14 @@ const StopCondition &Breakpoint::GetCondition() const {
   return m_options.GetCondition();
 }
 
+void Breakpoint::SetInjectCondition(bool inject_condition) {
+  m_options.SetInjectCondition(inject_condition);
+}
+
+bool Breakpoint::GetInjectCondition() const {
+  return m_options.GetInjectCondition();
+}
+
 // This function is used when "baton" doesn't need to be freed
 void Breakpoint::SetCallback(BreakpointHitCallback callback, void *baton,
                              bool is_synchronous) {
@@ -1147,6 +1155,8 @@ const char *Breakpoint::BreakpointEventTypeAsCString(BreakpointEventType type) {
     return "thread changed";
   case eBreakpointEventTypeAutoContinueChanged:
     return "autocontinue changed";
+  case eBreakpointEventTypeInjectedCondition:
+      return "injected condition changed";
   };
   llvm_unreachable("Fully covered switch above!");
 }

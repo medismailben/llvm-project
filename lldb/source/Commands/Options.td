@@ -166,6 +166,10 @@ let Command = "breakpoint modify" in {
         Desc<
             "A ${c}ommand to run when the breakpoint is hit, can be provided "
             "more than once, the commands will be run in left-to-right order.">;
+  def breakpoint_modify_inject_condition
+      : Option<"inject-condition", "I">,
+        Desc<"The breakpoint ${i}njects the condition expression into the "
+             "process machine code. Enables Fast Conditional Breakpoints.">;
 }
 
 let Command = "breakpoint dummy" in {

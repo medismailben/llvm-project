@@ -11,6 +11,7 @@
 
 #include "lldb/Symbol/SymbolContext.h"
 #include "lldb/Symbol/Variable.h"
+#include "lldb/Utility/Iterable.h"
 #include "lldb/lldb-private.h"
 
 namespace lldb_private {

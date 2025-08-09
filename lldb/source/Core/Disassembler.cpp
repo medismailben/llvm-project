@@ -1237,10 +1237,8 @@ size_t InstructionList::GetSize() const { return m_instructions.size(); }
 
 uint32_t InstructionList::GetMaxOpcocdeByteSize() const {
   uint32_t max_inst_size = 0;
-  collection::const_iterator pos, end;
-  for (pos = m_instructions.begin(), end = m_instructions.end(); pos != end;
-       ++pos) {
-    uint32_t inst_size = (*pos)->GetOpcode().GetByteSize();
+  for (auto instruction : m_instructions) {
+    uint32_t inst_size = instruction->GetOpcode().GetByteSize();
     if (max_inst_size < inst_size)
       max_inst_size = inst_size;
   }
@@ -1249,11 +1247,8 @@ uint32_t InstructionList::GetMaxOpcocdeByteSize() const {
 
 size_t InstructionList::GetTotalByteSize() const {
   size_t total_byte_size = 0;
-  collection::const_iterator pos, end;
-  for (pos = m_instructions.begin(), end = m_instructions.end(); pos != end;
-       ++pos) {
-    total_byte_size += (*pos)->GetOpcode().GetByteSize();
-  }
+  for (auto instruction : m_instructions)
+    total_byte_size += instruction->GetOpcode().GetByteSize();
   return total_byte_size;
 }
 
@@ -1275,7 +1270,6 @@ void InstructionList::Dump(Stream *s, bool show_address, bool show_bytes,
                            bool show_control_flow_kind,
                            const ExecutionContext *exe_ctx) {
   const uint32_t max_opcode_byte_size = GetMaxOpcocdeByteSize();
-  collection::const_iterator pos, begin, end;
 
   const FormatEntity::Entry *disassembly_format = nullptr;
   FormatEntity::Entry format;
@@ -1287,11 +1281,10 @@ void InstructionList::Dump(Stream *s, bool show_address, bool show_bytes,
     disassembly_format = &format;
   }
 
-  for (begin = m_instructions.begin(), end = m_instructions.end(), pos = begin;
-       pos != end; ++pos) {
-    if (pos != begin)
+  for (auto it = m_instructions.begin(); it != m_instructions.end(); ++it) {
+    if (it != m_instructions.begin())
       s->EOL();
-    (*pos)->Dump(s, max_opcode_byte_size, show_address, show_bytes,
+    (*it)->Dump(s, max_opcode_byte_size, show_address, show_bytes,
                  show_control_flow_kind, exe_ctx, nullptr, nullptr,
                  disassembly_format, 0);
   }

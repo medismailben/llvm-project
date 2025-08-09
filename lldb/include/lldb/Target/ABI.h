@@ -9,15 +9,20 @@
 #ifndef LLDB_TARGET_ABI_H
 #define LLDB_TARGET_ABI_H
 
+#include <ios>
+#include <sstream>
+
 #include "lldb/Core/PluginInterface.h"
 #include "lldb/Symbol/UnwindPlan.h"
 #include "lldb/Target/DynamicRegisterInfo.h"
 #include "lldb/Utility/Status.h"
+#include "lldb/Utility/UnimplementedError.h"
 #include "lldb/lldb-forward.h"
 #include "lldb/lldb-private.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/Support/Errc.h"
 
 namespace llvm {
 class Type;
@@ -38,6 +43,8 @@ public:
     lldb::addr_t value;                 /* literal value */
     std::unique_ptr<uint8_t[]> data_up; /* host data pointer */
   };
+
+  using OpcodeArray = llvm::ArrayRef<llvm::SmallVector<uint8_t, 8>>;
 
   ~ABI() override;
 
@@ -101,6 +108,10 @@ public:
 
   virtual lldb::UnwindPlanSP CreateDefaultUnwindPlan() = 0;
 
+  virtual lldb::UnwindPlanSP CreateTrampolineUnwindPlan(lldb::addr_t return_address) {
+    return {};
+  }
+
   virtual bool RegisterIsVolatile(const RegisterInfo *reg_info) = 0;
 
   virtual bool GetFallbackRegisterLocation(
@@ -147,6 +158,58 @@ public:
   AugmentRegisterInfo(std::vector<DynamicRegisterInfo::Register> &regs) = 0;
 
   virtual bool GetPointerReturnRegister(const char *&name) { return false; }
+  virtual bool GetFramePointerRegister(const char *&name) { return false; }
+  virtual llvm::Expected<std::string> GetRegisterName(uint32_t num) {
+    return llvm::make_error<UnimplementedError>();
+  }
+
+  /// Allocate a memory stub for the fast condition breakpoint trampoline, and
+  /// build it by saving the register context, calling the argument structure
+  /// builder, passing the resulting structure to the condition checker,
+  /// restoring the register context, running the copied instructions and]
+  /// jumping back to the user source code.
+  ///
+  /// \param[in] instrs_size
+  ///    The size in bytes of the copied instructions.
+  ///
+  /// \param[in] data
+  ///    The copied instructions buffer.
+  ///
+  /// \param[in] jmp_addr
+  ///    The address of the source .
+  ///
+  /// \param[in] util_func_addr
+  ///    The address of the JIT-ed argument structure builder.
+  ///
+  /// \param[in] cond_expr_addr
+  ///    The address of the JIT-ed condition checker.
+  ///
+  /// \return
+  ///    The address of the Fast Conditional Breakpoint Trampoline.
+  ///
+  virtual bool SetupFastConditionalBreakpointTrampoline(
+      BreakpointInjectedSite *bp_inject_site) {
+    return false;
+  }
+
+  virtual llvm::ArrayRef<uint8_t> GetJumpOpcode() { return {}; }
+
+  virtual size_t GetJumpSize() { return 0; }
+
+  virtual llvm::StringRef GetRegisterContextAsString() { return ""; }
+
+  virtual llvm::StringRef GetMachTypesAsString() { return ""; }
+
+  virtual bool SupportsFCB() { return false; }
+
+  lldb::WritableDataBufferSP
+  EmitAssembly(llvm::StringRef name, std::stringstream &expr,
+               lldb_private::ExecutionContext exe_ctx);
+
+  virtual llvm::Expected<OpcodeArray> GetDebugTrapOpcode() {
+    return llvm::createStringError(llvm::errc::invalid_argument,
+                                   "Unknown Debug Trap Opcode");
+  }
 
   virtual uint64_t GetStackFrameSize() { return 512 * 1024; }
 
@@ -185,6 +248,8 @@ protected:
     assert(m_mc_register_info_up && "ABI must have MCRegisterInfo");
   }
 
+  using ByteArray = llvm::ArrayRef<llvm::SmallVector<uint8_t, 4>>;
+
   /// Utility function to construct a MCRegisterInfo using the ArchSpec triple.
   /// Plugins wishing to customize the construction can construct the
   /// MCRegisterInfo themselves.
@@ -193,6 +258,9 @@ protected:
 
   lldb::ProcessWP m_process_wp;
   std::unique_ptr<llvm::MCRegisterInfo> m_mc_register_info_up;
+
+  lldb::ModuleSP CreateModuleForFastConditionalBreakpointTrampoline(
+      lldb::addr_t address, std::size_t size, lldb::addr_t return_address);
 
 private:
   ABI(const ABI &) = delete;

@@ -21,6 +21,7 @@ public:
 
   lldb::UnwindPlanSP CreateFunctionEntryUnwindPlan() override;
   lldb::UnwindPlanSP CreateDefaultUnwindPlan() override;
+  llvm::Expected<OpcodeArray> GetDebugTrapOpcode() override;
 
 protected:
   virtual lldb::addr_t FixAddress(lldb::addr_t pc, lldb::addr_t mask) {

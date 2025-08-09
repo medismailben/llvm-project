@@ -7,9 +7,11 @@
 //===----------------------------------------------------------------------===//
 
 #include <atomic>
+#include <ios>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <sstream>
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/ScopedPrinter.h"
@@ -78,6 +80,7 @@
 #include "lldb/Utility/State.h"
 #include "lldb/Utility/StreamString.h"
 #include "lldb/Utility/Timer.h"
+#include "lldb/lldb-types.h"
 
 using namespace lldb;
 using namespace lldb_private;
@@ -1764,25 +1767,113 @@ llvm::Error Process::UpdateBreakpointSites(
   return error;
 }
 
+lldb::break_id_t Process::FallbackToRegularBreakpointSite(
+    const BreakpointLocationSP &constituent, bool use_hardware, Log *log,
+    llvm::Error error) {
+  LLDB_LOG_ERROR(log, std::move(error), "{0}");
+  LLDB_LOG(log, "Disabling JIT-ed condition and falling back to regular "
+                "conditional breakpoint");
+  // Clearing the flag is what makes the retry below terminate: every caller of
+  // this function sits behind a BreakpointLocation::GetInjectCondition() check,
+  // so the retry cannot reach a fallback a second time. Keep that invariant if
+  // new failure paths are added.
+  constituent->SetInjectCondition(false);
+  assert(!constituent->GetInjectCondition() &&
+         "injected condition flag must be cleared before retrying");
+  return CreateBreakpointSite(constituent, use_hardware);
+}
+
 lldb::break_id_t
 Process::CreateBreakpointSite(const BreakpointLocationSP &constituent,
                               bool use_hardware) {
+  Log *log = GetLog(LLDBLog::JITLoader);
+
   addr_t load_addr = ComputeConstituentLoadAddress(*constituent, *this);
 
   if (load_addr == LLDB_INVALID_ADDRESS)
     return LLDB_INVALID_BREAK_ID;
 
+  auto fallback_with_error = [this, &constituent, &use_hardware,
+                              log](const llvm::StringRef error_msg) {
+    return FallbackToRegularBreakpointSite(
+        constituent, use_hardware, log, llvm::createStringError(error_msg));
+  };
+
   // Look up this breakpoint site.  If it exists, then add this new
   // constituent, otherwise create a new breakpoint site and add it.
   if (BreakpointSiteSP bp_site_sp =
           m_breakpoint_site_list.FindByAddress(load_addr)) {
+    // An injected condition can only join the existing site if that site is
+    // itself injected, since the condition of every constituent has to be
+    // folded into a single in-process expression.
+    if (constituent->GetInjectCondition()) {
+      BreakpointInjectedSite *bp_injected_site =
+          llvm::dyn_cast<BreakpointInjectedSite>(bp_site_sp.get());
+
+      if (!bp_injected_site) {
+        LLDB_LOG(log,
+                 "FCB: A regular breakpoint site already exists at {0:x}, "
+                 "evaluating this condition out of process instead",
+                 load_addr);
+        constituent->SetInjectCondition(false);
+      } else {
+        // BuildConditionExpression() collects the condition of every
+        // constituent, so this location has to be attached first.
+        bp_site_sp->AddConstituent(constituent);
+
+        if (!bp_injected_site->BuildConditionExpression()) {
+          // FIXME: The site stays patched because nothing can un-inject a site
+          // yet, so this location's condition would silently never be
+          // evaluated. Refuse the location instead.
+          LLDB_LOG(log,
+                   "FCB: Couldn't fold the condition of this location into the "
+                   "injected site at {0:x}",
+                   load_addr);
+          return LLDB_INVALID_BREAK_ID;
+        }
+
+        constituent->SetBreakpointSite(bp_site_sp);
+        return bp_site_sp->GetID();
+      }
+    }
+
     bp_site_sp->AddConstituent(constituent);
     constituent->SetBreakpointSite(bp_site_sp);
     return bp_site_sp->GetID();
   }
 
-  BreakpointSiteSP bp_site_sp(
-      new BreakpointSite(constituent, load_addr, use_hardware));
+  BreakpointSiteSP bp_site_sp;
+
+  if (constituent->GetInjectCondition()) {
+    // Everything in this block is guarded by GetInjectCondition() so that the
+    // retry performed by FallbackToRegularBreakpointSite() terminates. Do not
+    // hoist any of it out of here.
+    ABISP abi_sp = GetABI();
+
+    if (!abi_sp)
+      return fallback_with_error("Couldn't fetch target's ABI");
+
+    if (!abi_sp->SupportsFCB())
+      return fallback_with_error(
+          "Current ABI doesn't support JIT-ed breakpoint conditions");
+
+    // Build user expression's IR from condition
+    std::unique_ptr<BreakpointInjectedSite> bp_injected_site(
+        new BreakpointInjectedSite(constituent, load_addr));
+
+    // Setup a call before the copied instructions
+    if (!bp_injected_site->BuildConditionExpression())
+      return fallback_with_error("Couldn't build the condition expression");
+
+    if (!abi_sp->SetupFastConditionalBreakpointTrampoline(
+            bp_injected_site.get()))
+      return fallback_with_error("Couldn't setup trampoline");
+
+    bp_site_sp.reset(bp_injected_site.release());
+    bp_site_sp->AddConstituent(constituent);
+  } else {
+    bp_site_sp.reset(new BreakpointSite(constituent, load_addr, use_hardware));
+  }
 
   bool bp_from_address =
       constituent->GetBreakpoint().GetResolver()->GetResolverTy() ==
@@ -1805,6 +1896,112 @@ Process::CreateBreakpointSite(const BreakpointLocationSP &constituent,
         error.AsCString() ? error.AsCString() : "unknown error");
   }
   return LLDB_INVALID_BREAK_ID;
+}
+
+lldb::WritableDataBufferSP Process::SaveInstructions(Address & address) {
+  Log *log = GetLog(LLDBLog::JITLoader);
+
+  TargetSP target_sp = m_target_wp.lock();
+  const char *plugin_name = nullptr;
+  const char *flavor = nullptr;
+  const char *cpu = nullptr;
+  const char *features = nullptr;
+  const bool prefer_file_cache = true;
+
+  Function *function = address.CalculateSymbolContextFunction();
+
+  if (!function) {
+    LLDB_LOG(log, "JIT: No function in the SymbolContext");
+    return nullptr;
+  }
+
+  lldb::addr_t addr = address.GetCallableLoadAddress(target_sp.get());
+  AddressRange last_block_range = function->GetAddressRanges().back();
+  lldb::addr_t last_block_address =
+      last_block_range.GetBaseAddress().GetCallableLoadAddress(target_sp.get());
+
+  lldb::addr_t disasm_range_size = last_block_address - addr;
+  if (!disasm_range_size) {
+    LLDB_LOG(log, "JIT: Disassemble range too small: {0} bytes",
+             disasm_range_size);
+    return nullptr;
+  }
+
+  const AddressRange disasm_range(addr, disasm_range_size);
+  DisassemblerSP disassembler_sp = Disassembler::DisassembleRange(
+      target_sp->GetArchitecture(), plugin_name, flavor, cpu, features,
+      *target_sp.get(), disasm_range, prefer_file_cache);
+
+  if (!disassembler_sp) {
+    LLDB_LOG(log, "JIT: Couldn't disassemble '{0}' function",
+             function->GetName());
+    return nullptr;
+  }
+
+  InstructionList *instructions = &disassembler_sp->GetInstructionList();
+
+  DataExtractor data;
+
+  size_t instructions_count = 0;
+  size_t instructions_size = 0;
+  size_t jump_size = GetABI()->GetJumpSize();
+  const ExecutionContext exe_ctx(this);
+
+  for (size_t i = 0; i < instructions->GetSize(); i++) {
+    InstructionSP instruction = instructions->GetInstructionAtIndex(i);
+
+    instruction->GetData(data);
+    uint32_t size = instruction->Decode(*disassembler_sp.get(), data, 0);
+
+    if (instructions_size < jump_size) {
+      instructions_size += size;
+      instructions_count++;
+    }
+
+    LLDB_LOGV(log, "%#llx <+%llu>: %s, %s\t\t(%u)",
+              instruction->GetAddress().GetLoadAddress(target_sp.get()),
+              instruction->GetAddress().GetOffset(),
+              instruction->GetMnemonic(&exe_ctx),
+              instruction->GetOperands(&exe_ctx), size);
+  }
+
+  LLDB_LOGV(log, "JIT: Instruction count: {0}", instructions_count);
+
+  lldb::WritableDataBufferSP saved_instrs(
+      new DataBufferHeap(instructions_size, 0));
+
+  Status error;
+  size_t memory_read =
+      ReadMemory(addr, saved_instrs->GetBytes(), instructions_size, error);
+
+  if (memory_read != instructions_size || error.Fail()) {
+    LLDB_LOG(log, "JIT: Couldn't copy instruction to buffer");
+    return nullptr;
+  }
+
+  return saved_instrs;
+}
+
+bool Process::NewFCBTrampolineAllocation(lldb::addr_t addr, size_t size) {
+  if (m_fcb_allocations.find(addr) != m_fcb_allocations.end())
+    return false;
+  m_fcb_allocations[addr] = size;
+  return true;
+}
+
+lldb::addr_t Process::NextFCBTrampolineAllocation(lldb::addr_t bp_load_addr)
+    const {
+  if (m_fcb_allocations.empty())
+    return bp_load_addr + 100 * 1024 * 1024;
+
+  const auto last_it = m_fcb_allocations.crbegin();
+  const lldb::addr_t addr = last_it->first;
+  const size_t size = last_it->second;
+
+  const int page_size = getpagesize();
+  const size_t num_pages = std::ceil(static_cast<double>(size) / page_size);
+
+  return addr + page_size * num_pages + 1;
 }
 
 void Process::RemoveConstituentFromBreakpointSite(
@@ -2701,7 +2898,7 @@ Status Process::WriteObjectFile(std::vector<ObjectFile::LoadableData> entries) {
 }
 
 addr_t Process::AllocateMemory(size_t size, uint32_t permissions,
-                               Status &error) {
+                               Status & error, lldb::addr_t addr) {
   if (GetPrivateState() != eStateStopped) {
     error = Status::FromErrorString(
         "cannot allocate memory while process is running");
@@ -2709,7 +2906,7 @@ addr_t Process::AllocateMemory(size_t size, uint32_t permissions,
   }
 
   addr_t alloced_addr =
-      m_allocated_memory_cache.AllocateMemory(size, permissions, error);
+      m_allocated_memory_cache.AllocateMemory(size, permissions, error, addr);
   m_memory_region_infos_cache.Clear();
 
   return alloced_addr;

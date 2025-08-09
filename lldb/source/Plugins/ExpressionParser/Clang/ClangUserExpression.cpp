@@ -566,6 +566,10 @@ bool ClangUserExpression::TryParse(
   ResetDeclMap(exe_ctx, m_result_delegate, keep_result_in_memory);
 
   llvm::scope_exit on_exit([this]() { ResetDeclMap(); });
+  // An injected condition needs the DeclMap to stay alive after parsing so that
+  // BreakpointInjectedSite can read the variable locations out of it.
+  if (m_options.GetInjectCondition())
+    on_exit.release();
 
   if (!DeclMap()->WillParse(exe_ctx, GetMaterializer())) {
     diagnostic_manager.PutString(

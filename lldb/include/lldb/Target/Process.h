@@ -22,9 +22,11 @@
 #include <unordered_set>
 #include <vector>
 
+#include "lldb/Breakpoint/BreakpointInjectedSite.h"
 #include "lldb/Breakpoint/BreakpointSite.h"
 #include "lldb/Breakpoint/StopPointSiteList.h"
 #include "lldb/Breakpoint/WatchpointResource.h"
+#include "lldb/Core/Disassembler.h"
 #include "lldb/Core/LoadedModuleInfoList.h"
 #include "lldb/Core/PluginInterface.h"
 #include "lldb/Core/SourceManager.h"
@@ -1890,12 +1892,16 @@ public:
   /// \param[in] size
   ///     The size of the allocation requested.
   ///
+  /// \param[in] addr
+  ///     The targeted address for the allocation requested.
+  ///
   /// \return
   ///     The address of the allocated buffer in the process, or
   ///     LLDB_INVALID_ADDRESS if the allocation failed.
 
-  virtual lldb::addr_t DoAllocateMemory(size_t size, uint32_t permissions,
-                                        Status &error) {
+  virtual lldb::addr_t
+  DoAllocateMemory(size_t size, uint32_t permissions, Status &error,
+                   lldb::addr_t addr = LLDB_INVALID_ADDRESS) {
     error = Status::FromErrorStringWithFormatv(
         "error: {0} does not support allocating in the debug process",
         GetPluginName());
@@ -1922,10 +1928,16 @@ public:
   ///
   /// \param[in,out] error
   ///     An error object to fill in if things go wrong.
+  ///
+  /// \param[in] addr
+  ///     The optional targeted address for the allocation requested.
+  ///     Defaults to LLDB_INVALID_ADDRESS.
+  ///
   /// \return
   ///     The address of the allocated buffer in the process, or
   ///     LLDB_INVALID_ADDRESS if the allocation failed.
-  lldb::addr_t AllocateMemory(size_t size, uint32_t permissions, Status &error);
+  lldb::addr_t AllocateMemory(size_t size, uint32_t permissions, Status &error,
+                              lldb::addr_t addr = LLDB_INVALID_ADDRESS);
 
   /// The public interface to allocating memory in the process, this also
   /// clears the allocated memory.
@@ -2349,6 +2361,17 @@ public:
 
   lldb::break_id_t CreateBreakpointSite(const lldb::BreakpointLocationSP &owner,
                                         bool use_hardware);
+
+  lldb::break_id_t
+  FallbackToRegularBreakpointSite(const lldb::BreakpointLocationSP &owner,
+                                  bool use_hardware, Log *log,
+                                  const llvm::Error error);
+
+  lldb::WritableDataBufferSP SaveInstructions(Address &address);
+
+  bool NewFCBTrampolineAllocation(lldb::addr_t addr, size_t size);
+
+  lldb::addr_t NextFCBTrampolineAllocation(lldb::addr_t bp_load_addr) const;
 
   Status DisableBreakpointSiteByID(lldb::user_id_t break_id);
 
@@ -3533,6 +3556,9 @@ protected:
       m_breakpoint_site_list; ///< This is the list of breakpoint
                               /// locations we intend to insert in
                               /// the target.
+  std::map<lldb::addr_t, size_t> m_fcb_allocations; ///< A map holding the fixed
+                                                    /// trampoline allocations'
+                                                    /// address / size
   lldb::DynamicLoaderUP m_dyld_up;
   lldb::JITLoaderListUP m_jit_loaders_up;
   lldb::DynamicCheckerFunctionsUP m_dynamic_checkers_up; ///< The functions used
@@ -3620,6 +3646,7 @@ protected:
   std::unique_ptr<UtilityFunction> m_dlopen_utility_func_up;
   llvm::once_flag m_dlopen_utility_func_flag_once;
 
+  uint8_t *m_overwritten_instructions = nullptr;
   /// Per process source file cache.
   SourceManager::SourceFileCache m_source_file_cache;
 

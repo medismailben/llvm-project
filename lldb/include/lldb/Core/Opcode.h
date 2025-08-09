@@ -257,9 +257,6 @@ public:
   // Get the opcode exactly as it would be laid out in memory.
   uint32_t GetData(DataExtractor &data) const;
 
-protected:
-  friend class lldb::SBInstruction;
-
   const void *GetOpcodeDataBytes() const {
     switch (m_type) {
     case Opcode::eTypeInvalid:
@@ -280,6 +277,9 @@ protected:
     }
     return nullptr;
   }
+
+protected:
+  friend class lldb::SBInstruction;
 
   lldb::ByteOrder GetDataByteOrder() const;
 

@@ -19,14 +19,15 @@ using namespace lldb;
 using namespace lldb_private;
 
 BreakpointSite::BreakpointSite(const BreakpointLocationSP &constituent,
-                               lldb::addr_t addr, bool use_hardware)
+                               lldb::addr_t addr, bool use_hardware,
+                               BreakpointSiteKind kind)
     : StoppointSite(GetNextID(), addr, 0, use_hardware),
       m_type(eSoftware), // Process subclasses need to set this correctly using
                          // SetType()
       m_saved_opcode(), m_trap_opcode(),
-      m_enabled(false) // Need to create it disabled, so the first enable turns
-                       // it on.
-{
+      m_enabled(false), // Need to create it disabled, so the first enable turns
+                        // it on.
+      m_kind(kind) {
   m_constituents.Add(constituent);
 }
 

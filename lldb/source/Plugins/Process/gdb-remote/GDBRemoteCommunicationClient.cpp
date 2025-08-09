@@ -1576,15 +1576,18 @@ seconds GDBRemoteCommunicationClient::GetHostDefaultPacketTimeout() {
 }
 
 addr_t GDBRemoteCommunicationClient::AllocateMemory(size_t size,
-                                                    uint32_t permissions) {
+                                                    uint32_t permissions,
+                                                    lldb::addr_t addr) {
   if (m_supports_alloc_dealloc_memory != eLazyBoolNo) {
     m_supports_alloc_dealloc_memory = eLazyBoolYes;
     char packet[64];
+    std::string addr_part = ("," + llvm::Twine::utohexstr(addr)).str();
     const int packet_len = ::snprintf(
-        packet, sizeof(packet), "_M%" PRIx64 ",%s%s%s", (uint64_t)size,
+        packet, sizeof(packet), "_M%" PRIx64 ",%s%s%s%s", (uint64_t)size,
         permissions & lldb::ePermissionsReadable ? "r" : "",
         permissions & lldb::ePermissionsWritable ? "w" : "",
-        permissions & lldb::ePermissionsExecutable ? "x" : "");
+        permissions & lldb::ePermissionsExecutable ? "x" : "",
+        addr != LLDB_INVALID_ADDRESS ? addr_part.c_str() : "");
     assert(packet_len < (int)sizeof(packet));
     UNUSED_IF_ASSERT_DISABLED(packet_len);
     StringExtractorGDBRemote response;

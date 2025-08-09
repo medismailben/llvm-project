@@ -95,7 +95,7 @@ public:
 
   bool RewriteExpression(DiagnosticManager &diagnostic_manager) override;
 
-  /// Ready an already-parsed expression for execution, possibly evaluating it
+  /// Read an already-parsed expression for execution, possibly evaluating it
   /// statically.
   ///
   /// \param[out] func_addr

@@ -986,14 +986,16 @@ nub_addr_t MachTask::GetDYLDAllImageInfosAddress(DNBError &err) {
 //----------------------------------------------------------------------
 // MachTask::AllocateMemory
 //----------------------------------------------------------------------
-nub_addr_t MachTask::AllocateMemory(size_t size, uint32_t permissions) {
-  mach_vm_address_t addr;
+nub_addr_t MachTask::AllocateMemory(size_t size, uint32_t permissions,
+                                    nub_addr_t addr) {
   task_t task = TaskPort();
   if (task == TASK_NULL)
     return INVALID_NUB_ADDRESS;
 
   DNBError err;
-  err = ::mach_vm_allocate(task, &addr, size, TRUE);
+  err = ::mach_vm_allocate(task, &addr, size,
+                           (addr == INVALID_NUB_ADDRESS) ? VM_FLAGS_ANYWHERE
+                                                         : VM_FLAGS_FIXED);
   if (err.Status() == KERN_SUCCESS) {
     // Set the protections:
     vm_prot_t mach_prot = VM_PROT_NONE;

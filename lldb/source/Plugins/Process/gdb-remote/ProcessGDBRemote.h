@@ -163,8 +163,9 @@ public:
   size_t DoWriteMemory(lldb::addr_t addr, const void *buf, size_t size,
                        Status &error) override;
 
-  lldb::addr_t DoAllocateMemory(size_t size, uint32_t permissions,
-                                Status &error) override;
+  lldb::addr_t
+  DoAllocateMemory(size_t size, uint32_t permissions, Status &error,
+                   lldb::addr_t addr = LLDB_INVALID_ADDRESS) override;
 
   Status DoDeallocateMemory(lldb::addr_t ptr) override;
 
@@ -370,7 +371,7 @@ protected:
 
   bool ParsePythonTargetDefinition(const FileSpec &target_definition_fspec);
 
-  DataExtractor GetAuxvData() override;
+  lldb_private::DataExtractor GetAuxvData() override;
 
   StructuredData::ObjectSP GetExtendedInfoForThread(lldb::tid_t tid);
 

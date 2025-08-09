@@ -3752,6 +3752,13 @@ protected:
         result.GetOutputStream().Printf("\n");
       }
 
+      if (std::shared_ptr<const UnwindPlan> plan_sp = func_unwinders_sp->GetTrampolineUnwindPlan()) {
+        result.GetOutputStream().Printf("Trampoline UnwindPlan:\n");
+        plan_sp->Dump(result.GetOutputStream(), thread.get(),
+                      LLDB_INVALID_ADDRESS);
+        result.GetOutputStream().Printf("\n");
+      }
+
       if (std::shared_ptr<const UnwindPlan> plan_sp =
               func_unwinders_sp->GetArmUnwindUnwindPlan(*target)) {
         result.GetOutputStream().Printf("ARM.exidx unwind UnwindPlan:\n");

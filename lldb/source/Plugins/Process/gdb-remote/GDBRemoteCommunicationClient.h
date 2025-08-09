@@ -198,7 +198,8 @@ public:
   ///     Boolean for success
   bool GetWorkingDir(FileSpec &working_dir);
 
-  lldb::addr_t AllocateMemory(size_t size, uint32_t permissions);
+  lldb::addr_t AllocateMemory(size_t size, uint32_t permissions,
+                              lldb::addr_t addr = LLDB_INVALID_ADDRESS);
 
   bool DeallocateMemory(lldb::addr_t addr);
 

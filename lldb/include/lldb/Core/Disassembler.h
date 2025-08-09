@@ -20,6 +20,7 @@
 #include "lldb/Utility/ArchSpec.h"
 #include "lldb/Utility/ConstString.h"
 #include "lldb/Utility/FileSpec.h"
+#include "lldb/Utility/Iterable.h"
 #include "lldb/Utility/StructuredData.h"
 #include "lldb/lldb-defines.h"
 #include "lldb/lldb-forward.h"
@@ -355,11 +356,7 @@ public:
             bool show_control_flow_kind, const ExecutionContext *exe_ctx);
 
 private:
-  typedef std::vector<lldb::InstructionSP> collection;
-  typedef collection::iterator iterator;
-  typedef collection::const_iterator const_iterator;
-
-  collection m_instructions;
+    std::vector<lldb::InstructionSP> m_instructions;
 };
 
 class PseudoInstruction : public Instruction {

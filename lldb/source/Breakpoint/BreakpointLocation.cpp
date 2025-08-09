@@ -217,6 +217,19 @@ const StopCondition &BreakpointLocation::GetCondition() const {
   return GetOptionsSpecifyingKind(BreakpointOptions::eCondition).GetCondition();
 }
 
+bool BreakpointLocation::GetInjectCondition() const {
+  if (m_options_up &&
+      m_options_up->IsOptionSet(BreakpointOptions::eInjectCondition))
+    return m_options_up->GetInjectCondition();
+  return m_owner.GetInjectCondition();
+}
+
+void BreakpointLocation::SetInjectCondition(bool inject_condition) {
+  m_owner.SetInjectCondition(inject_condition);
+  GetLocationOptions().SetInjectCondition(inject_condition);
+  SendBreakpointLocationChangedEvent(eBreakpointEventTypeInjectedCondition);
+}
+
 bool BreakpointLocation::ConditionSaysStop(ExecutionContext &exe_ctx,
                                            Status &error) {
   Log *log = GetLog(LLDBLog::Breakpoints);
@@ -227,6 +240,14 @@ bool BreakpointLocation::ConditionSaysStop(ExecutionContext &exe_ctx,
 
   if (!condition) {
     m_user_expression_sp.reset();
+    return false;
+  }
+
+  bool inject_condition = GetInjectCondition();
+
+  if (inject_condition) {
+    // TODO: Evalutates condition is case of multi-condition
+    // BreakpointInjectSite
     return false;
   }
 
@@ -257,13 +278,15 @@ bool BreakpointLocation::ConditionSaysStop(ExecutionContext &exe_ctx,
       return true;
     }
 
-    if (!m_user_expression_sp->Parse(diagnostics, exe_ctx,
-                                     eExecutionPolicyOnlyWhenNeeded, true,
-                                     false)) {
-      error = Status::FromError(
-          diagnostics.GetAsError(lldb::eExpressionParseError,
-                                 "Couldn't parse conditional expression:"));
+    ExecutionPolicy execution_policy = inject_condition
+                                           ? eExecutionPolicyAlways
+                                           : eExecutionPolicyOnlyWhenNeeded;
 
+    if (!m_user_expression_sp->Parse(diagnostics, exe_ctx, execution_policy,
+                                     true, false)) {
+      error = Status::FromErrorStringWithFormat(
+          "Couldn't parse conditional expression:\n%s",
+          diagnostics.GetString().c_str());
       m_user_expression_sp.reset();
       return true;
     }
@@ -282,6 +305,7 @@ bool BreakpointLocation::ConditionSaysStop(ExecutionContext &exe_ctx,
   options.SetTryAllThreads(true);
   options.SetSuppressPersistentResult(
       true); // Don't generate a user variable for condition expressions.
+  options.SetInjectCondition(inject_condition);
 
   Status expr_error;
 

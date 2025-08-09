@@ -92,6 +92,14 @@ public:
   std::shared_ptr<const UnwindPlan>
   GetArchDefaultAtFuncEntryUnwindPlan(Thread &thread);
 
+  std::shared_ptr<const UnwindPlan> GetTrampolineUnwindPlan() {
+    return m_unwind_plan_trampoline_sp;
+  }
+
+  void SetTrampolineUnwindPlan(lldb::UnwindPlanSP unwind_plan_trampoline_sp) {
+    m_unwind_plan_trampoline_sp = unwind_plan_trampoline_sp;
+  }
+
 private:
   lldb::UnwindAssemblySP GetUnwindAssemblyProfiler(Target &target);
 
@@ -118,6 +126,7 @@ private:
   std::shared_ptr<const UnwindPlan> m_unwind_plan_object_file_sp;
   std::shared_ptr<const UnwindPlan> m_unwind_plan_eh_frame_sp;
   std::shared_ptr<const UnwindPlan> m_unwind_plan_debug_frame_sp;
+  std::shared_ptr<const UnwindPlan> m_unwind_plan_trampoline_sp;
 
   // augmented by assembly inspection so it's valid everywhere
   std::shared_ptr<const UnwindPlan> m_unwind_plan_object_file_augmented_sp;

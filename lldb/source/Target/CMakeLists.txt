@@ -104,6 +104,7 @@ add_lldb_library(lldbTarget
     lldbUtility
     lldbValueObject
     lldbPluginProcessUtility
+    lldbPluginObjectFileTrampoline
   )
 
 add_dependencies(lldbTarget

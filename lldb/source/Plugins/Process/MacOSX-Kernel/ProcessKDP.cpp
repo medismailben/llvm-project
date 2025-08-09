@@ -615,7 +615,7 @@ size_t ProcessKDP::DoWriteMemory(addr_t addr, const void *buf, size_t size,
 }
 
 lldb::addr_t ProcessKDP::DoAllocateMemory(size_t size, uint32_t permissions,
-                                          Status &error) {
+                                          Status &error, lldb::addr_t addr) {
   error = Status::FromErrorString(
       "memory allocation not supported in kdp remote debugging");
   return LLDB_INVALID_ADDRESS;

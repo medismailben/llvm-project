@@ -33,15 +33,16 @@ friend class Breakpoint;
 
 public:
   enum OptionKind {
-    eCallback     = 1 << 0,
-    eEnabled      = 1 << 1,
-    eOneShot      = 1 << 2,
-    eIgnoreCount  = 1 << 3,
-    eThreadSpec   = 1 << 4,
-    eCondition    = 1 << 5,
-    eAutoContinue = 1 << 6,
-    eAllOptions   = (eCallback | eEnabled | eOneShot | eIgnoreCount | eThreadSpec
-                     | eCondition | eAutoContinue)
+    eCallback        = 1 << 0,
+    eEnabled         = 1 << 1,
+    eOneShot         = 1 << 2,
+    eIgnoreCount     = 1 << 3,
+    eThreadSpec      = 1 << 4,
+    eCondition       = 1 << 5,
+    eAutoContinue    = 1 << 6,
+    eInjectCondition = 1 << 7,
+    eAllOptions      = (eCallback | eEnabled | eOneShot | eIgnoreCount |
+                   eThreadSpec | eCondition | eAutoContinue | eInjectCondition)
   };
   struct CommandData {
     CommandData() = default;
@@ -112,10 +113,13 @@ public:
   ///
   /// \param[in] auto_continue
   ///    Should this breakpoint auto-continue after running its commands.
+  /// \param[in] inject_condition
+  ///
+  ///    Should the condition be injected and checked in-process.
   ///
   BreakpointOptions(const char *condition, bool enabled = true,
                     int32_t ignore = 0, bool one_shot = false,
-                    bool auto_continue = false);
+                    bool auto_continue = false, bool inject_condition = false);
 
   /// Breakpoints make options with all flags set.  Locations and Names make
   /// options with no flags set.
@@ -292,10 +296,10 @@ public:
   }
 
   /// Set the breakpoint to ignore the next \a count breakpoint hits.
-  /// \param[in] n
+  /// \param[in] count
   ///    The number of breakpoint hits to ignore.
-  void SetIgnoreCount(uint32_t n) {
-    m_ignore_count = n;
+  void SetIgnoreCount(uint32_t count) {
+    m_ignore_count = count;
     m_set_flags.Set(eIgnoreCount);
   }
 
@@ -344,6 +348,19 @@ public:
     return m_set_flags.AnySet(eAllOptions);
   }
 
+  /// Check if the breakpoint condition should be injected
+  ///
+  /// \return
+  ///    If condition is injected \b true, \b false otherwise.
+  bool GetInjectCondition() const;
+
+  /// If \a inject_condition is \b true, inject the breakpoint condition in the
+  /// process.
+  void SetInjectCondition(bool inject_condition) {
+    m_inject_condition = inject_condition;
+    m_set_flags.Set(eInjectCondition);
+  }
+
 protected:
   // Classes that inherit from BreakpointOptions can see and modify these
   bool IsOptionSet(OptionKind kind)
@@ -357,6 +374,7 @@ protected:
     EnabledState,
     OneShotState,
     AutoContinue,
+    InjectCondition,
     LastOptionName
   };
   static const char *g_option_names[(size_t)OptionNames::LastOptionName];
@@ -390,12 +408,12 @@ private:
   /// The condition to test.
   StopCondition m_condition;
   /// If set, inject breakpoint condition into process.
-  bool m_inject_condition;
-  /// If set, auto-continue from breakpoint.
   bool m_auto_continue;
   /// Which options are set at this level.
   /// Drawn from BreakpointOptions::SetOptionsFlags.
   Flags m_set_flags;
+  bool m_inject_condition;
+  /// If set, auto-continue from breakpoint.
 };
 
 } // namespace lldb_private

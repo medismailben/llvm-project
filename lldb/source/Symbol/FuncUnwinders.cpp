@@ -56,6 +56,8 @@ std::shared_ptr<const UnwindPlan>
 FuncUnwinders::GetUnwindPlanAtCallSite(Target &target, Thread &thread) {
   std::lock_guard<std::recursive_mutex> guard(m_mutex);
 
+  if (std::shared_ptr<const UnwindPlan> plan_sp = m_unwind_plan_trampoline_sp)
+    return plan_sp;
   if (std::shared_ptr<const UnwindPlan> plan_sp =
           GetObjectFileUnwindPlan(target))
     return plan_sp;
@@ -377,6 +379,9 @@ LazyBool FuncUnwinders::CompareUnwindPlansForIdenticalInitialPCLocation(
 
 std::shared_ptr<const UnwindPlan>
 FuncUnwinders::GetUnwindPlanAtNonCallSite(Target &target, Thread &thread) {
+  if (m_unwind_plan_trampoline_sp)
+    return m_unwind_plan_trampoline_sp;
+
   std::shared_ptr<const UnwindPlan> eh_frame_sp = GetEHFrameUnwindPlan(target);
   if (!eh_frame_sp)
     eh_frame_sp = GetDebugFrameUnwindPlan(target);

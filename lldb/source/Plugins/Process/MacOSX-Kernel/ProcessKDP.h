@@ -112,8 +112,10 @@ public:
   size_t DoWriteMemory(lldb::addr_t addr, const void *buf, size_t size,
                        lldb_private::Status &error) override;
 
-  lldb::addr_t DoAllocateMemory(size_t size, uint32_t permissions,
-                                lldb_private::Status &error) override;
+  lldb::addr_t
+  DoAllocateMemory(size_t size, uint32_t permissions,
+                   lldb_private::Status &error,
+                   lldb::addr_t addr = LLDB_INVALID_ADDRESS) override;
 
   lldb_private::Status DoDeallocateMemory(lldb::addr_t ptr) override;
 

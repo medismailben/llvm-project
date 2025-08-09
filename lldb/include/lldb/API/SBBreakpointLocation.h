@@ -64,6 +64,10 @@ public:
 
   bool GetAutoContinue();
 
+  void SetInjectCondition(bool inject_condition);
+
+  bool GetInjectCondition();
+
 #ifndef SWIG
   void SetCallback(SBBreakpointHitCallback callback, void *baton);
 #endif

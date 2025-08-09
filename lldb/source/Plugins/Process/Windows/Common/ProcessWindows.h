@@ -73,8 +73,9 @@ public:
                       Status &error) override;
   size_t DoWriteMemory(lldb::addr_t vm_addr, const void *buf, size_t size,
                        Status &error) override;
-  lldb::addr_t DoAllocateMemory(size_t size, uint32_t permissions,
-                                Status &error) override;
+  lldb::addr_t
+  DoAllocateMemory(size_t size, uint32_t permissions, Status &error,
+                   lldb::addr_t addr = LLDB_INVALID_ADDRESS) override;
   Status DoDeallocateMemory(lldb::addr_t ptr) override;
 
   lldb::addr_t GetImageInfoAddress() override;

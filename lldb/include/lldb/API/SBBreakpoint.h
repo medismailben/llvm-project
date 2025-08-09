@@ -81,6 +81,10 @@ public:
 
   bool GetAutoContinue();
 
+  void SetInjectCondition(bool inject_condition);
+
+  bool GetInjectCondition();
+
   void SetThreadID(lldb::tid_t sb_thread_id);
 
   lldb::tid_t GetThreadID();

@@ -2,6 +2,7 @@ add_lldb_library(lldbBreakpoint NO_PLUGIN_DEPENDENCIES
   Breakpoint.cpp
   BreakpointID.cpp
   BreakpointIDList.cpp
+  BreakpointInjectedSite.cpp
   BreakpointList.cpp
   BreakpointLocation.cpp
   BreakpointLocationCollection.cpp

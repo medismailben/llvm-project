@@ -8,6 +8,7 @@
 
 #include "ABIMacOSX_arm64.h"
 
+#include <cmath>
 #include <optional>
 #include <vector>
 
@@ -22,17 +23,268 @@
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
 #include "lldb/Utility/ConstString.h"
+#include "Utility/ARM64_DWARF_Registers.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/RegisterValue.h"
 #include "lldb/Utility/Scalar.h"
 #include "lldb/Utility/Status.h"
 #include "lldb/ValueObject/ValueObjectConstResult.h"
+#include "lldb/lldb-enumerations.h"
+#include "lldb/lldb-forward.h"
 
 using namespace lldb;
 using namespace lldb_private;
 
 static const char *pluginDesc = "Mac OS X ABI for arm64 targets";
+
+bool ABIMacOSX_arm64::GetFramePointerRegister(const char *&name) {
+  name = "fp";
+  return true;
+}
+
+llvm::Expected<std::string> ABIMacOSX_arm64::GetRegisterName(uint32_t num) {
+  if (!m_mc_register_info_up)
+    return llvm::createStringError(
+        llvm::formatv("Failed to get register name for register #{0}: No "
+                      "register information in ABI.",
+                      num));
+
+  if (num > m_mc_register_info_up->getNumRegs())
+    return llvm::createStringError(
+        llvm::formatv("Failed to get register name for register #{0}: Invalid "
+                      "register number.",
+                      num));
+
+  llvm::Twine reg_name("x" + llvm::Twine(num));
+  return GetMCName(reg_name.str());
+}
+
+bool ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
+    BreakpointInjectedSite *bp_injected_site) {
+  Log *log = GetLog(LLDBLog::JITLoader);
+
+  TargetSP target_sp = bp_injected_site->GetTargetSP();
+  if (!target_sp) {
+    // Add logging
+    return false;
+  }
+
+  ProcessSP process_sp = target_sp->GetProcessSP();
+  if (!process_sp) {
+    // Add logging
+    return false;
+  }
+
+  size_t copied_instr_size = GetJumpSize();
+
+  /// Initially, assume that we will patch a single instruction (b offset) to
+  /// branch to the trampoline. We will update the return address after saving
+  /// the instructions.
+  //  const lldb::addr_t return_addr = bp_injected_site->GetLoadAddress() +
+  //  copied_instr_size; // + 1 ?
+
+  std::stringstream ss;
+
+  ss << "__attribute__((naked,noreturn)) void $__lldb_emit_trampoline() {\n"
+     << "    __asm__ (\n"
+     << "      R\"(\n";
+
+  /// Saving General Purpose Registers.
+  ss << "           // Allocate space for the register_context struct on the "
+        "stack\n"
+     << "           sub     sp, sp, #0x100\n"
+     << "\n"
+     << "           // Save registers into the allocated space\n"
+     << "           stp     x0, x1, [sp, #0x00]\n"
+     << "           stp     x2, x3, [sp, #0x10]\n"
+     << "           stp     x4, x5, [sp, #0x20]\n"
+     << "           stp     x6, x7, [sp, #0x30]\n"
+     << "           stp     x8, x9, [sp, #0x40]\n"
+     << "           stp     x10, x11, [sp, #0x50]\n"
+     << "           stp     x12, x13, [sp, #0x60]\n"
+     << "           stp     x14, x15, [sp, #0x70]\n"
+     << "           stp     x16, x17, [sp, #0x80]\n"
+     << "           stp     x18, x19, [sp, #0x90]\n"
+     << "           stp     x20, x21, [sp, #0xa0]\n"
+     << "           stp     x22, x23, [sp, #0xb0]\n"
+     << "           stp     x24, x25, [sp, #0xc0]\n"
+     << "           stp     x26, x27, [sp, #0xd0]\n"
+     << "           stp     x28, x29, [sp, #0xe0]\n"
+     << "           str     x30, [sp, #0xf0]\n"
+     << "\n"
+     << "           // Store the stack pointer value (before any allocation) "
+        "at the end of the context structure\n"
+     << "           mov     x1, sp\n"
+     << "           add     x1, x1, #0x100\n"
+     << "           str     x1, [sp, #0xf8]\n";
+
+  /// Pass register context address to argument structure builder.
+  /// Allocating argument structure on the stack.
+  /// Pass argument structure address to argument structure builder.
+  /// Call argument structure builder.
+  /// No need to move return value to the right register.
+  /// Call condition expression evaluator.
+  /// Restore General Purpose Registers.
+
+  const lldb::addr_t util_func_addr =
+      bp_injected_site->GetUtilityFunctionAddress();
+  const lldb::addr_t cond_expr_addr =
+      bp_injected_site->GetConditionExpressionAddress();
+
+  ss << "           mov x0, sp\n"
+     << "           sub sp, sp, #" << bp_injected_site->GetArgsStructSize()
+     << "\n"
+     << "           mov x1, sp\n"
+     << "           ldr x17, =0x" << std::hex << util_func_addr << "\n"
+     << "           blr x17\n"
+     << "           ldr x17, =0x" << std::hex << cond_expr_addr << "\n"
+     << "           blr x17\n"
+     << "\n"
+     << "           // Restore registers from the stack in reverse order\n"
+     << "           ldr     x30, [sp, #0xf0]\n"
+     << "           ldp     x28, x29, [sp, #0xe0]\n"
+     << "           ldp     x26, x27, [sp, #0xd0]\n"
+     << "           ldp     x24, x25, [sp, #0xc0]\n"
+     << "           ldp     x22, x23, [sp, #0xb0]\n"
+     << "           ldp     x20, x21, [sp, #0xa0]\n"
+     << "           ldp     x18, x19, [sp, #0x90]\n"
+     << "           ldp     x16, x17, [sp, #0x80]\n"
+     << "           ldp     x14, x15, [sp, #0x70]\n"
+     << "           ldp     x12, x13, [sp, #0x60]\n"
+     << "           ldp     x10, x11, [sp, #0x50]\n"
+     << "           ldp     x8, x9, [sp, #0x40]\n"
+     << "           ldp     x6, x7, [sp, #0x30]\n"
+     << "           ldp     x4, x5, [sp, #0x20]\n"
+     << "           ldp     x2, x3, [sp, #0x10]\n"
+     << "           ldp     x0, x1, [sp, #0x00]\n"
+     << "\n"
+     << "           ldr     x1, [sp, #0xf8]\n"
+     << "           mov     sp, x1\n"
+     << "           \n"
+     << "           // Free allocated stack memory for register_context "
+        "structure\n"
+     << "           add     sp, sp, #0x100\n";
+
+  /// Allocate space to copy inferior instructions and jump back to user's code
+  ss << "           nop\n"
+     << "           nop\n"
+     << "        )\");\n"
+     << "}";
+
+  ExecutionContext exe_ctx = bp_injected_site->GetOwnerExecutionContext();
+  auto trampoline_instr = EmitAssembly("emit_trampoline", ss, exe_ctx);
+  if (!trampoline_instr)
+    return false;
+
+  Address &bp_addr = bp_injected_site->GetRealAddress();
+  addr_t bp_load_addr = bp_addr.GetLoadAddress(target_sp.get());
+  auto saved_instrs = process_sp->SaveInstructions(bp_addr);
+  if (!saved_instrs) {
+    //    error = "FCB: Couldn't save instructions";
+    return false;
+  }
+
+  /// Allocate trampoline +100MiB from the bp site
+  /// We need to allocate the trampoline stub to compute the branch offset to it
+  /// and back to the user code.
+  /// TODO: We should DeAllocate the stub if we fail in the following stages.
+  size_t trampoline_size = trampoline_instr->GetByteSize();
+  uint32_t permission = ePermissionsReadable | ePermissionsExecutable;
+  Status error;
+  addr_t trampoline_expected_addr =
+      process_sp->NextFCBTrampolineAllocation(bp_load_addr);
+  addr_t trampoline_addr = process_sp->AllocateMemory(
+      trampoline_size, permission, error, trampoline_expected_addr);
+  // Check that the returned trampoline addr is the paged aligned expected addr.
+  if (!trampoline_addr || trampoline_addr == LLDB_INVALID_ADDRESS) {
+    LLDB_LOG(log, "JIT: Couldn't allocate trampoline buffer");
+    return false;
+  }
+
+  if (!process_sp->NewFCBTrampolineAllocation(trampoline_addr,
+                                              trampoline_size)) {
+    LLDB_LOG(log, "JIT: Allocated trampoline address already in use");
+    return false;
+  }
+
+  /// Run copied instructions and jump back to user's code
+  /// FIXME: Disassemble trampoline and detect first `nop` instr
+  const lldb::offset_t copied_instr_offset = 45 * aarch64_instr_size;
+  const intptr_t source_branch_target =
+      bp_load_addr - trampoline_addr + copied_instr_offset + aarch64_instr_size;
+  //  const bool bp_before_trampoline = branch_to_source_target < 0;
+  ss = std::stringstream();
+  ss << "__attribute__((naked,noreturn)) void $__lldb_emit_branch_to_source() "
+        "{\n"
+     << "    __asm__ (\n"
+     << "      R\"(\n"
+     << "           b " << source_branch_target << "\n"
+     << "        )\");\n"
+     << "}";
+
+  auto branch_instr = EmitAssembly("emit_branch_to_source", ss, exe_ctx);
+  if (!branch_instr)
+    return false;
+
+  const auto &trampoline_buffer = trampoline_instr->GetData();
+
+  /// Copy inferior instructions into trampoline.
+  std::memcpy(&trampoline_buffer[copied_instr_offset], saved_instrs->GetBytes(),
+              saved_instrs->GetByteSize());
+  std::memcpy(&trampoline_buffer[copied_instr_offset + aarch64_instr_size],
+              branch_instr->GetBytes(), aarch64_instr_size);
+
+  size_t written_bytes = process_sp->WriteMemory(
+      trampoline_addr, trampoline_buffer.data(), trampoline_size, error);
+  if (written_bytes != trampoline_size || error.Fail()) {
+    LLDB_LOG(log, "JIT: Couldn't write trampoline buffer to inferior");
+    return false;
+  }
+
+  /// Patch inferior to branch to trampoline
+  const intptr_t trampoline_branch_target = trampoline_addr - bp_load_addr;
+  ss = std::stringstream();
+  ss << "__attribute__((naked,noreturn)) void "
+        "$__lldb_emit_branch_to_trampoline() {\n"
+     << "    __asm__ (\n"
+     << "      R\"(\n"
+     << "           b " << trampoline_branch_target << "\n"
+     << "        )\");\n"
+     << "}";
+
+  branch_instr = EmitAssembly("emit_branch_to_trampoline", ss, exe_ctx);
+  if (!branch_instr)
+    return false;
+
+  written_bytes = process_sp->WriteMemory(
+      bp_load_addr, branch_instr->GetBytes(), aarch64_instr_size, error);
+  if (written_bytes != copied_instr_size || error.Fail()) {
+    LLDB_LOG(log, "JIT: Couldn't patch inferior with branch to trampoline");
+    return false;
+  }
+
+  lldb::ModuleSP trampoline_module_sp =
+      CreateModuleForFastConditionalBreakpointTrampoline(
+          trampoline_addr, trampoline_size, bp_load_addr);
+
+  if (!trampoline_module_sp) {
+    LLDB_LOG(log, "JIT: Couldn't get trampoline module");
+    return false;
+  }
+
+  ModuleList &images = target_sp->GetImages();
+  size_t image_count = images.GetSize();
+
+  images.Append(trampoline_module_sp);
+
+  if (images.GetSize() == image_count) {
+    LLDB_LOG(log, "JIT: Couldn't add trampoline module to image list");
+    return false;
+  }
+
+  return true;
+}
 
 size_t ABIMacOSX_arm64::GetRedZoneSize() const { return 128; }
 
@@ -339,6 +591,28 @@ ABIMacOSX_arm64::SetReturnValueObject(lldb::StackFrameSP &frame_sp,
   }
 
   return error;
+}
+
+lldb::UnwindPlanSP ABIMacOSX_arm64::CreateTrampolineUnwindPlan(addr_t return_address) {
+  uint32_t pc_reg_num = arm64_dwarf::pc;
+  uint32_t sp_reg_num = arm64_dwarf::sp;
+
+  UnwindPlan::Row row;
+  row.GetCFAValue().SetIsRegisterPlusOffset(sp_reg_num, 0x100);
+  row.SetOffset(0);
+
+  // The original SP for the caller frame can be recovered as SP + 0x100 + 0x10
+  row.SetRegisterLocationToIsCFAPlusOffset(sp_reg_num, 0x110, true);
+
+  row.SetRegisterLocationToConstantValue(pc_reg_num, return_address, true);
+
+  auto plan_sp = std::make_shared<UnwindPlan>(eRegisterKindDWARF);
+  plan_sp->AppendRow(row);
+  plan_sp->SetSourceName("arm64-apple-darwin trampoline unwind plan");
+  plan_sp->SetSourcedFromCompiler(eLazyBoolNo);
+  plan_sp->SetUnwindPlanValidAtAllInstructions(eLazyBoolNo);
+  plan_sp->SetUnwindPlanForSignalTrap(eLazyBoolNo);
+  return plan_sp;
 }
 
 // AAPCS64 (Procedure Call Standard for the ARM 64-bit Architecture) says

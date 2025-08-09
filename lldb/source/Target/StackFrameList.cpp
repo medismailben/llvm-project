@@ -1028,8 +1028,41 @@ size_t StackFrameList::GetStatus(Stream &strm, uint32_t first_frame,
   else
     last_frame = first_frame + num_frames;
 
+  // FIXME: Write a StackFrameRecognizer for this instead of matching on the
+  // names of the JIT-ed condition checker and the trampoline.
   StackFrameSP selected_frame_sp =
       m_thread.GetSelectedFrame(DoNoSelectMostRelevantFrame);
+
+  // A fast conditional breakpoint stops inside the JIT-ed condition checker,
+  // which the trampoline called. Neither frame is interesting to the user, so
+  // walk up to the frame that holds their code.
+  if (selected_frame_sp) {
+    uint32_t parent_frame_idx = first_frame;
+    SymbolContext sc = selected_frame_sp->GetSymbolContext(
+        eSymbolContextFunction | eSymbolContextSymbol);
+
+    if (Function *fn = sc.function) {
+      if (fn->GetMangled().GetName().GetStringRef() == "$__lldb_expr(void*)") {
+        StackFrameSP caller_sp =
+            m_thread.GetStackFrameAtIndex(++parent_frame_idx);
+        if (caller_sp) {
+          sc = caller_sp->GetSymbolContext(eSymbolContextSymbol);
+          if (Symbol *sym = sc.symbol) {
+            if (sym->GetName().GetStringRef() ==
+                "$__lldb_jitted_conditional_bp_trampoline") {
+              if (m_thread.SetSelectedFrameByIndex(++parent_frame_idx)) {
+                selected_frame_sp =
+                    m_thread.GetSelectedFrame(DoNoSelectMostRelevantFrame);
+                first_frame = parent_frame_idx;
+                last_frame += parent_frame_idx;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   std::string marker;
   for (frame_idx = first_frame; frame_idx < last_frame; ++frame_idx) {
     frame_sp = GetFrameAtIndex(frame_idx);
