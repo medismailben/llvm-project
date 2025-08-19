@@ -39,6 +39,8 @@ public:
 
   void Clear();
 
+  SBOptional GetOptional();
+
   addr_t GetFileAddress() const;
 
   addr_t GetLoadAddress(const lldb::SBTarget &target) const;
