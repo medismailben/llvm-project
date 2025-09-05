@@ -846,6 +846,7 @@ CommandArgumentType
 .. py:data:: eArgTypeRunMode
 .. py:data:: eArgTypeScriptedCommandSynchronicity
 .. py:data:: eArgTypeScriptLang
+.. py:data:: eArgTypeScriptedExtension
 .. py:data:: eArgTypeSearchWord
 .. py:data:: eArgTypeSelector
 .. py:data:: eArgTypeSettingIndex

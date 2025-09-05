@@ -1395,6 +1395,29 @@ let Command = "scripting extension list" in {
              "is used.">;
 }
 
+let Command = "scripting extension generate" in {
+  def scripting_extension_generate_all_methods
+      : Option<"all", "a">,
+        Arg<"Boolean">,
+        Desc<"Generate all the extension methods, not only the abstract ones.">;
+  def scripting_extension_generate_language
+      : Option<"language", "l">,
+        EnumArg<"ScriptLang">,
+        Desc<"Specify the scripting "
+             " language. If none is specified the default scripting language "
+             "is used.">;
+  def scripting_extension_generate_class_suffix
+      : Option<"name", "n">,
+        Arg<"ClassName">,
+        Desc<"Specify the class prefix name to include in the generated class "
+             "definitions.">;
+  def scripting_extension_generate_output_file
+      : Option<"output", "o">,
+        Group<1>,
+        Arg<"Filename">,
+        Desc<"File location where the extension is generated.">;
+}
+
 let Command = "source info" in {
   def source_info_count : Option<"count", "c">,
                           Arg<"Count">,

@@ -257,7 +257,8 @@ public:
 
   static llvm::Error OpenFileInExternalEditor(llvm::StringRef editor,
                                               const FileSpec &file_spec,
-                                              uint32_t line_no);
+                                              uint32_t line_no,
+                                              bool foreground = false);
 
   static llvm::Error OpenURL(llvm::StringRef url);
 

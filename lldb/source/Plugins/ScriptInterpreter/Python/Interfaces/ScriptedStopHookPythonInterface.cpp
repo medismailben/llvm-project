@@ -65,7 +65,7 @@ void ScriptedStopHookPythonInterface::Initialize() {
   PluginManager::RegisterPlugin(
       GetPluginNameStatic(),
       llvm::StringRef("Perform actions whenever the process stops, before control is returned to the user."),
-      CreateInstance, eScriptLanguagePython, {ci_usages, api_usages});
+      CreateInstance, eScriptedExtensionScriptedStopHook, eScriptLanguagePython, {ci_usages, api_usages});
 }
 
 void ScriptedStopHookPythonInterface::Terminate() {

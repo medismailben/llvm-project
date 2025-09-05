@@ -15,6 +15,7 @@
 #include "lldb/Utility/Status.h"
 #include "lldb/Utility/Stream.h"
 #include "lldb/Utility/StringList.h"
+#include "lldb/Utility/UnimplementedError.h"
 #if defined(_WIN32)
 #include "lldb/Host/windows/ConnectionGenericFileWindows.h"
 #endif
@@ -46,6 +47,14 @@ void ScriptInterpreter::CollectDataForWatchpointCommandCallback(
 
 StructuredData::DictionarySP ScriptInterpreter::GetInterpreterInfo() {
   return nullptr;
+}
+
+llvm::Expected<FileSpec> ScriptInterpreter::GenerateExtensionTemplate(
+    const std::string name,
+    std::vector<std::pair<llvm::StringRef, llvm::SmallVector<llvm::StringRef>>>
+        &extensions,
+    bool generate_non_abstract_methods, std::string output_file) {
+  return llvm::make_error<UnimplementedError>();
 }
 
 bool ScriptInterpreter::LoadScriptingModule(
@@ -146,6 +155,49 @@ ScriptInterpreter::StringToLanguage(const llvm::StringRef &language) {
   if (language.equals_insensitive(LanguageToString(eScriptLanguageLua)))
     return eScriptLanguageLua;
   return eScriptLanguageUnknown;
+}
+
+llvm::StringLiteral
+ScriptInterpreter::ExtensionToString(lldb::ScriptedExtension extension) {
+  switch (extension) {
+  case eScriptedExtensionOperatingSystem:
+    return "OperatingSystem";
+  case eScriptedExtensionScriptedPlatform:
+    return "ScriptedPlatform";
+  case eScriptedExtensionScriptedProcess:
+    return "ScriptedProcess";
+  case eScriptedExtensionScriptedStopHook:
+    return "ScriptedStopHook";
+  case eScriptedExtensionScriptedBreakpoint:
+    return "ScriptedBreakpoint";
+  case eScriptedExtensionScriptedThreadPlan:
+    return "ScriptedThreadPlan";
+  default:
+    return "Invalid";
+  }
+}
+
+lldb::ScriptedExtension
+ScriptInterpreter::StringToExtension(const llvm::StringRef &string) {
+  if (string.equals_insensitive(
+          ExtensionToString(eScriptedExtensionOperatingSystem)))
+    return eScriptedExtensionOperatingSystem;
+  if (string.equals_insensitive(
+          ExtensionToString(eScriptedExtensionScriptedPlatform)))
+    return eScriptedExtensionScriptedPlatform;
+  if (string.equals_insensitive(
+          ExtensionToString(eScriptedExtensionScriptedProcess)))
+    return eScriptedExtensionScriptedProcess;
+  if (string.equals_insensitive(
+          ExtensionToString(eScriptedExtensionScriptedStopHook)))
+    return eScriptedExtensionScriptedStopHook;
+  if (string.equals_insensitive(
+          ExtensionToString(eScriptedExtensionScriptedBreakpoint)))
+    return eScriptedExtensionScriptedBreakpoint;
+  if (string.equals_insensitive(
+          ExtensionToString(eScriptedExtensionScriptedThreadPlan)))
+    return eScriptedExtensionScriptedThreadPlan;
+  return eScriptedExtensionInvalid;
 }
 
 Status ScriptInterpreter::SetBreakpointCommandCallback(
