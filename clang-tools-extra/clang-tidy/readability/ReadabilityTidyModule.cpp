@@ -10,6 +10,7 @@
 #include "../ClangTidyModule.h"
 #include "../ClangTidyModuleRegistry.h"
 #include "AmbiguousSmartptrResetCallCheck.h"
+#include "ArgumentLabelCommentsCheck.h"
 #include "AvoidConstParamsInDeclsCheck.h"
 #include "AvoidNestedConditionalOperatorCheck.h"
 #include "AvoidReturnWithVoidValueCheck.h"
@@ -74,6 +75,8 @@ public:
   void addCheckFactories(ClangTidyCheckFactories &CheckFactories) override {
     CheckFactories.registerCheck<AmbiguousSmartptrResetCallCheck>(
         "readability-ambiguous-smartptr-reset-call");
+    CheckFactories.registerCheck<ArgumentLabelCommentsCheck>(
+        "readability-argument-label-comments");
     CheckFactories.registerCheck<AvoidConstParamsInDeclsCheck>(
         "readability-avoid-const-params-in-decls");
     CheckFactories.registerCheck<AvoidNestedConditionalOperatorCheck>(

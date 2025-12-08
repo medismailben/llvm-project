@@ -13,6 +13,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Format/Format.h"
+#include "CommentCapitalizationFixer.h"
+#include "CommentPunctuationFixer.h"
 #include "DefinitionBlockSeparator.h"
 #include "IntegerLiteralSeparatorFixer.h"
 #include "NamespaceEndCommentsFixer.h"
@@ -1200,6 +1202,8 @@ template <> struct MappingTraits<FormatStyle> {
     IO.mapOptional("ExperimentalAutoDetectBinPacking",
                    Style.ExperimentalAutoDetectBinPacking);
     IO.mapOptional("FixNamespaceComments", Style.FixNamespaceComments);
+    IO.mapOptional("CapitalizeComments", Style.CapitalizeComments);
+    IO.mapOptional("PunctuateComments", Style.PunctuateComments);
     IO.mapOptional("ForEachMacros", Style.ForEachMacros);
     IO.mapOptional("IfMacros", Style.IfMacros);
     IO.mapOptional("IncludeBlocks", Style.IncludeStyle.IncludeBlocks);
@@ -1741,6 +1745,8 @@ FormatStyle getLLVMStyle(FormatStyle::LanguageKind Language) {
   LLVMStyle.EnumTrailingComma = FormatStyle::ETC_Leave;
   LLVMStyle.ExperimentalAutoDetectBinPacking = false;
   LLVMStyle.FixNamespaceComments = true;
+  LLVMStyle.CapitalizeComments = true;
+  LLVMStyle.PunctuateComments = true;
   LLVMStyle.ForEachMacros.push_back("foreach");
   LLVMStyle.ForEachMacros.push_back("Q_FOREACH");
   LLVMStyle.ForEachMacros.push_back("BOOST_FOREACH");
@@ -4090,6 +4096,18 @@ reformat(const FormatStyle &Style, StringRef Code,
     if (Style.FixNamespaceComments) {
       Passes.emplace_back([&](const Environment &Env) {
         return NamespaceEndCommentsFixer(Env, Expanded).process();
+      });
+    }
+
+    if (Style.CapitalizeComments) {
+      Passes.emplace_back([&](const Environment &Env) {
+        return CommentCapitalizationFixer(Env, Expanded).process();
+      });
+    }
+
+    if (Style.PunctuateComments) {
+      Passes.emplace_back([&](const Environment &Env) {
+        return CommentPunctuationFixer(Env, Expanded).process();
       });
     }
 

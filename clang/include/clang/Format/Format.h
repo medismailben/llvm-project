@@ -2915,6 +2915,26 @@ struct FormatStyle {
   /// \version 5
   bool FixNamespaceComments;
 
+  /// If ``true``, clang-format will capitalize the first letter of comments
+  /// that start with a lowercase letter.
+  /// \code
+  ///    true:                                  false:
+  ///    // This is a comment.        vs.       // this is a comment.
+  ///    /* Another comment. */                 /* another comment. */
+  /// \endcode
+  /// \version 21
+  bool CapitalizeComments;
+
+  /// If ``true``, clang-format will add a period at the end of comments
+  /// that appear to be complete sentences but lack ending punctuation.
+  /// \code
+  ///    true:                                  false:
+  ///    // This is a comment.        vs.       // This is a comment
+  ///    /* Another comment. */                 /* Another comment */
+  /// \endcode
+  /// \version 21
+  bool PunctuateComments;
+
   /// A vector of macros that should be interpreted as foreach loops
   /// instead of as function calls.
   ///
@@ -5731,6 +5751,8 @@ struct FormatStyle {
            ExperimentalAutoDetectBinPacking ==
                R.ExperimentalAutoDetectBinPacking &&
            FixNamespaceComments == R.FixNamespaceComments &&
+           CapitalizeComments == R.CapitalizeComments &&
+           PunctuateComments == R.PunctuateComments &&
            ForEachMacros == R.ForEachMacros &&
            IncludeStyle.IncludeBlocks == R.IncludeStyle.IncludeBlocks &&
            IncludeStyle.IncludeCategories == R.IncludeStyle.IncludeCategories &&
