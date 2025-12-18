@@ -70,8 +70,8 @@ std::string ScriptedFrameProviderPythonInterface::GetDescription(
   return obj->GetStringValue().str();
 }
 
-std::optional<uint32_t> ScriptedFrameProviderPythonInterface::GetPriority(
-    llvm::StringRef class_name) {
+std::optional<uint32_t>
+ScriptedFrameProviderPythonInterface::GetPriority(llvm::StringRef class_name) {
   Status error;
   StructuredData::ObjectSP obj =
       CallStaticMethod(class_name, "get_priority", error);

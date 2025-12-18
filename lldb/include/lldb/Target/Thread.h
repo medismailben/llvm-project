@@ -1302,8 +1302,8 @@ public:
 
   void ClearScriptedFrameProvider();
 
-  lldb::SyntheticFrameProviderSP GetFrameProvider() const {
-    return m_frame_provider_sp;
+  const std::vector<lldb::SyntheticFrameProviderSP> &GetFrameProviders() const {
+    return m_frame_providers;
   }
 
 protected:
@@ -1409,8 +1409,8 @@ protected:
   /// The Thread backed by this thread, if any.
   lldb::ThreadWP m_backed_thread;
 
-  /// The Scripted Frame Provider, if any.
-  lldb::SyntheticFrameProviderSP m_frame_provider_sp;
+  /// The Scripted Frame Providers for this thread.
+  std::vector<lldb::SyntheticFrameProviderSP> m_frame_providers;
 
 private:
   bool m_extended_info_fetched; // Have we tried to retrieve the m_extended_info
