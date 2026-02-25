@@ -7,7 +7,7 @@ import lldbsuite.test.lldbutil as lldbutil
 class TestSwiftExplicitModules(lldbtest.TestBase):
     NO_DEBUG_INFO_TESTCASE = True
     @swiftTest
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'), bugnumber='rdar://157258485')
+    @skipIf(swift_variant="dwarfimporter", bugnumber="rdar://157258485")
     def test(self):
         """Test explicit Swift modules with bridging headers"""
         self.build()

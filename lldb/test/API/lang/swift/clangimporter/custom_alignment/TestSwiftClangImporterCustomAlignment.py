@@ -21,7 +21,7 @@ class TestSwiftClangImporterCustomAlignment(lldbtest.TestBase):
     mydir = lldbtest.TestBase.compute_mydir(__file__)
 
     @swiftTest
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
+    @skipIf(swift_variant="dwarfimporter")
     def test(self):
         self.build()
         target, process, thread, bkpt = lldbutil.run_to_source_breakpoint(

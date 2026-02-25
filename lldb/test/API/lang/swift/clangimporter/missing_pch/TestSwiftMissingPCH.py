@@ -12,7 +12,7 @@ class TestSwiftMissingVFSOverlay(TestBase):
         TestBase.setUp(self)
 
     # Don't run ClangImporter tests if Clangimporter is disabled.
-    @skipIf(setting=("symbols.use-swift-clangimporter", "false"))
+    @skipIf(swift_variant="dwarfimporter")
     @skipUnlessDarwin
     @swiftTest
     def test(self):

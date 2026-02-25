@@ -7,7 +7,7 @@ class TestSwiftClangImporterExtraInhabitants(TestBase):
     @swiftTest
     @skipUnlessDarwin
     # Don't run ClangImporter tests if Clangimporter is disabled.
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
+    @skipIf(swift_variant="dwarfimporter")
     def test(self):
         """Test that the extra inhabitants are correctly computed for various
            kinds of Objective-C pointers, by using them in enums."""

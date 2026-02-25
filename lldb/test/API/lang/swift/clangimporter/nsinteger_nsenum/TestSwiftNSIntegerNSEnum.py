@@ -28,7 +28,7 @@ class TestSwiftNSIntegerNSEnum(lldbtest.TestBase):
         self.do_test(use_summary=True)
 
     # Don't run a clangimporter test without ClangImporter.
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
+    @skipIf(swift_variant="dwarfimporter")
     @skipUnlessDarwin
     @swiftTest
     def test_swift_ast(self):

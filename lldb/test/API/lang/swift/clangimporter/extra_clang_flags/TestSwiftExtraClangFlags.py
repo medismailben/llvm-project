@@ -5,8 +5,8 @@ import lldbsuite.test.lldbutil as lldbutil
 
 class TestSwiftExtraClangFlags(TestBase):
     # Don't run ClangImporter tests if Clangimporter is disabled.
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
-    @skipIf(oslist=['windows'])
+    @skipIf(swift_variant="dwarfimporter")
+    @skipIf(oslist=["windows"])
     @swiftTest
     def test_sanity(self):
         self.build()
@@ -16,8 +16,8 @@ class TestSwiftExtraClangFlags(TestBase):
         self.expect("expr FromOverlay(i: 23)", error=True)
 
     # Don't run ClangImporter tests if Clangimporter is disabled.
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
-    @skipIf(oslist=['windows'])
+    @skipIf(swift_variant="dwarfimporter")
+    @skipIf(oslist=["windows"])
     @swiftTest
     def test_extra_clang_flags(self):
         """
@@ -60,8 +60,8 @@ class TestSwiftExtraClangFlags(TestBase):
         self.expect("expr FromOverlay(i: 23)", substrs=['(FromOverlay)', '23'])
 
     # Don't run ClangImporter tests if Clangimporter is disabled.
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
-    @skipIf(oslist=['windows'])
+    @skipIf(swift_variant="dwarfimporter")
+    @skipIf(oslist=["windows"])
     @swiftTest
     def test_invalid_extra_clang_flags(self):
         """

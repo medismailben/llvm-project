@@ -1504,6 +1504,10 @@ class Base(unittest.TestCase):
         method = getattr(self, self.testMethodName)
         return getattr(method, "debug_info", None)
 
+    def getSwiftVariant(self):
+        method = getattr(self, self.testMethodName)
+        return getattr(method, "swift_variant", None)
+
     def build(
         self,
         debug_info=None,
@@ -1800,7 +1804,14 @@ class LLDBTestCaseFactory(type):
         original_testcase = super(LLDBTestCaseFactory, cls).__new__(
             cls, name, bases, attrs
         )
-        if original_testcase.NO_DEBUG_INFO_TESTCASE:
+
+        # Check if any test methods are swift tests (need swift variant expansion)
+        has_swift_tests = any(
+            attrname.startswith("test") and getattr(attrvalue, "__swift_test__", False)
+            for attrname, attrvalue in attrs.items()
+        )
+
+        if original_testcase.NO_DEBUG_INFO_TESTCASE and not has_swift_tests:
             return original_testcase
 
         # Default implementation for skip/xfail reason based on the debug category,
@@ -1813,48 +1824,108 @@ class LLDBTestCaseFactory(type):
             if attrname.startswith("test") and not getattr(
                 attrvalue, "__no_debug_info_test__", False
             ):
-                # If any debug info categories were explicitly tagged, assume that list to be
-                # authoritative.  If none were specified, try with all debug
-                # info formats.
-                all_dbginfo_categories = set(
-                    test_categories.debug_info_categories.keys()
-                )
-                categories = (
-                    set(getattr(attrvalue, "categories", [])) & all_dbginfo_categories
-                )
-                if not categories:
-                    categories = [
-                        category
-                        for category, can_replicate in test_categories.debug_info_categories.items()
-                        if can_replicate
-                    ]
+                is_swift = getattr(attrvalue, "__swift_test__", False)
 
-                xfail_for_debug_info_cat_fn = getattr(
-                    attrvalue, "__xfail_for_debug_info_cat_fn__", no_reason
-                )
-                skip_for_debug_info_cat_fn = getattr(
-                    attrvalue, "__skip_for_debug_info_cat_fn__", no_reason
-                )
-                for cat in categories:
+                # Create debug info variants unless NO_DEBUG_INFO_TESTCASE
+                if not original_testcase.NO_DEBUG_INFO_TESTCASE:
+                    # If any debug info categories were explicitly tagged, assume that list to be
+                    # authoritative.  If none were specified, try with all debug
+                    # info formats.
+                    all_dbginfo_categories = set(
+                        test_categories.debug_info_categories.keys()
+                    )
+                    categories = (
+                        set(getattr(attrvalue, "categories", []))
+                        & all_dbginfo_categories
+                    )
+                    if not categories:
+                        categories = [
+                            category
+                            for category, can_replicate in test_categories.debug_info_categories.items()
+                            if can_replicate
+                        ]
 
-                    @decorators.add_test_categories([cat])
-                    @wraps(attrvalue)
-                    def test_method(self, attrvalue=attrvalue):
-                        return attrvalue(self)
+                    xfail_for_debug_info_cat_fn = getattr(
+                        attrvalue, "__xfail_for_debug_info_cat_fn__", no_reason
+                    )
+                    skip_for_debug_info_cat_fn = getattr(
+                        attrvalue, "__skip_for_debug_info_cat_fn__", no_reason
+                    )
+                    for cat in categories:
 
-                    method_name = attrname + "_" + cat
-                    test_method.__name__ = method_name
-                    test_method.debug_info = cat
+                        @decorators.add_test_categories([cat])
+                        @wraps(attrvalue)
+                        def test_method(self, attrvalue=attrvalue):
+                            return attrvalue(self)
 
-                    xfail_reason = xfail_for_debug_info_cat_fn(cat)
-                    if xfail_reason:
-                        test_method = unittest.expectedFailure(test_method)
+                        method_name = attrname + "_" + cat
+                        test_method.__name__ = method_name
+                        test_method.debug_info = cat
 
-                    skip_reason = skip_for_debug_info_cat_fn(cat)
-                    if skip_reason:
-                        test_method = unittest.skip(skip_reason)(test_method)
+                        xfail_reason = xfail_for_debug_info_cat_fn(cat)
+                        if xfail_reason:
+                            test_method = unittest.expectedFailure(test_method)
 
-                    newattrs[method_name] = test_method
+                        skip_reason = skip_for_debug_info_cat_fn(cat)
+                        if skip_reason:
+                            test_method = unittest.skip(skip_reason)(test_method)
+
+                        newattrs[method_name] = test_method
+                else:
+                    # NO_DEBUG_INFO_TESTCASE but still a swift test
+                    newattrs[attrname] = attrvalue
+
+                # Expand swift test methods into clangimporter/dwarfimporter variants
+                if is_swift:
+                    xfail_for_swift_variant_fn = getattr(
+                        attrvalue, "__xfail_for_swift_variant_fn__", no_reason
+                    )
+                    skip_for_swift_variant_fn = getattr(
+                        attrvalue, "__skip_for_swift_variant_fn__", no_reason
+                    )
+                    swift_variants = test_categories.swift_variant_categories
+                    expanded = {}
+                    for method_name, method in newattrs.items():
+                        if not method_name.startswith("test"):
+                            expanded[method_name] = method
+                            continue
+                        # Only expand methods derived from the current test
+                        # (either the original or its debug_info variants).
+                        if method_name != attrname and not method_name.startswith(
+                            attrname + "_"
+                        ):
+                            expanded[method_name] = method
+                            continue
+                        for sv_name, sv_can_replicate in swift_variants.items():
+                            if not sv_can_replicate:
+                                continue
+                            new_name = method_name + "_" + sv_name
+
+                            @decorators.add_test_categories([sv_name])
+                            @wraps(method)
+                            def swift_test_method(self, method=method, sv_name=sv_name):
+                                return method(self)
+
+                            swift_test_method.__name__ = new_name
+                            swift_test_method.swift_variant = sv_name
+                            # Preserve debug_info from parent method
+                            if hasattr(method, "debug_info"):
+                                swift_test_method.debug_info = method.debug_info
+
+                            xfail_reason = xfail_for_swift_variant_fn(sv_name)
+                            if xfail_reason:
+                                swift_test_method = unittest.expectedFailure(
+                                    swift_test_method
+                                )
+
+                            skip_reason = skip_for_swift_variant_fn(sv_name)
+                            if skip_reason:
+                                swift_test_method = unittest.skip(skip_reason)(
+                                    swift_test_method
+                                )
+
+                            expanded[new_name] = swift_test_method
+                    newattrs = expanded
 
             else:
                 newattrs[attrname] = attrvalue
@@ -1966,6 +2037,13 @@ class TestBase(Base, metaclass=LLDBTestCaseFactory):
 
         # And the result object.
         self.res = lldb.SBCommandReturnObject()
+
+        # Apply swift variant setting if applicable.
+        swift_variant = self.getSwiftVariant()
+        if swift_variant == "dwarfimporter":
+            self.runCmd("settings set symbols.use-swift-clangimporter false")
+        elif swift_variant == "clangimporter":
+            self.runCmd("settings set symbols.use-swift-clangimporter true")
 
     def registerSharedLibrariesWithTarget(self, target, shlibs):
         """If we are remotely running the test suite, register the shared libraries with the target so they get uploaded, otherwise do nothing

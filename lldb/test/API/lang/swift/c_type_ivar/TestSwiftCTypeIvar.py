@@ -6,7 +6,7 @@ import lldbsuite.test.lldbutil as lldbutil
 
 class TestSwiftCTypeIvar(TestBase):
     @swiftTest
-    @skipIf(setting=("symbols.use-swift-clangimporter", "false"))
+    @skipIf(swift_variant="dwarfimporter")
     def test(self):
         """Test that the extra inhabitants are correctly computed for various
         kinds of Objective-C pointers, by using them in enums."""

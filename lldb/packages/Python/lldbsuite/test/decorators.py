@@ -194,6 +194,34 @@ def _skipForDebugInfo(expected_fn, bugnumber=None):
         return skipImpl
 
 
+def _xfailForSwiftVariant(expected_fn, bugnumber=None):
+    def expectedFailure_impl(func):
+        if isinstance(func, type) and issubclass(func, unittest.TestCase):
+            raise Exception("Decorator can only be used to decorate a test method")
+
+        func.__xfail_for_swift_variant_fn__ = expected_fn
+        return func
+
+    if callable(bugnumber):
+        return expectedFailure_impl(bugnumber)
+    else:
+        return expectedFailure_impl
+
+
+def _skipForSwiftVariant(expected_fn, bugnumber=None):
+    def skipImpl(func):
+        if isinstance(func, type) and issubclass(func, unittest.TestCase):
+            raise Exception("Decorator can only be used to decorate a test method")
+
+        func.__skip_for_swift_variant_fn__ = expected_fn
+        return func
+
+    if callable(bugnumber):
+        return skipImpl(bugnumber)
+    else:
+        return skipImpl
+
+
 def _decorateTest(
     mode,
     bugnumber=None,
@@ -211,8 +239,9 @@ def _decorateTest(
     dwarf_version=None,
     setting=None,
     asan=None,
+    swift_variant=None,
 ):
-    def fn(actual_debug_info=None):
+    def fn(actual_debug_info=None, actual_swift_variant=None):
         skip_for_os = _match_decorator_property(
             lldbplatform.translate(oslist), lldbplatformutil.getPlatform()
         )
@@ -226,6 +255,9 @@ def _decorateTest(
             archs, lldbplatformutil.getArchitecture()
         )
         skip_for_debug_info = _match_decorator_property(debug_info, actual_debug_info)
+        skip_for_swift_variant = _match_decorator_property(
+            swift_variant, actual_swift_variant
+        )
         skip_for_triple = _match_decorator_property(
             triple, lldb.selected_platform.GetTriple()
         )
@@ -272,6 +304,7 @@ def _decorateTest(
             (compiler, skip_for_compiler, "compiler or version"),
             (archs, skip_for_arch, "architecture"),
             (debug_info, skip_for_debug_info, "debug info format"),
+            (swift_variant, skip_for_swift_variant, "swift variant"),
             (triple, skip_for_triple, "target triple"),
             (swig_version, skip_for_swig_version, "swig version"),
             (py_version, skip_for_py_version, "python version"),
@@ -304,10 +337,14 @@ def _decorateTest(
         return reason_str
 
     if mode == DecorateMode.Skip:
+        if swift_variant:
+            return _skipForSwiftVariant(fn, bugnumber)
         if debug_info:
             return _skipForDebugInfo(fn, bugnumber)
         return skipTestIfFn(fn, bugnumber)
     elif mode == DecorateMode.Xfail:
+        if swift_variant:
+            return _xfailForSwiftVariant(fn, bugnumber)
         if debug_info:
             return _xfailForDebugInfo(fn, bugnumber)
         return expectedFailureIf(fn(), bugnumber)
@@ -339,6 +376,7 @@ def expectedFailureAll(
     dwarf_version=None,
     setting=None,
     asan=None,
+    swift_variant=None,
 ):
     return _decorateTest(
         DecorateMode.Xfail,
@@ -357,6 +395,7 @@ def expectedFailureAll(
         dwarf_version=dwarf_version,
         setting=setting,
         asan=asan,
+        swift_variant=swift_variant,
     )
 
 
@@ -382,6 +421,7 @@ def skipIf(
     dwarf_version=None,
     setting=None,
     asan=None,
+    swift_variant=None,
 ):
     return _decorateTest(
         DecorateMode.Skip,
@@ -400,6 +440,7 @@ def skipIf(
         dwarf_version=dwarf_version,
         setting=setting,
         asan=asan,
+        swift_variant=swift_variant,
     )
 
 
@@ -820,6 +861,7 @@ def swiftTest(func):
             # This configuration is Swift-compatible
             return None
 
+    func.__swift_test__ = True
     return skipTestIfFn(is_not_swift_compatible)(func)
 
 

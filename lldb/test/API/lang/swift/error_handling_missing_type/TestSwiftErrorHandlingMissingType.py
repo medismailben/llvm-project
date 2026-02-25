@@ -7,7 +7,7 @@ class TestSwiftErrorHandlingMissingTypes(TestBase):
     NO_DEBUG_INFO_TESTCASE = True
 
     @swiftTest
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'true'))
+    @skipIf(swift_variant="clangimporter")
     def test(self):
         """Test that errors are surfaced"""
         self.build()

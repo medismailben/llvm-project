@@ -16,7 +16,7 @@ class TestSwiftProgressReporting(TestBase):
                                         lldb.SBDebugger.eBroadcastBitProgress)
 
     # Don't run ClangImporter tests if Clangimporter is disabled.
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
+    @skipIf(swift_variant="dwarfimporter")
     @skipUnlessDarwin
     @swiftTest
     def test_swift_progress_report(self):

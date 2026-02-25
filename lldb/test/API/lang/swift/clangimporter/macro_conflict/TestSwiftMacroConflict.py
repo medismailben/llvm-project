@@ -19,7 +19,7 @@ import shutil
 
 class TestSwiftMacroConflict(TestBase):
     # Don't run ClangImporter tests if Clangimporter is disabled.
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
+    @skipIf(swift_variant="dwarfimporter")
     @skipIf(bugnumber="rdar://121539666")
     @skipUnlessDarwin
     @swiftTest
@@ -55,7 +55,7 @@ class TestSwiftMacroConflict(TestBase):
         self.assertTrue(os.path.isdir(mod_cache), "module cache exists")
 
     # Don't run ClangImporter tests if Clangimporter is disabled.
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
+    @skipIf(swift_variant="dwarfimporter")
     @skipIf(bugnumber="rdar://121539666")
     @skipUnlessDarwin
     @swiftTest

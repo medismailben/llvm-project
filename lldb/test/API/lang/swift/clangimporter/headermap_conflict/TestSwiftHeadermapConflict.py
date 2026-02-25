@@ -18,8 +18,7 @@ import os
 import shutil
 
 class TestSwiftHeadermapConflict(TestBase):
-    @skipIf(bugnumber="rdar://60396797",
-            setting=('symbols.use-swift-clangimporter', 'false'))
+    @skipIf(bugnumber="rdar://60396797", swift_variant="dwarfimporter")
     @skipUnlessDarwin
     @swiftTest
     def test(self):

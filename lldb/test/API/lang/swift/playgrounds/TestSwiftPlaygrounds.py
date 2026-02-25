@@ -64,7 +64,7 @@ class TestSwiftPlaygrounds(TestBase):
 
     @skipUnlessDarwin
     @swiftTest
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
+    @skipIf(swift_variant="dwarfimporter")
     @skipIf(debug_info=decorators.no_match("dsym"))
     def test_force_target(self):
         """Test that playgrounds work"""
@@ -73,7 +73,7 @@ class TestSwiftPlaygrounds(TestBase):
 
     @skipUnlessDarwin
     @swiftTest
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
+    @skipIf(swift_variant="dwarfimporter")
     @skipIf(debug_info=decorators.no_match("dsym"))
     def test_no_force_target(self):
         """Test that playgrounds work"""
@@ -82,7 +82,7 @@ class TestSwiftPlaygrounds(TestBase):
 
     @skipUnlessDarwin
     @swiftTest
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
+    @skipIf(swift_variant="dwarfimporter")
     @skipIf(debug_info=decorators.no_match("dsym"))
     @skipIf(macos_version=["<", "12"])
     def test_concurrency(self):
@@ -92,7 +92,7 @@ class TestSwiftPlaygrounds(TestBase):
 
     @skipUnlessDarwin
     @swiftTest
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
+    @skipIf(swift_variant="dwarfimporter")
     @skipIf(debug_info=decorators.no_match("dsym"))
     def test_import(self):
         """Test that a dylib can be imported in playgrounds"""

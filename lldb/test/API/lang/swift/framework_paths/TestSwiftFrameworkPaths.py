@@ -8,7 +8,7 @@ class TestSwiftFrameworkPaths(lldbtest.TestBase):
 
     @swiftTest
     # Don't run ClangImporter tests if Clangimporter is disabled.
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
+    @skipIf(swift_variant="dwarfimporter")
     @skipIf(oslist=no_match(["macosx"]))
     def test_system_framework(self):
         """Test the discovery of framework search paths from framework dependencies."""

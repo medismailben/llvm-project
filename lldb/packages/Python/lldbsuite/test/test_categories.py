@@ -14,6 +14,11 @@ from lldbsuite.support import gmodules
 # Value: should be used in lldbtest's debug-info replication
 debug_info_categories = {"dwarf": True, "dwo": True, "dsym": True, "gmodules": False}
 
+swift_variant_categories = {
+    "clangimporter": True,
+    "dwarfimporter": True,
+}
+
 all_categories = {
     "basic_process": "Basic process execution sniff tests.",
     "cmdline": "Tests related to the LLDB command-line interface",
@@ -41,6 +46,8 @@ all_categories = {
     "std-module": "Tests related to importing the std module",
     "stresstest": "Tests related to stressing lldb limits",
     "swiftmaccatalyst": "Tests which require swift maccatalyst stdlib support",
+    "clangimporter": "Tests run with symbols.use-swift-clangimporter=true",
+    "dwarfimporter": "Tests run with symbols.use-swift-clangimporter=false",
     "watchpoint": "Watchpoint-related tests",
 }
 

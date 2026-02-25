@@ -51,7 +51,7 @@ class TestSwiftDeploymentTarget(TestBase):
     @skipIf(macos_version=["<", "11.1"])
     # FIXME: This config started failing in CI only after switching to
     # the query-based FindTypes API.
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
+    @skipIf(swift_variant="dwarfimporter")
     @swiftTest
     def test_swift_deployment_target_from_macho(self):
         self.build(dictionary={"MAKE_DSYM": "NO"})

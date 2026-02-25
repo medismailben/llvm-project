@@ -22,7 +22,7 @@ class TestSwiftObjCMainConflictingDylibsFailingImport(TestBase):
     NO_DEBUG_INFO_TESTCASE = True
 
     # Don't run ClangImporter tests if Clangimporter is disabled.
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
+    @skipIf(swift_variant="dwarfimporter")
     @skipUnlessDarwin
     @swiftTest
     def test(self):
@@ -62,4 +62,3 @@ class TestSwiftObjCMainConflictingDylibsFailingImport(TestBase):
         # self.expect("expression foo", "expected result", substrs=["$R3", "23"])
         # self.expect("expression $R3", "expected result", substrs=["23"])
         # self.expect("expression $R4", "expected result", substrs=["23"])
-

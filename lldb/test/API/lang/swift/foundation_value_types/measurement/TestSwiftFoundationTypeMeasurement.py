@@ -21,7 +21,7 @@ class TestCase(TestBase):
     @skipUnlessDarwin
     @expectedFailureAll(
         bugnumber="rdar://60396797",
-        setting=("symbols.use-swift-clangimporter", "false"),
+        swift_variant="dwarfimporter",
     )
     def test_measurement(self):
         self.build()

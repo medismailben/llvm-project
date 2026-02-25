@@ -97,7 +97,7 @@ class TestSwiftDWARFImporterC(lldbtest.TestBase):
         
     @skipIf(archs=['ppc64le'], bugnumber='SR-10214')
     @swiftTest
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
+    @skipIf(swift_variant="dwarfimporter")
     def test_negative(self):
         lldb.SBDebugger.MemoryPressureDetected()
         self.runCmd("settings set symbols.use-swift-dwarfimporter false")

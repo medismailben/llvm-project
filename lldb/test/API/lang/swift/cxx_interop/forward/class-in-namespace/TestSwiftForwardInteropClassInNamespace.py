@@ -8,7 +8,7 @@ from lldbsuite.test.decorators import *
 
 class TestSwiftForwardInteropClassInNamespace(TestBase):
 
-    @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
+    @skipIf(swift_variant="dwarfimporter")
     @swiftTest
     def test_class(self):
         self.build()
