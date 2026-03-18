@@ -10,6 +10,7 @@
 #include "lldb/Utility/VASPrintf.h"
 
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/ADT/iterator.h"
 
@@ -41,23 +42,25 @@ char CallbackLogHandler::ID;
 char RotatingLogHandler::ID;
 char TeeLogHandler::ID;
 
-llvm::ManagedStatic<Log::ChannelMap> Log::g_channel_map;
+// ChannelMap and helpers are file-local since they operate on ChannelLog.
+typedef llvm::StringMap<ChannelLog> ChannelMap;
+static llvm::ManagedStatic<ChannelMap> g_channel_map;
 
 // The error log is used by LLDB_LOG_ERROR. If the given log channel passed to
 // LLDB_LOG_ERROR is not enabled, error messages are logged to the error log.
 static std::atomic<Log *> g_error_log = nullptr;
 
-void Log::ForEachCategory(
-    const Log::ChannelMap::value_type &entry,
+static void ForEachCategory(
+    const ChannelMap::value_type &entry,
     llvm::function_ref<void(llvm::StringRef, llvm::StringRef)> lambda) {
   lambda("all", "all available logging categories");
   lambda("default", "default set of logging categories");
-  for (const auto &category : entry.second.m_channel.categories)
+  for (const auto &category : entry.second.GetChannel().categories)
     lambda(category.name, category.description);
 }
 
-void Log::ListCategories(llvm::raw_ostream &stream,
-                         const ChannelMap::value_type &entry) {
+static void ListCategories(llvm::raw_ostream &stream,
+                           const ChannelMap::value_type &entry) {
   stream << llvm::formatv("Logging categories for '{0}':\n", entry.first());
   ForEachCategory(entry,
                   [&stream](llvm::StringRef name, llvm::StringRef description) {
@@ -65,9 +68,9 @@ void Log::ListCategories(llvm::raw_ostream &stream,
                   });
 }
 
-Log::MaskType Log::GetFlags(llvm::raw_ostream &stream,
-                            const ChannelMap::value_type &entry,
-                            llvm::ArrayRef<const char *> categories) {
+static Log::MaskType GetFlags(llvm::raw_ostream &stream,
+                              const ChannelMap::value_type &entry,
+                              llvm::ArrayRef<const char *> categories) {
   bool list_categories = false;
   Log::MaskType flags = 0;
   for (const char *category : categories) {
@@ -76,14 +79,14 @@ Log::MaskType Log::GetFlags(llvm::raw_ostream &stream,
       continue;
     }
     if (llvm::StringRef("default").equals_insensitive(category)) {
-      flags |= entry.second.m_channel.default_flags;
+      flags |= entry.second.GetChannel().default_flags;
       continue;
     }
-    auto cat = llvm::find_if(entry.second.m_channel.categories,
+    auto cat = llvm::find_if(entry.second.GetChannel().categories,
                              [&](const Log::Category &c) {
                                return c.name.equals_insensitive(category);
                              });
-    if (cat != entry.second.m_channel.categories.end()) {
+    if (cat != entry.second.GetChannel().categories.end()) {
       flags |= cat->flag;
       continue;
     }
@@ -96,8 +99,8 @@ Log::MaskType Log::GetFlags(llvm::raw_ostream &stream,
   return flags;
 }
 
-void Log::Enable(const std::shared_ptr<LogHandler> &handler_sp,
-                 std::optional<Log::MaskType> flags, uint32_t options) {
+void ChannelLog::Enable(const std::shared_ptr<LogHandler> &handler_sp,
+                        std::optional<Log::MaskType> flags, uint32_t options) {
   llvm::sys::ScopedWriter lock(m_mutex);
 
   if (!flags)
@@ -111,7 +114,7 @@ void Log::Enable(const std::shared_ptr<LogHandler> &handler_sp,
   }
 }
 
-void Log::Disable(std::optional<Log::MaskType> flags) {
+void ChannelLog::Disable(std::optional<Log::MaskType> flags) {
   llvm::sys::ScopedWriter lock(m_mutex);
 
   if (!flags)
@@ -124,7 +127,7 @@ void Log::Disable(std::optional<Log::MaskType> flags) {
   }
 }
 
-bool Log::Dump(llvm::raw_ostream &output_stream) {
+bool ChannelLog::Dump(llvm::raw_ostream &output_stream) {
   llvm::sys::ScopedReader lock(m_mutex);
   if (RotatingLogHandler *handler =
           llvm::dyn_cast_or_null<RotatingLogHandler>(m_handler.get())) {
@@ -134,17 +137,17 @@ bool Log::Dump(llvm::raw_ostream &output_stream) {
   return false;
 }
 
-const Flags Log::GetOptions() const {
+const Flags ChannelLog::GetOptions() const {
   return m_options.load(std::memory_order_relaxed);
 }
 
-Log::MaskType Log::GetMask() const {
+Log::MaskType ChannelLog::GetMask() const {
   return m_mask.load(std::memory_order_relaxed);
 }
 
-void Log::PutCString(const char *cstr) { PutString(cstr); }
+void ChannelLog::PutCString(const char *cstr) { PutString(cstr); }
 
-void Log::PutString(llvm::StringRef str) {
+void ChannelLog::PutString(llvm::StringRef str) {
   std::string FinalMessage;
   llvm::raw_string_ostream Stream(FinalMessage);
   WriteHeader(Stream, "", "");
@@ -153,14 +156,14 @@ void Log::PutString(llvm::StringRef str) {
 }
 
 // Simple variable argument logging with flags.
-void Log::Printf(const char *format, ...) {
+void ChannelLog::Printf(const char *format, ...) {
   va_list args;
   va_start(args, format);
   VAPrintf(format, args);
   va_end(args);
 }
 
-void Log::VAPrintf(const char *format, va_list args) {
+void ChannelLog::VAPrintf(const char *format, va_list args) {
   llvm::SmallString<64> Content;
   lldb_private::VASprintf(Content, format, args);
   PutString(Content);
@@ -170,26 +173,21 @@ void Log::Formatf(llvm::StringRef file, llvm::StringRef function,
                   const char *format, ...) {
   va_list args;
   va_start(args, format);
-  VAFormatf(file, function, format, args);
-  va_end(args);
-}
-
-void Log::VAFormatf(llvm::StringRef file, llvm::StringRef function,
-                    const char *format, va_list args) {
   llvm::SmallString<64> Content;
   lldb_private::VASprintf(Content, format, args);
+  va_end(args);
   Format(file, function, llvm::formatv("{0}", Content));
 }
 
 // Printing of errors that are not fatal.
-void Log::Error(const char *format, ...) {
+void ChannelLog::Error(const char *format, ...) {
   va_list args;
   va_start(args, format);
   VAError(format, args);
   va_end(args);
 }
 
-void Log::VAError(const char *format, va_list args) {
+void ChannelLog::VAError(const char *format, va_list args) {
   llvm::SmallString<64> Content;
   VASprintf(Content, format, args);
 
@@ -197,7 +195,7 @@ void Log::VAError(const char *format, va_list args) {
 }
 
 // Printing of warnings that are not fatal only if verbose mode is enabled.
-void Log::Verbose(const char *format, ...) {
+void ChannelLog::Verbose(const char *format, ...) {
   if (!GetVerbose())
     return;
 
@@ -208,7 +206,7 @@ void Log::Verbose(const char *format, ...) {
 }
 
 // Printing of warnings that are not fatal.
-void Log::Warning(const char *format, ...) {
+void ChannelLog::Warning(const char *format, ...) {
   llvm::SmallString<64> Content;
   va_list args;
   va_start(args, format);
@@ -323,12 +321,12 @@ void Log::ListAllLogChannels(llvm::raw_ostream &stream) {
     ListCategories(stream, channel);
 }
 
-bool Log::GetVerbose() const {
+bool ChannelLog::GetVerbose() const {
   return m_options.load(std::memory_order_relaxed) & LLDB_LOG_OPTION_VERBOSE;
 }
 
-void Log::WriteHeader(llvm::raw_ostream &OS, llvm::StringRef file,
-                      llvm::StringRef function) {
+void ChannelLog::WriteHeader(llvm::raw_ostream &OS, llvm::StringRef file,
+                             llvm::StringRef function) {
   Flags options = GetOptions();
   static uint32_t g_sequence_id = 0;
   // Add a sequence ID if requested
@@ -371,7 +369,7 @@ void Log::WriteHeader(llvm::raw_ostream &OS, llvm::StringRef file,
 
 // If we have a callback registered, then we call the logging callback. If we
 // have a valid file handle, we also log to the file.
-void Log::WriteMessage(llvm::StringRef message) {
+void ChannelLog::WriteMessage(llvm::StringRef message) {
   // Make a copy of our stream shared pointer in case someone disables our log
   // while we are logging and releases the stream
   auto handler_sp = GetHandler();
@@ -380,8 +378,8 @@ void Log::WriteMessage(llvm::StringRef message) {
   handler_sp->Emit(message);
 }
 
-void Log::Format(llvm::StringRef file, llvm::StringRef function,
-                 const llvm::formatv_object_base &payload) {
+void ChannelLog::Format(llvm::StringRef file, llvm::StringRef function,
+                        const llvm::formatv_object_base &payload) {
   std::string message_string;
   llvm::raw_string_ostream message(message_string);
   WriteHeader(message, file, function);
@@ -468,3 +466,41 @@ void TeeLogHandler::Emit(llvm::StringRef message) {
 void lldb_private::SetLLDBErrorLog(Log *log) { g_error_log.store(log); }
 
 Log *lldb_private::GetLLDBErrorLog() { return g_error_log; }
+
+void LogGroup::Printf(const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+  llvm::SmallString<64> Content;
+  VASprintf(Content, format, args);
+  va_end(args);
+  PutString(Content);
+}
+
+void LogGroup::Error(const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+  llvm::SmallString<64> Content;
+  VASprintf(Content, format, args);
+  va_end(args);
+  Printf("error: %s", Content.c_str());
+}
+
+void LogGroup::Verbose(const char *format, ...) {
+  if (!GetVerbose())
+    return;
+  va_list args;
+  va_start(args, format);
+  llvm::SmallString<64> Content;
+  VASprintf(Content, format, args);
+  va_end(args);
+  PutString(Content);
+}
+
+void LogGroup::Warning(const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+  llvm::SmallString<64> Content;
+  VASprintf(Content, format, args);
+  va_end(args);
+  Printf("warning: %s", Content.c_str());
+}

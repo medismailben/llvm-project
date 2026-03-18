@@ -14,7 +14,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -129,8 +129,16 @@ private:
   static char ID;
 };
 
-class Log final {
+// Forward declaration for the concrete single-channel log implementation.
+class ChannelLog;
+
+/// Base class for log-like objects. Both ChannelLog (single channel) and
+/// LogGroup (multiple channels) derive from this, allowing the LLDB_LOG*
+/// macros to work with either type through a Log pointer.
+class Log {
 public:
+  virtual ~Log() = default;
+
   /// The underlying type of all log channel enums. Declare them as:
   /// enum class MyLog : MaskType {
   ///   Channel0 = Log::ChannelFlag<0>,
@@ -161,8 +169,8 @@ public:
   // This class describes a log channel. It also encapsulates the behavior
   // necessary to enable a log channel in an atomic manner.
   class Channel {
-    std::atomic<Log *> log_ptr;
-    friend class Log;
+    std::atomic<ChannelLog *> log_ptr;
+    friend class ChannelLog;
 
   public:
     const llvm::ArrayRef<Category> categories;
@@ -181,14 +189,9 @@ public:
     // after (or concurrently with) this function returning a non-null Log
     // pointer, it is still safe to attempt to write to the Log object -- the
     // output will be discarded.
-    Log *GetLog(MaskType mask) {
-      Log *log = log_ptr.load(std::memory_order_relaxed);
-      if (log && ((log->GetMask() & mask) != 0))
-        return log;
-      return nullptr;
-    }
+    // Defined out-of-line after ChannelLog.
+    inline Log *GetLog(MaskType mask);
   };
-
 
   // Static accessors for logging channels
   static void Register(llvm::StringRef name, Channel &channel);
@@ -223,27 +226,17 @@ public:
 
   static void ListAllLogChannels(llvm::raw_ostream &stream);
 
-  // Member functions
-  //
-  // These functions are safe to call at any time you have a Log* obtained from
-  // the Channel class. If logging is disabled between you obtaining the Log
-  // object and writing to it, the output will be silently discarded.
-  Log(Channel &channel) : m_channel(channel) {}
-  ~Log() = default;
-
-  void PutCString(const char *cstr);
-  void PutString(llvm::StringRef str);
-
+  // Virtual interface for formatted output.
   template <typename... Args>
   void Format(llvm::StringRef file, llvm::StringRef function,
-              const char *format, Args &&... args) {
+              const char *format, Args &&...args) {
     Format(file, function, llvm::formatv(format, std::forward<Args>(args)...));
   }
 
   template <typename... Args>
   void FormatError(llvm::Error error, llvm::StringRef file,
                    llvm::StringRef function, const char *format,
-                   Args &&... args) {
+                   Args &&...args) {
     Format(file, function,
            llvm::formatv(format, llvm::toString(std::move(error)),
                          std::forward<Args>(args)...));
@@ -252,31 +245,71 @@ public:
   void Formatf(llvm::StringRef file, llvm::StringRef function,
                const char *format, ...) __attribute__((format(printf, 4, 5)));
 
+  virtual void PutCString(const char *cstr) = 0;
+  virtual void PutString(llvm::StringRef str) = 0;
+
+  __attribute__((format(printf, 2, 3))) virtual void Printf(const char *format,
+                                                            ...) = 0;
+  __attribute__((format(printf, 2, 3))) virtual void Error(const char *fmt,
+                                                           ...) = 0;
+  __attribute__((format(printf, 2, 3))) virtual void Verbose(const char *fmt,
+                                                             ...) = 0;
+  __attribute__((format(printf, 2, 3))) virtual void Warning(const char *fmt,
+                                                             ...) = 0;
+
+  virtual bool GetVerbose() const = 0;
+
+  virtual void Format(llvm::StringRef file, llvm::StringRef function,
+                      const llvm::formatv_object_base &payload) = 0;
+};
+
+class ChannelLog final : public Log {
+public:
+  // Member functions
+  //
+  // These functions are safe to call at any time you have a Log* obtained from
+  // the Channel class. If logging is disabled between you obtaining the Log
+  // object and writing to it, the output will be silently discarded.
+  ChannelLog(Channel &channel) : m_channel(channel) {}
+  ~ChannelLog() = default;
+
+  const Channel &GetChannel() const { return m_channel; }
+
+  void PutCString(const char *cstr) override;
+  void PutString(llvm::StringRef str) override;
+
+  using Log::Format;
+  using Log::FormatError;
+
   /// Prefer using LLDB_LOGF whenever possible.
-  void Printf(const char *format, ...) __attribute__((format(printf, 2, 3)));
+  __attribute__((format(printf, 2, 3))) void Printf(const char *format,
+                                                    ...) override;
 
-  void Error(const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+  __attribute__((format(printf, 2, 3))) void Error(const char *fmt,
+                                                   ...) override;
 
-  void Verbose(const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+  __attribute__((format(printf, 2, 3))) void Verbose(const char *fmt,
+                                                     ...) override;
 
-  void Warning(const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+  __attribute__((format(printf, 2, 3))) void Warning(const char *fmt,
+                                                     ...) override;
 
   const Flags GetOptions() const;
 
   MaskType GetMask() const;
 
-  bool GetVerbose() const;
+  bool GetVerbose() const override;
 
   void VAPrintf(const char *format, va_list args);
   void VAError(const char *format, va_list args);
-  void VAFormatf(llvm::StringRef file, llvm::StringRef function,
-                 const char *format, va_list args);
 
   void Enable(const std::shared_ptr<LogHandler> &handler_sp,
               std::optional<MaskType> flags = std::nullopt,
               uint32_t options = 0);
 
   void Disable(std::optional<MaskType> flags = std::nullopt);
+
+  bool Dump(llvm::raw_ostream &stream);
 
 private:
   Channel &m_channel;
@@ -296,31 +329,24 @@ private:
   void WriteMessage(llvm::StringRef message);
 
   void Format(llvm::StringRef file, llvm::StringRef function,
-              const llvm::formatv_object_base &payload);
+              const llvm::formatv_object_base &payload) override;
 
   std::shared_ptr<LogHandler> GetHandler() {
     llvm::sys::ScopedReader lock(m_mutex);
     return m_handler;
   }
 
-  bool Dump(llvm::raw_ostream &stream);
-
-  typedef llvm::StringMap<Log> ChannelMap;
-  static llvm::ManagedStatic<ChannelMap> g_channel_map;
-
-  static void ForEachCategory(
-      const Log::ChannelMap::value_type &entry,
-      llvm::function_ref<void(llvm::StringRef, llvm::StringRef)> lambda);
-
-  static void ListCategories(llvm::raw_ostream &stream,
-                             const ChannelMap::value_type &entry);
-  static Log::MaskType GetFlags(llvm::raw_ostream &stream,
-                                const ChannelMap::value_type &entry,
-                                llvm::ArrayRef<const char *> categories);
-
-  Log(const Log &) = delete;
-  void operator=(const Log &) = delete;
+  ChannelLog(const ChannelLog &) = delete;
+  void operator=(const ChannelLog &) = delete;
 };
+
+// Out-of-line definition of Channel::GetLog, now that ChannelLog is complete.
+inline Log *Log::Channel::GetLog(MaskType mask) {
+  ChannelLog *log = log_ptr.load(std::memory_order_relaxed);
+  if (log && ((log->GetMask() & mask) != 0))
+    return log;
+  return nullptr;
+}
 
 // Must be specialized for a particular log type.
 template <typename Cat> Log::Channel &LogChannelFor() = delete;
@@ -343,6 +369,77 @@ template <typename Cat> Log *GetLog(Cat mask) {
 void SetLLDBErrorLog(Log *log);
 Log *GetLLDBErrorLog();
 /// @}
+
+/// A log output that fans out to multiple Log channels simultaneously.
+/// Used by the multi-argument GetLog() overload to mix log categories from
+/// different channels:
+///
+///   Log *log = GetLog(LLDBLog::Modules, SystemLog::System);
+///   LLDB_LOG(log, "message {0}", arg);
+///
+class LogGroup : public Log {
+  llvm::SmallVector<Log *, 2> m_logs;
+
+public:
+  LogGroup() = default;
+
+  void Add(Log *log) {
+    if (log)
+      m_logs.push_back(log);
+  }
+
+  explicit operator bool() const { return !m_logs.empty(); }
+
+  void PutCString(const char *cstr) override {
+    for (Log *log : m_logs)
+      log->PutCString(cstr);
+  }
+
+  void PutString(llvm::StringRef str) override {
+    for (Log *log : m_logs)
+      log->PutString(str);
+  }
+
+  __attribute__((format(printf, 2, 3))) void Printf(const char *format,
+                                                    ...) override;
+  __attribute__((format(printf, 2, 3))) void Error(const char *fmt,
+                                                   ...) override;
+  __attribute__((format(printf, 2, 3))) void Verbose(const char *fmt,
+                                                     ...) override;
+  __attribute__((format(printf, 2, 3))) void Warning(const char *fmt,
+                                                     ...) override;
+
+  bool GetVerbose() const override {
+    return llvm::any_of(m_logs, [](const Log *l) { return l->GetVerbose(); });
+  }
+
+  void Format(llvm::StringRef file, llvm::StringRef function,
+              const llvm::formatv_object_base &payload) override {
+    for (Log *log : m_logs)
+      log->Format(file, function, payload);
+  }
+};
+
+/// Retrieve a Log that fans out to multiple channels simultaneously.
+/// Use this overload to mix categories from different log channel enums:
+///
+///   Log *log = GetLog(LLDBLog::Modules, SystemLog::System);
+///   LLDB_LOG(log, "logged to both channels");
+///
+/// Returns nullptr if no channels are enabled. The returned pointer is
+/// thread-local and valid until the next multi-channel GetLog call on the
+/// same thread.
+template <typename Cat1, typename Cat2, typename... Rest>
+Log *GetLog(Cat1 first, Cat2 second, Rest... rest) {
+  thread_local LogGroup group;
+  group = LogGroup();
+  group.Add(GetLog(first));
+  group.Add(GetLog(second));
+  (group.Add(GetLog(rest)), ...);
+  if (!group)
+    return nullptr;
+  return &group;
+}
 
 } // namespace lldb_private
 

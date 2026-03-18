@@ -95,7 +95,7 @@ static constexpr Log::Category g_categories[] = {
     {{"system"}, {"system log"}, SystemLog::System}};
 
 static Log::Channel g_system_channel(g_categories, SystemLog::System);
-static Log g_system_log(g_system_channel);
+static ChannelLog g_system_log(g_system_channel);
 
 template <> Log::Channel &lldb_private::LogChannelFor<SystemLog>() {
   return g_system_channel;

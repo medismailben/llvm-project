@@ -38,6 +38,24 @@ namespace lldb_private {
 template <> Log::Channel &LogChannelFor<TestChannel>() { return test_channel; }
 } // namespace lldb_private
 
+// A second channel for testing multi-channel GetLog.
+enum class TestChannel2 : Log::MaskType {
+  QUX = Log::ChannelFlag<0>,
+  LLVM_MARK_AS_BITMASK_ENUM(QUX),
+};
+
+static constexpr Log::Category test2_categories[] = {
+    {{"qux"}, {"log qux"}, TestChannel2::QUX},
+};
+
+static Log::Channel test2_channel(test2_categories, TestChannel2::QUX);
+
+namespace lldb_private {
+template <> Log::Channel &LogChannelFor<TestChannel2>() {
+  return test2_channel;
+}
+} // namespace lldb_private
+
 // Wrap enable, disable and list functions to make them easier to test.
 static bool EnableChannel(std::shared_ptr<LogHandler> log_handler_sp,
                           uint32_t log_options, llvm::StringRef channel,
@@ -68,10 +86,14 @@ namespace {
 struct LogChannelTest : public ::testing::Test {
   void TearDown() override { Log::DisableAllLogChannels(); }
 
-  static void SetUpTestCase() { Log::Register("chan", test_channel); }
+  static void SetUpTestCase() {
+    Log::Register("chan", test_channel);
+    Log::Register("chan2", test2_channel);
+  }
 
   static void TearDownTestCase() {
     Log::Unregister("chan");
+    Log::Unregister("chan2");
     llvm::llvm_shutdown();
   }
 };
@@ -390,11 +412,87 @@ TEST_F(LogChannelEnabledTest, LogGetLogThread) {
   // Try fetching the log mask on one thread. Concurrently, try disabling the
   // log channel.
   uint64_t mask;
-  std::thread log_thread([this, &mask] { mask = getLog()->GetMask(); });
+  std::thread log_thread(
+      [this, &mask] { mask = static_cast<ChannelLog *>(getLog())->GetMask(); });
   EXPECT_TRUE(DisableChannel("chan", {}, err));
   log_thread.join();
 
   // The mask should be either zero of "FOO". In either case, we should not trip
   // any undefined behavior (run the test under TSAN to verify this).
   EXPECT_THAT(mask, testing::AnyOf(0, Log::MaskType(TestChannel::FOO)));
+}
+
+TEST_F(LogChannelTest, MultiChannelGetLog_NoneEnabled) {
+  // When no channels are enabled, multi-channel GetLog returns nullptr.
+  EXPECT_EQ(nullptr, GetLog(TestChannel::FOO, TestChannel2::QUX));
+}
+
+TEST_F(LogChannelTest, MultiChannelGetLog_OneEnabled) {
+  auto log_handler_sp = std::make_shared<TestLogHandler>();
+  std::string error;
+
+  // Enable only the first channel.
+  EXPECT_TRUE(EnableChannel(log_handler_sp, 0, "chan", {"foo"}, error));
+  EXPECT_EQ(nullptr, GetLog(TestChannel2::QUX));
+
+  // Multi-channel GetLog should return non-null when at least one is enabled.
+  Log *log = GetLog(TestChannel::FOO, TestChannel2::QUX);
+  ASSERT_NE(nullptr, log);
+
+  // Logging through it should produce output on the enabled channel.
+  LLDB_LOG(log, "hello");
+  llvm::StringRef output = log_handler_sp->m_stream.str();
+  EXPECT_TRUE(output.contains("hello"));
+}
+
+TEST_F(LogChannelTest, MultiChannelGetLog_BothEnabled) {
+  auto handler1 = std::make_shared<TestLogHandler>();
+  auto handler2 = std::make_shared<TestLogHandler>();
+  std::string error;
+
+  // Enable both channels with different handlers.
+  EXPECT_TRUE(EnableChannel(handler1, 0, "chan", {"foo"}, error));
+  EXPECT_TRUE(EnableChannel(handler2, 0, "chan2", {"qux"}, error));
+
+  Log *log = GetLog(TestChannel::FOO, TestChannel2::QUX);
+  ASSERT_NE(nullptr, log);
+
+  // Logging should appear on both channels.
+  LLDB_LOG(log, "multi");
+  EXPECT_TRUE(handler1->m_stream.str().contains("multi"));
+  EXPECT_TRUE(handler2->m_stream.str().contains("multi"));
+}
+
+TEST_F(LogChannelTest, MultiChannelGetLog_ErrorLogging) {
+  auto handler1 = std::make_shared<TestLogHandler>();
+  auto handler2 = std::make_shared<TestLogHandler>();
+  std::string error;
+
+  EXPECT_TRUE(EnableChannel(handler1, 0, "chan", {"foo"}, error));
+  EXPECT_TRUE(EnableChannel(handler2, 0, "chan2", {"qux"}, error));
+
+  Log *log = GetLog(TestChannel::FOO, TestChannel2::QUX);
+  ASSERT_NE(nullptr, log);
+
+  LLDB_LOG_ERROR(log,
+                 llvm::make_error<llvm::StringError>(
+                     "test error", llvm::inconvertibleErrorCode()),
+                 "operation failed: {0}");
+
+  EXPECT_TRUE(
+      handler1->m_stream.str().contains("operation failed: test error"));
+  EXPECT_TRUE(
+      handler2->m_stream.str().contains("operation failed: test error"));
+}
+
+TEST_F(LogChannelTest, MultiChannelGetLog_SingleArgUnchanged) {
+  auto log_handler_sp = std::make_shared<TestLogHandler>();
+  std::string error;
+  EXPECT_TRUE(EnableChannel(log_handler_sp, 0, "chan", {"foo"}, error));
+
+  // Single-arg GetLog should still work and return a ChannelLog.
+  Log *log = GetLog(TestChannel::FOO);
+  ASSERT_NE(nullptr, log);
+  LLDB_LOG(log, "single");
+  EXPECT_TRUE(log_handler_sp->m_stream.str().contains("single"));
 }
