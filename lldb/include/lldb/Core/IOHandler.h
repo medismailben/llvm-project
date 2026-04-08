@@ -42,6 +42,7 @@ public:
     Confirm,
     Curses,
     Expression,
+    Picker,
     REPL,
     ProcessIO,
     PythonInterpreter,

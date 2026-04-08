@@ -9,10 +9,14 @@
 #ifndef LLDB_SOURCE_COMMANDS_COMMANDOPTIONSPROCESSATTACH_H
 #define LLDB_SOURCE_COMMANDS_COMMANDOPTIONSPROCESSATTACH_H
 
+#include "lldb/Core/IOHandlerPicker.h"
 #include "lldb/Interpreter/Options.h"
+#include "lldb/Target/Platform.h"
 #include "lldb/Target/Process.h"
 
 namespace lldb_private {
+
+class CommandReturnObject;
 
 // CommandOptionsProcessAttach
 
@@ -41,6 +45,12 @@ public:
 
   lldb_private::ProcessAttachInfo attach_info;
 }; // CommandOptionsProcessAttach
+
+/// Show an interactive process picker and return the selected PID.
+/// Returns LLDB_INVALID_PROCESS_ID if canceled or no processes found.
+/// The \a result object is updated with an error message on failure.
+lldb::pid_t PickProcessToAttach(Debugger &debugger, Platform &platform,
+                                CommandReturnObject &result);
 
 } // namespace lldb_private
 
