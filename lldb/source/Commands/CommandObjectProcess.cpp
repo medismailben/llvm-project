@@ -350,6 +350,20 @@ protected:
       m_options.attach_info.SetScriptedMetadata(metadata_sp);
     }
 
+    // If no process info was specified and there's no target executable to
+    // fall back on, show an interactive picker so the user can select a
+    // process from the platform's process list.
+    if (!m_options.attach_info.ProcessInfoSpecified() &&
+        !target->GetExecutableModule()) {
+      lldb::pid_t pid =
+          PickProcessToAttach(GetDebugger(), *platform_sp, result);
+      if (pid == LLDB_INVALID_PROCESS_ID) {
+        result.SetStatus(eReturnStatusFailed);
+        return;
+      }
+      m_options.attach_info.SetProcessID(pid);
+    }
+
     // Record the old executable module, we want to issue a warning if the
     // process of attaching changed the current executable (like somebody said
     // "file foo" then attached to a PID whose executable was bar.)

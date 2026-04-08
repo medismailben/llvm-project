@@ -1547,6 +1547,17 @@ public:
         m_options.attach_info.SetScriptedMetadata(metadata_sp);
       }
 
+      // If no process info was specified, show an interactive picker.
+      if (!m_options.attach_info.ProcessInfoSpecified()) {
+        lldb::pid_t pid =
+            PickProcessToAttach(GetDebugger(), *platform_sp, result);
+        if (pid == LLDB_INVALID_PROCESS_ID) {
+          result.SetStatus(eReturnStatusFailed);
+          return;
+        }
+        m_options.attach_info.SetProcessID(pid);
+      }
+
       Status err;
       ProcessSP remote_process_sp = platform_sp->Attach(
           m_options.attach_info, GetDebugger(), nullptr, err);
