@@ -32,8 +32,12 @@ llvm::Expected<StructuredData::GenericSP>
 ScriptedStopHookPythonInterface::CreatePluginObject(llvm::StringRef class_name,
                                                     lldb::TargetSP target_sp,
                                                     const StructuredDataImpl &args_sp) {
-  return ScriptedPythonInterface::CreatePluginObject(class_name, nullptr,
-                                                     target_sp, args_sp);
+  auto obj_or_err = ScriptedPythonInterface::CreatePluginObject(
+      class_name, nullptr, target_sp, args_sp);
+  if (obj_or_err)
+    m_scripted_metadata_sp =
+        std::make_shared<ScriptedMetadata>(class_name, nullptr);
+  return obj_or_err;
 }
 
 llvm::Expected<bool>
@@ -43,6 +47,11 @@ ScriptedStopHookPythonInterface::HandleStop(ExecutionContext &exe_ctx,
       std::make_shared<ExecutionContextRef>(exe_ctx);
   Status error;
   StructuredData::ObjectSP obj = Dispatch("handle_stop", error, exe_ctx_ref_sp, output_sp);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "HandleStop Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error)) {

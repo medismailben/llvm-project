@@ -42,14 +42,23 @@ ScriptedProcessPythonInterface::CreatePluginObject(
   ExecutionContextRefSP exe_ctx_ref_sp =
       std::make_shared<ExecutionContextRef>(exe_ctx);
   StructuredDataImpl sd_impl(args_sp);
-  return ScriptedPythonInterface::CreatePluginObject(class_name, script_obj,
-                                                     exe_ctx_ref_sp, sd_impl);
+  auto obj_or_err = ScriptedPythonInterface::CreatePluginObject(
+      class_name, script_obj, exe_ctx_ref_sp, sd_impl);
+  if (obj_or_err)
+    m_scripted_metadata_sp =
+        std::make_shared<ScriptedMetadata>(class_name, args_sp);
+  return obj_or_err;
 }
 
 StructuredData::DictionarySP ScriptedProcessPythonInterface::GetCapabilities() {
   Status error;
   StructuredData::DictionarySP dict =
       Dispatch<StructuredData::DictionarySP>("get_capabilities", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetCapabilities Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, dict,
                                                     error))
@@ -93,6 +102,11 @@ StructuredData::DictionarySP ScriptedProcessPythonInterface::GetThreadsInfo() {
   StructuredData::DictionarySP dict =
       Dispatch<StructuredData::DictionarySP>("get_threads_info", error);
 
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetThreadsInfo Python exception: {0}",
+             error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, dict,
                                                     error))
     return {};
@@ -102,47 +116,52 @@ StructuredData::DictionarySP ScriptedProcessPythonInterface::GetThreadsInfo() {
 
 bool ScriptedProcessPythonInterface::CreateBreakpoint(lldb::addr_t addr,
                                                       Status &error) {
-  Status py_error;
   StructuredData::ObjectSP obj =
-      Dispatch("create_breakpoint", py_error, addr, error);
+      Dispatch("create_breakpoint", error, addr, error);
 
-  // If there was an error on the python call, surface it to the user.
-  if (py_error.Fail())
-    error = std::move(py_error);
+  // error is already set by Dispatch if Python exception occurred
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "CreateBreakpoint failed: {0}",
+             error.AsCString());
+    return false;
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
-    return {};
+    return false;
 
   return obj->GetBooleanValue();
 }
 
 lldb::DataExtractorSP ScriptedProcessPythonInterface::ReadMemoryAtAddress(
     lldb::addr_t address, size_t size, Status &error) {
-  Status py_error;
   lldb::DataExtractorSP data_sp = Dispatch<lldb::DataExtractorSP>(
-      "read_memory_at_address", py_error, address, size, error);
+      "read_memory_at_address", error, address, size, error);
 
-  // If there was an error on the python call, surface it to the user.
-  if (py_error.Fail())
-    error = std::move(py_error);
+  // error is already set by Dispatch if Python exception occurred
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "ReadMemoryAtAddress failed: {0}",
+             error.AsCString());
+  }
 
   return data_sp;
 }
 
 lldb::offset_t ScriptedProcessPythonInterface::WriteMemoryAtAddress(
     lldb::addr_t addr, lldb::DataExtractorSP data_sp, Status &error) {
-  Status py_error;
   StructuredData::ObjectSP obj =
-      Dispatch("write_memory_at_address", py_error, addr, data_sp, error);
+      Dispatch("write_memory_at_address", error, addr, data_sp, error);
+
+  // error is already set by Dispatch if Python exception occurred
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "WriteMemoryAtAddress failed: {0}",
+             error.AsCString());
+    return LLDB_INVALID_OFFSET;
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
     return LLDB_INVALID_OFFSET;
-
-  // If there was an error on the python call, surface it to the user.
-  if (py_error.Fail())
-    error = std::move(py_error);
 
   return obj->GetUnsignedIntegerValue(LLDB_INVALID_OFFSET);
 }
@@ -151,6 +170,11 @@ StructuredData::ArraySP ScriptedProcessPythonInterface::GetLoadedImages() {
   Status error;
   StructuredData::ArraySP array =
       Dispatch<StructuredData::ArraySP>("get_loaded_images", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetLoadedImages Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, array,
                                                     error))
@@ -163,6 +187,11 @@ lldb::pid_t ScriptedProcessPythonInterface::GetProcessID() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("get_process_id", error);
 
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetProcessID Python exception: {0}",
+             error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
     return LLDB_INVALID_PROCESS_ID;
@@ -173,6 +202,11 @@ lldb::pid_t ScriptedProcessPythonInterface::GetProcessID() {
 bool ScriptedProcessPythonInterface::IsAlive() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("is_alive", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "IsAlive Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
@@ -185,6 +219,12 @@ std::optional<std::string>
 ScriptedProcessPythonInterface::GetScriptedThreadPluginName() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("get_scripted_thread_plugin", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script),
+             "GetScriptedThreadPluginName Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
@@ -202,6 +242,11 @@ StructuredData::DictionarySP ScriptedProcessPythonInterface::GetMetadata() {
   Status error;
   StructuredData::DictionarySP dict =
       Dispatch<StructuredData::DictionarySP>("get_process_metadata", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetMetadata Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, dict,
                                                     error))

@@ -657,6 +657,10 @@ public:
   lldb::ValueObjectSP
   GetOpaqueTypeFromSBValue(const lldb::SBValue &value) const;
 
+  /// Get the debugger associated with this script interpreter.
+  Debugger &GetDebugger() { return m_debugger; }
+  const Debugger &GetDebugger() const { return m_debugger; }
+
 protected:
   Debugger &m_debugger;
   lldb::ScriptLanguage m_script_lang;

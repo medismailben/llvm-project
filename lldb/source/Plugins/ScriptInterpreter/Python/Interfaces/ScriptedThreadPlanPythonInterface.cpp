@@ -31,14 +31,23 @@ llvm::Expected<StructuredData::GenericSP>
 ScriptedThreadPlanPythonInterface::CreatePluginObject(
     const llvm::StringRef class_name, lldb::ThreadPlanSP thread_plan_sp,
     const StructuredDataImpl &args_sp) {
-  return ScriptedPythonInterface::CreatePluginObject(class_name, nullptr,
-                                                     thread_plan_sp, args_sp);
+  auto obj_or_err = ScriptedPythonInterface::CreatePluginObject(
+      class_name, nullptr, thread_plan_sp, args_sp);
+  if (obj_or_err)
+    m_scripted_metadata_sp =
+        std::make_shared<ScriptedMetadata>(class_name, nullptr);
+  return obj_or_err;
 }
 
 llvm::Expected<bool>
 ScriptedThreadPlanPythonInterface::ExplainsStop(Event *event) {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("explains_stop", error, event);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "ExplainsStop Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error)) {
@@ -55,6 +64,11 @@ ScriptedThreadPlanPythonInterface::ShouldStop(Event *event) {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("should_stop", error, event);
 
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "ShouldStop Python exception: {0}",
+             error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error)) {
     if (!obj)
@@ -68,6 +82,11 @@ ScriptedThreadPlanPythonInterface::ShouldStop(Event *event) {
 llvm::Expected<bool> ScriptedThreadPlanPythonInterface::IsStale() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("is_stale", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "IsStale Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error)) {
@@ -83,6 +102,11 @@ lldb::StateType ScriptedThreadPlanPythonInterface::GetRunState() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("should_step", error);
 
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetRunState Python exception: {0}",
+             error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
     return lldb::eStateStepping;
@@ -96,8 +120,11 @@ ScriptedThreadPlanPythonInterface::GetStopDescription(lldb::StreamSP &stream) {
   Status error;
   Dispatch("stop_description", error, stream);
 
-  if (error.Fail())
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetStopDescription Python exception: {0}",
+             error.AsCString());
     return error.ToError();
+  }
 
   return llvm::Error::success();
 }

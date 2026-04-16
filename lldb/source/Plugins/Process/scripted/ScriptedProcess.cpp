@@ -27,6 +27,11 @@
 
 #include "Plugins/ObjectFile/Placeholder/ObjectFilePlaceholder.h"
 
+#include "llvm/Support/Error.h"
+
+#include <mutex>
+#include <string>
+
 using namespace lldb;
 using namespace lldb_private;
 
@@ -62,6 +67,15 @@ lldb::ProcessSP ScriptedProcess::CreateInstance(lldb::TargetSP target_sp,
       new ScriptedProcess(target_sp, listener_sp, scripted_metadata, error));
 
   if (error.Fail() || !process_sp || !process_sp->m_interface_up) {
+    // CreateInstance returns nullptr on failure with no Status output parameter,
+    // so we must report the error via diagnostic system for users to see it
+    if (error.Fail()) {
+      Debugger::ReportError(
+          llvm::formatv("Failed to create ScriptedProcess: {0}",
+                        error.AsCString())
+              .str(),
+          target_sp->GetDebugger().GetID());
+    }
     LLDB_LOGF(GetLog(LLDBLog::Process), "%s", error.AsCString());
     return nullptr;
   }
@@ -113,8 +127,10 @@ ScriptedProcess::ScriptedProcess(lldb::TargetSP target_sp,
       m_scripted_metadata.GetArgsSP());
 
   if (!obj_or_err) {
-    llvm::consumeError(obj_or_err.takeError());
-    error = Status::FromErrorString("Failed to create script object.");
+    // Extract the detailed error message including Python backtrace
+    std::string error_msg = llvm::toString(obj_or_err.takeError());
+    error = Status::FromErrorStringWithFormatv(
+        "Failed to create script object: {0}", error_msg);
     return;
   }
 
@@ -181,8 +197,10 @@ void ScriptedProcess::DidResume() {
 Status ScriptedProcess::DoResume(RunDirection direction) {
   LLDB_LOGF(GetLog(LLDBLog::Process), "ScriptedProcess::%s resuming process", __FUNCTION__);
 
-  if (direction == RunDirection::eRunForward)
-    return GetInterface().Resume();
+  if (direction == RunDirection::eRunForward) {
+    Status error = GetInterface().Resume();
+    return error;
+  }
   // FIXME: Pipe reverse continue through Scripted Processes
   return Status::FromErrorStringWithFormatv(
       "{0} does not support reverse execution of processes", GetPluginName());
@@ -190,10 +208,13 @@ Status ScriptedProcess::DoResume(RunDirection direction) {
 
 Status ScriptedProcess::DoAttach(const ProcessAttachInfo &attach_info) {
   Status error = GetInterface().Attach(attach_info);
+  if (error.Fail()) {
+    error = Status::FromErrorStringWithFormatv(
+        "Failed to attach to scripted process: {0}", error.AsCString());
+    return error;
+  }
   SetPrivateState(eStateRunning);
   SetPrivateState(eStateStopped);
-  if (error.Fail())
-    return error;
   // NOTE: We need to set the PID before finishing to attach otherwise we will
   // hit an assert when calling the attach completion handler.
   DidLaunch();
@@ -225,8 +246,14 @@ size_t ScriptedProcess::DoReadMemory(lldb::addr_t addr, void *buf, size_t size,
   lldb::DataExtractorSP data_extractor_sp =
       GetInterface().ReadMemoryAtAddress(addr, size, error);
 
-  if (!data_extractor_sp || !data_extractor_sp->HasData() || error.Fail())
+  if (!data_extractor_sp || !data_extractor_sp->HasData() || error.Fail()) {
+    if (error.Fail()) {
+      error = Status::FromErrorStringWithFormatv(
+          "Failed to read memory from scripted process at 0x{0:x}: {1}", addr,
+          error.AsCString());
+    }
     return 0;
+  }
 
   offset_t bytes_copied = data_extractor_sp->CopyByteOrderedData(
       0, data_extractor_sp->GetByteSize(), buf, size, GetByteOrder());
@@ -252,9 +279,15 @@ size_t ScriptedProcess::DoWriteMemory(lldb::addr_t vm_addr, const void *buf,
   lldb::offset_t bytes_written =
       GetInterface().WriteMemoryAtAddress(vm_addr, data_extractor_sp, error);
 
-  if (!bytes_written || bytes_written == LLDB_INVALID_OFFSET)
+  if (!bytes_written || bytes_written == LLDB_INVALID_OFFSET) {
+    if (error.Fail()) {
+      error = Status::FromErrorStringWithFormatv(
+          "Failed to write memory to scripted process at 0x{0:x}: {1}",
+          vm_addr, error.AsCString());
+    }
     return ScriptedInterface::ErrorWithMessage<size_t>(
         LLVM_PRETTY_FUNCTION, "Failed to copy write buffer to memory.", error);
+  }
 
   // FIXME: We should use the diagnostic system to report a warning if the
   // `bytes_written` is different from `size`.
@@ -565,4 +598,15 @@ void *ScriptedProcess::GetImplementation() {
       object_instance_sp->GetType() == eStructuredDataTypeGeneric)
     return object_instance_sp->GetAsGeneric()->GetValue();
   return nullptr;
+}
+
+void ScriptedProcess::SetScriptedInterfaceErrorCallback(
+    std::function<void(const Status &)> callback) {
+  if (m_interface_up)
+    m_interface_up->SetErrorCallback(std::move(callback));
+}
+
+void ScriptedProcess::ClearScriptedInterfaceErrorCallback() {
+  if (m_interface_up)
+    m_interface_up->ClearErrorCallback();
 }
