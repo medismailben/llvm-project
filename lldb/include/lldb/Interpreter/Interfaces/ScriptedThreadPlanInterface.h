@@ -14,7 +14,7 @@
 #include "ScriptedInterface.h"
 
 namespace lldb_private {
-class ScriptedThreadPlanInterface : public ScriptedInterface {
+class ScriptedThreadPlanInterface : virtual public ScriptedInterface {
 public:
   virtual llvm::Expected<StructuredData::GenericSP>
   CreatePluginObject(llvm::StringRef class_name,

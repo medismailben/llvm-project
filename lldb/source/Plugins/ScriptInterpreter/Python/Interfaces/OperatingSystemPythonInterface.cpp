@@ -33,8 +33,12 @@ llvm::Expected<StructuredData::GenericSP>
 OperatingSystemPythonInterface::CreatePluginObject(
     llvm::StringRef class_name, ExecutionContext &exe_ctx,
     StructuredData::DictionarySP args_sp, StructuredData::Generic *script_obj) {
-  return ScriptedPythonInterface::CreatePluginObject(class_name, nullptr,
-                                                     exe_ctx.GetProcessSP());
+  auto obj_or_err = ScriptedPythonInterface::CreatePluginObject(
+      class_name, nullptr, exe_ctx.GetProcessSP());
+  if (obj_or_err)
+    m_scripted_metadata_sp =
+        std::make_shared<ScriptedMetadata>(class_name, nullptr);
+  return obj_or_err;
 }
 
 StructuredData::DictionarySP
@@ -43,6 +47,11 @@ OperatingSystemPythonInterface::CreateThread(lldb::tid_t tid,
   Status error;
   StructuredData::DictionarySP dict = Dispatch<StructuredData::DictionarySP>(
       "create_thread", error, tid, context);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "CreateThread Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, dict,
                                                     error))
@@ -55,6 +64,11 @@ StructuredData::ArraySP OperatingSystemPythonInterface::GetThreadInfo() {
   Status error;
   StructuredData::ArraySP arr =
       Dispatch<StructuredData::ArraySP>("get_thread_info", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetThreadInfo Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, arr,
                                                     error))
@@ -72,6 +86,12 @@ OperatingSystemPythonInterface::GetRegisterContextForTID(lldb::tid_t tid) {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("get_register_data", error, tid);
 
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script),
+             "GetRegisterContextForTID Python exception: {0}",
+             error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
     return {};
@@ -82,6 +102,13 @@ OperatingSystemPythonInterface::GetRegisterContextForTID(lldb::tid_t tid) {
 std::optional<bool> OperatingSystemPythonInterface::DoesPluginReportAllThreads() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("does_plugin_report_all_threads", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script),
+             "DoesPluginReportAllThreads Python exception: {0}",
+             error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
     return {};

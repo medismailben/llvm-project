@@ -36,6 +36,12 @@ bool ScriptedFrameProviderPythonInterface::AppliesToThread(
   Status error;
   StructuredData::ObjectSP obj =
       CallStaticMethod(class_name, "applies_to_thread", error, thread_sp);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "AppliesToThread Python exception: {0}",
+             error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
     return fail_value;
@@ -51,8 +57,12 @@ ScriptedFrameProviderPythonInterface::CreatePluginObject(
     return llvm::createStringError("invalid frame list");
 
   StructuredDataImpl sd_impl(args_sp);
-  return ScriptedPythonInterface::CreatePluginObject(class_name, nullptr,
-                                                     input_frames, sd_impl);
+  auto obj_or_err = ScriptedPythonInterface::CreatePluginObject(
+      class_name, nullptr, input_frames, sd_impl);
+  if (obj_or_err)
+    m_scripted_metadata_sp =
+        std::make_shared<ScriptedMetadata>(class_name, args_sp);
+  return obj_or_err;
 }
 
 std::string ScriptedFrameProviderPythonInterface::GetDescription(
@@ -60,6 +70,12 @@ std::string ScriptedFrameProviderPythonInterface::GetDescription(
   Status error;
   StructuredData::ObjectSP obj =
       CallStaticMethod(class_name, "get_description", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetDescription Python exception: {0}",
+             error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
     return {};
@@ -72,6 +88,11 @@ ScriptedFrameProviderPythonInterface::GetPriority(llvm::StringRef class_name) {
   Status error;
   StructuredData::ObjectSP obj =
       CallStaticMethod(class_name, "get_priority", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetPriority Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
@@ -89,6 +110,11 @@ StructuredData::ObjectSP
 ScriptedFrameProviderPythonInterface::GetFrameAtIndex(uint32_t index) {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("get_frame_at_index", error, index);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetFrameAtIndex Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))

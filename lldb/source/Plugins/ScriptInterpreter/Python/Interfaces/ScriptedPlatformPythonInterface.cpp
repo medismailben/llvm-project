@@ -37,8 +37,12 @@ ScriptedPlatformPythonInterface::CreatePluginObject(
   ExecutionContextRefSP exe_ctx_ref_sp =
       std::make_shared<ExecutionContextRef>(exe_ctx);
   StructuredDataImpl sd_impl(args_sp);
-  return ScriptedPythonInterface::CreatePluginObject(class_name, script_obj,
-                                                     exe_ctx_ref_sp, sd_impl);
+  auto obj_or_err = ScriptedPythonInterface::CreatePluginObject(
+      class_name, script_obj, exe_ctx_ref_sp, sd_impl);
+  if (obj_or_err)
+    m_scripted_metadata_sp =
+        std::make_shared<ScriptedMetadata>(class_name, args_sp);
+  return obj_or_err;
 }
 
 StructuredData::DictionarySP ScriptedPlatformPythonInterface::ListProcesses() {
@@ -47,6 +51,10 @@ StructuredData::DictionarySP ScriptedPlatformPythonInterface::ListProcesses() {
       Dispatch<StructuredData::DictionarySP>("list_processes", error);
 
   if (!dict_sp || !dict_sp->IsValid() || error.Fail()) {
+    if (error.Fail()) {
+      LLDB_LOG(GetLog(LLDBLog::Script), "ListProcesses Python exception: {0}",
+               error.AsCString());
+    }
     return ScriptedInterface::ErrorWithMessage<StructuredData::DictionarySP>(
         LLVM_PRETTY_FUNCTION,
         llvm::Twine("Null or invalid object (" +
@@ -65,6 +73,10 @@ ScriptedPlatformPythonInterface::GetProcessInfo(lldb::pid_t pid) {
       Dispatch<StructuredData::DictionarySP>("get_process_info", error, pid);
 
   if (!dict_sp || !dict_sp->IsValid() || error.Fail()) {
+    if (error.Fail()) {
+      LLDB_LOG(GetLog(LLDBLog::Script), "GetProcessInfo Python exception: {0}",
+               error.AsCString());
+    }
     return ScriptedInterface::ErrorWithMessage<StructuredData::DictionarySP>(
         LLVM_PRETTY_FUNCTION,
         llvm::Twine("Null or invalid object (" +

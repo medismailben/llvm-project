@@ -31,8 +31,12 @@ llvm::Expected<StructuredData::GenericSP>
 ScriptedBreakpointPythonInterface::CreatePluginObject(
     llvm::StringRef class_name, lldb::BreakpointSP break_sp,
     const StructuredDataImpl &args_sp) {
-  return ScriptedPythonInterface::CreatePluginObject(class_name, nullptr,
-                                                     break_sp, args_sp);
+  auto obj_or_err = ScriptedPythonInterface::CreatePluginObject(
+      class_name, nullptr, break_sp, args_sp);
+  if (obj_or_err)
+    m_scripted_metadata_sp =
+        std::make_shared<ScriptedMetadata>(class_name, nullptr);
+  return obj_or_err;
 }
 
 bool ScriptedBreakpointPythonInterface::ResolverCallback(
@@ -41,10 +45,13 @@ bool ScriptedBreakpointPythonInterface::ResolverCallback(
 
   StructuredData::ObjectSP obj = Dispatch("__callback__", error, sym_ctx);
 
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "ResolverCallback Python exception: {0}",
+             error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error)) {
-    Log *log = GetLog(LLDBLog::Script);
-    LLDB_LOG(log, "Error calling __callback__ method: {1}", error);
     return true;
   }
   return obj->GetBooleanValue();
@@ -53,6 +60,11 @@ bool ScriptedBreakpointPythonInterface::ResolverCallback(
 lldb::SearchDepth ScriptedBreakpointPythonInterface::GetDepth() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("__get_depth__", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetDepth Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error)) {
@@ -70,6 +82,11 @@ std::optional<std::string> ScriptedBreakpointPythonInterface::GetShortHelp() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("get_short_help", error);
 
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetShortHelp Python exception: {0}",
+             error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error)) {
     return {};
@@ -84,8 +101,11 @@ lldb::BreakpointLocationSP ScriptedBreakpointPythonInterface::WasHit(
   lldb::BreakpointLocationSP loc_sp = Dispatch<lldb::BreakpointLocationSP>(
       "was_hit", py_error, frame_sp, bp_loc_sp);
 
-  if (py_error.Fail())
+  if (py_error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "WasHit Python exception: {0}",
+             py_error.AsCString());
     return bp_loc_sp;
+  }
 
   return loc_sp;
 }
@@ -96,6 +116,11 @@ ScriptedBreakpointPythonInterface::GetLocationDescription(
   Status error;
   StructuredData::ObjectSP obj =
       Dispatch("get_location_description", error, bp_loc_sp, level);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script),
+             "GetLocationDescription Python exception: {0}", error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))

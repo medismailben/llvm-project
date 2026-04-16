@@ -35,13 +35,22 @@ ScriptedFramePythonInterface::CreatePluginObject(
   ExecutionContextRefSP exe_ctx_ref_sp =
       std::make_shared<ExecutionContextRef>(exe_ctx);
   StructuredDataImpl sd_impl(args_sp);
-  return ScriptedPythonInterface::CreatePluginObject(class_name, script_obj,
-                                                     exe_ctx_ref_sp, sd_impl);
+  auto obj_or_err = ScriptedPythonInterface::CreatePluginObject(
+      class_name, script_obj, exe_ctx_ref_sp, sd_impl);
+  if (obj_or_err)
+    m_scripted_metadata_sp =
+        std::make_shared<ScriptedMetadata>(class_name, args_sp);
+  return obj_or_err;
 }
 
 lldb::user_id_t ScriptedFramePythonInterface::GetID() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("get_id", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetID Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
@@ -53,6 +62,11 @@ lldb::user_id_t ScriptedFramePythonInterface::GetID() {
 lldb::addr_t ScriptedFramePythonInterface::GetPC() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("get_pc", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetPC Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
@@ -66,6 +80,8 @@ std::optional<SymbolContext> ScriptedFramePythonInterface::GetSymbolContext() {
   auto sym_ctx = Dispatch<SymbolContext>("get_symbol_context", error);
 
   if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetSymbolContext Python exception: {0}",
+             error.AsCString());
     return ErrorWithMessage<SymbolContext>(LLVM_PRETTY_FUNCTION,
                                            error.AsCString(), error);
   }
@@ -76,6 +92,11 @@ std::optional<SymbolContext> ScriptedFramePythonInterface::GetSymbolContext() {
 std::optional<std::string> ScriptedFramePythonInterface::GetFunctionName() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("get_function_name", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetFunctionName Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
@@ -89,6 +110,11 @@ ScriptedFramePythonInterface::GetDisplayFunctionName() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("get_display_function_name", error);
 
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script),
+             "GetDisplayFunctionName Python exception: {0}", error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
     return {};
@@ -99,6 +125,11 @@ ScriptedFramePythonInterface::GetDisplayFunctionName() {
 bool ScriptedFramePythonInterface::IsInlined() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("is_inlined", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "IsInlined Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
@@ -111,6 +142,11 @@ bool ScriptedFramePythonInterface::IsArtificial() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("is_artificial", error);
 
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "IsArtificial Python exception: {0}",
+             error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
     return false;
@@ -121,6 +157,11 @@ bool ScriptedFramePythonInterface::IsArtificial() {
 bool ScriptedFramePythonInterface::IsHidden() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("is_hidden", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "IsHidden Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
@@ -134,6 +175,11 @@ StructuredData::DictionarySP ScriptedFramePythonInterface::GetRegisterInfo() {
   StructuredData::DictionarySP dict =
       Dispatch<StructuredData::DictionarySP>("get_register_info", error);
 
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetRegisterInfo Python exception: {0}",
+             error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, dict,
                                                     error))
     return {};
@@ -144,6 +190,11 @@ StructuredData::DictionarySP ScriptedFramePythonInterface::GetRegisterInfo() {
 std::optional<std::string> ScriptedFramePythonInterface::GetRegisterContext() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("get_register_context", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script),
+             "GetRegisterContext Python exception: {0}", error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
@@ -157,6 +208,8 @@ lldb::ValueObjectListSP ScriptedFramePythonInterface::GetVariables() {
   auto vals = Dispatch<lldb::ValueObjectListSP>("get_variables", error);
 
   if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetVariables Python exception: {0}",
+             error.AsCString());
     return ErrorWithMessage<lldb::ValueObjectListSP>(LLVM_PRETTY_FUNCTION,
                                                      error.AsCString(), error);
   }
@@ -173,6 +226,9 @@ ScriptedFramePythonInterface::GetValueObjectForVariableExpression(
                                            status);
 
   if (dispatch_error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script),
+             "GetValueObjectForVariableExpression Python exception: {0}",
+             dispatch_error.AsCString());
     return ErrorWithMessage<lldb::ValueObjectSP>(
         LLVM_PRETTY_FUNCTION, dispatch_error.AsCString(), dispatch_error);
   }

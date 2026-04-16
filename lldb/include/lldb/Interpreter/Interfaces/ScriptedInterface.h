@@ -14,11 +14,13 @@
 #include "lldb/Core/StructuredDataImpl.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
+#include "lldb/Utility/ScriptedMetadata.h"
 #include "lldb/Utility/UnimplementedError.h"
 #include "lldb/lldb-private.h"
 
 #include "llvm/Support/Compiler.h"
 
+#include <functional>
 #include <string>
 
 namespace lldb_private {
@@ -29,6 +31,23 @@ public:
 
   StructuredData::GenericSP GetScriptObjectInstance() {
     return m_object_instance_sp;
+  }
+
+  /// Set error callback to surface Python exceptions directly to users.
+  ///
+  /// This allows command handlers to receive Python exception details
+  /// immediately rather than relying on diagnostic broadcasts.
+  ///
+  /// \param callback Function to call with Status containing exception details.
+  virtual void SetErrorCallback(std::function<void(const Status &)> callback) {}
+
+  /// Clear the error callback.
+  virtual void ClearErrorCallback() {}
+
+  llvm::StringRef GetClassName() const {
+    if (m_scripted_metadata_sp)
+      return m_scripted_metadata_sp->GetClassName();
+    return {};
   }
 
   struct AbstractMethodRequirement {
@@ -56,18 +75,19 @@ public:
   static Ret ErrorWithMessage(llvm::StringRef caller_name,
                               llvm::StringRef error_msg, Status &error,
                               LLDBLog log_category = LLDBLog::Process) {
+    // Log the error for debugging (includes function signature for context)
     LLDB_LOGF(GetLog(log_category), "%s ERROR = %s", caller_name.data(),
               error_msg.data());
-    std::string full_error_message =
-        llvm::Twine(caller_name + llvm::Twine(" ERROR = ") +
-                    llvm::Twine(error_msg))
-            .str();
-    if (const char *detailed_error = error.AsCString())
-      full_error_message +=
-          llvm::Twine(llvm::Twine(" (") + llvm::Twine(detailed_error) +
-                      llvm::Twine(")"))
-              .str();
-    error = Status(std::move(full_error_message));
+
+    // For user-facing messages, just pass through the Status if it already
+    // has detailed information (like Python tracebacks), otherwise set it
+    const char *existing_error = error.AsCString();
+    if (!error.Fail() || !existing_error || existing_error[0] == '\0') {
+      // Status is empty, populate it with simple error message
+      error = Status::FromErrorString(error_msg.data());
+    }
+    // If Status already has content, leave it as-is (it has the Python traceback)
+
     return {};
   }
 
@@ -96,6 +116,7 @@ public:
 
 protected:
   StructuredData::GenericSP m_object_instance_sp;
+  lldb::ScriptedMetadataSP m_scripted_metadata_sp = nullptr;
 };
 } // namespace lldb_private
 #endif // LLDB_INTERPRETER_INTERFACES_SCRIPTEDINTERFACE_H

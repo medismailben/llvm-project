@@ -35,13 +35,22 @@ ScriptedThreadPythonInterface::CreatePluginObject(
   ExecutionContextRefSP exe_ctx_ref_sp =
       std::make_shared<ExecutionContextRef>(exe_ctx);
   StructuredDataImpl sd_impl(args_sp);
-  return ScriptedPythonInterface::CreatePluginObject(class_name, script_obj,
-                                                     exe_ctx_ref_sp, sd_impl);
+  auto obj_or_err = ScriptedPythonInterface::CreatePluginObject(
+      class_name, script_obj, exe_ctx_ref_sp, sd_impl);
+  if (obj_or_err)
+    m_scripted_metadata_sp =
+        std::make_shared<ScriptedMetadata>(class_name, args_sp);
+  return obj_or_err;
 }
 
 lldb::tid_t ScriptedThreadPythonInterface::GetThreadID() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("get_thread_id", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetThreadID Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
@@ -54,6 +63,11 @@ std::optional<std::string> ScriptedThreadPythonInterface::GetName() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("get_name", error);
 
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetName Python exception: {0}",
+             error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
     return {};
@@ -65,6 +79,11 @@ lldb::StateType ScriptedThreadPythonInterface::GetState() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("get_state", error);
 
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetState Python exception: {0}",
+             error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
     return eStateInvalid;
@@ -75,6 +94,11 @@ lldb::StateType ScriptedThreadPythonInterface::GetState() {
 std::optional<std::string> ScriptedThreadPythonInterface::GetQueue() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("get_queue", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetQueue Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
@@ -88,6 +112,11 @@ StructuredData::DictionarySP ScriptedThreadPythonInterface::GetStopReason() {
   StructuredData::DictionarySP dict =
       Dispatch<StructuredData::DictionarySP>("get_stop_reason", error);
 
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetStopReason Python exception: {0}",
+             error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, dict,
                                                     error))
     return {};
@@ -99,6 +128,11 @@ StructuredData::ArraySP ScriptedThreadPythonInterface::GetStackFrames() {
   Status error;
   StructuredData::ArraySP arr =
       Dispatch<StructuredData::ArraySP>("get_stackframes", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetStackFrames Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, arr,
                                                     error))
@@ -112,6 +146,11 @@ StructuredData::DictionarySP ScriptedThreadPythonInterface::GetRegisterInfo() {
   StructuredData::DictionarySP dict =
       Dispatch<StructuredData::DictionarySP>("get_register_info", error);
 
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetRegisterInfo Python exception: {0}",
+             error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, dict,
                                                     error))
     return {};
@@ -122,6 +161,11 @@ StructuredData::DictionarySP ScriptedThreadPythonInterface::GetRegisterInfo() {
 std::optional<std::string> ScriptedThreadPythonInterface::GetRegisterContext() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("get_register_context", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script),
+             "GetRegisterContext Python exception: {0}", error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
@@ -135,6 +179,11 @@ StructuredData::ArraySP ScriptedThreadPythonInterface::GetExtendedInfo() {
   StructuredData::ArraySP arr =
       Dispatch<StructuredData::ArraySP>("get_extended_info", error);
 
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script), "GetExtendedInfo Python exception: {0}",
+             error.AsCString());
+  }
+
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, arr,
                                                     error))
     return {};
@@ -146,6 +195,12 @@ std::optional<std::string>
 ScriptedThreadPythonInterface::GetScriptedFramePluginName() {
   Status error;
   StructuredData::ObjectSP obj = Dispatch("get_scripted_frame_plugin", error);
+
+  if (error.Fail()) {
+    LLDB_LOG(GetLog(LLDBLog::Script),
+             "GetScriptedFramePluginName Python exception: {0}",
+             error.AsCString());
+  }
 
   if (!ScriptedInterface::CheckStructuredDataObject(LLVM_PRETTY_FUNCTION, obj,
                                                     error))
