@@ -42,6 +42,7 @@ struct Policy {
     bool can_run_breakpoint_actions : 1;
     bool can_load_frame_providers : 1;
     bool can_run_frame_recognizers : 1;
+    bool holds_run_lock : 1;
   };
 
   View view = View::Public;
@@ -52,6 +53,7 @@ struct Policy {
       .can_run_breakpoint_actions = true,
       .can_load_frame_providers = true,
       .can_run_frame_recognizers = true,
+      .holds_run_lock = false,
   };
 
   static Policy PublicState() { return {}; }
@@ -67,6 +69,7 @@ struct Policy {
                 .can_run_breakpoint_actions = true,
                 .can_load_frame_providers = false,
                 .can_run_frame_recognizers = false,
+                .holds_run_lock = false,
             },
     };
   }
@@ -82,6 +85,7 @@ struct Policy {
                 .can_run_breakpoint_actions = false,
                 .can_load_frame_providers = true,
                 .can_run_frame_recognizers = true,
+                .holds_run_lock = false,
             },
     };
   }

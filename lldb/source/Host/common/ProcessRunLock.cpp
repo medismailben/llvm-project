@@ -8,6 +8,7 @@
 
 #ifndef _WIN32
 #include "lldb/Host/ProcessRunLock.h"
+#include "lldb/Target/Policy.h"
 
 namespace lldb_private {
 
@@ -22,6 +23,10 @@ ProcessRunLock::~ProcessRunLock() {
 }
 
 bool ProcessRunLock::ReadTryLock() {
+  auto &policy = PolicyStack::GetForCurrentThread().Current();
+  if (policy.capabilities.holds_run_lock)
+    return !m_running;
+
   ::pthread_rwlock_rdlock(&m_rwlock);
   if (!m_running) {
     // coverity[missing_unlock]
@@ -32,7 +37,40 @@ bool ProcessRunLock::ReadTryLock() {
 }
 
 bool ProcessRunLock::ReadUnlock() {
+  auto &policy = PolicyStack::GetForCurrentThread().Current();
+  if (policy.capabilities.holds_run_lock)
+    return true;
+
   return ::pthread_rwlock_unlock(&m_rwlock) == 0;
+}
+
+bool ProcessRunLock::ProcessRunLocker::TryLock(ProcessRunLock *lock) {
+  if (m_lock) {
+    if (m_lock == lock)
+      return true;
+    Unlock();
+  }
+  if (lock) {
+    if (lock->ReadTryLock()) {
+      m_lock = lock;
+      // Push a policy so re-entrant ReadTryLock calls from the same
+      // thread (e.g. provider Python calling back into SB API) skip
+      // the real lock and avoid deadlocking with a pending writer.
+      auto policy = PolicyStack::GetForCurrentThread().Current();
+      policy.capabilities.holds_run_lock = true;
+      PolicyStack::GetForCurrentThread().Push(policy);
+      return true;
+    }
+  }
+  return false;
+}
+
+void ProcessRunLock::ProcessRunLocker::Unlock() {
+  if (m_lock) {
+    PolicyStack::GetForCurrentThread().Pop();
+    m_lock->ReadUnlock();
+    m_lock = nullptr;
+  }
 }
 
 bool ProcessRunLock::SetRunning() {

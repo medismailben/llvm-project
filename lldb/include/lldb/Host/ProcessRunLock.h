@@ -58,29 +58,12 @@ public:
     bool IsLocked() const { return m_lock; }
 
     // Try to lock the read lock, but only do so if there are no writers.
-    bool TryLock(ProcessRunLock *lock) {
-      if (m_lock) {
-        if (m_lock == lock)
-          return true; // We already have this lock locked
-        else
-          Unlock();
-      }
-      if (lock) {
-        if (lock->ReadTryLock()) {
-          m_lock = lock;
-          return true;
-        }
-      }
-      return false;
-    }
+    // Pushes a policy with holds_run_lock=true so that re-entrant
+    // ReadTryLock calls from the same thread skip the real lock.
+    bool TryLock(ProcessRunLock *lock);
 
   protected:
-    void Unlock() {
-      if (m_lock) {
-        m_lock->ReadUnlock();
-        m_lock = nullptr;
-      }
-    }
+    void Unlock();
 
     ProcessRunLock *m_lock = nullptr;
 
