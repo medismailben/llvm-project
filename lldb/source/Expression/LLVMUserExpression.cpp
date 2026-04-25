@@ -22,6 +22,7 @@
 #include "lldb/Symbol/VariableList.h"
 #include "lldb/Target/ABI.h"
 #include "lldb/Target/ExecutionContext.h"
+#include "lldb/Target/Policy.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/StackFrame.h"
 #include "lldb/Target/Target.h"
@@ -173,6 +174,9 @@ LLVMUserExpression::DoExecute(DiagnosticManager &diagnostic_manager,
 
     if (exe_ctx.GetProcessPtr())
       exe_ctx.GetProcessPtr()->SetRunningUserExpression(true);
+
+    PolicyStack::Guard expr_policy_guard(
+        Policy::PublicStateRunningExpression());
 
     lldb::ExpressionResults execution_result =
         exe_ctx.GetProcessRef().RunThreadPlan(exe_ctx, call_plan_sp, options,

@@ -1282,9 +1282,6 @@ StateType Process::GetState() {
   if (policy.view == Policy::View::Private)
     return GetPrivateState();
 
-  if (CurrentThreadPosesAsPrivateStateThread())
-    return GetPrivateState();
-
   return GetPublicState();
 }
 

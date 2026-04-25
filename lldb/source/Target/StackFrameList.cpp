@@ -811,9 +811,6 @@ void StackFrameList::SelectMostRelevantFrame() {
   if (policy.view == Policy::View::Private)
     return;
 
-  if (m_thread.GetProcess()->CurrentThreadPosesAsPrivateStateThread())
-    return;
-
   Log *log = GetLog(LLDBLog::Thread);
 
   // Only the top frame should be recognized.

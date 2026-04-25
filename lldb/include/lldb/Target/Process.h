@@ -3339,8 +3339,6 @@ protected:
           PolicyStack::GetForCurrentThread().Current();
       if (policy.view == Policy::View::Private)
         return m_private_run_lock;
-      if (IsOnThread(Host::GetCurrentThread()))
-        return m_private_run_lock;
       return m_public_run_lock;
     }
 
