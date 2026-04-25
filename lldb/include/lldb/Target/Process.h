@@ -37,6 +37,7 @@
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Symbol/SaveCoreOptions.h"
 #include "lldb/Target/CoreFileMemoryRanges.h"
+#include "lldb/Target/Policy.h"
 #include "lldb/Target/ExecutionContextScope.h"
 #include "lldb/Target/InstrumentationRuntime.h"
 #include "lldb/Target/Memory.h"
@@ -3334,10 +3335,13 @@ protected:
     }
 
     ProcessRunLock &GetRunLock() {
+      auto &policy =
+          PolicyStack::GetForCurrentThread().Current();
+      if (policy.view == Policy::View::Private)
+        return m_private_run_lock;
       if (IsOnThread(Host::GetCurrentThread()))
         return m_private_run_lock;
-      else
-        return m_public_run_lock;
+      return m_public_run_lock;
     }
 
     Process &m_process;

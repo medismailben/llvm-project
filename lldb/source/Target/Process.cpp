@@ -1278,10 +1278,14 @@ StateType Process::GetState() {
   if (!m_current_private_state_thread_sp)
     return eStateUnloaded;
 
+  auto &policy = PolicyStack::GetForCurrentThread().Current();
+  if (policy.view == Policy::View::Private)
+    return GetPrivateState();
+
   if (CurrentThreadPosesAsPrivateStateThread())
     return GetPrivateState();
-  else
-    return GetPublicState();
+
+  return GetPublicState();
 }
 
 void Process::SetPublicState(StateType new_state, bool restarted) {
