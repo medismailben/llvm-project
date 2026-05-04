@@ -808,7 +808,7 @@ void StackFrameList::SelectMostRelevantFrame() {
   // they can cause code to run in the target, and that can cause deadlocks
   // when fetching stop events for the expression.
   auto &policy = PolicyStack::GetForCurrentThread().Current();
-  if (policy.view == Policy::View::Private)
+  if (!policy.capabilities.can_run_frame_recognizers)
     return;
 
   Log *log = GetLog(LLDBLog::Thread);

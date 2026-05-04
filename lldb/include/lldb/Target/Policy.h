@@ -58,7 +58,7 @@ struct Policy {
 
   static Policy PublicState() { return {}; }
 
-  static Policy PrivateState() {
+  static Policy PrivateStateRunningExpression() {
     return {
         .view = View::Private,
         .capabilities =
@@ -69,6 +69,22 @@ struct Policy {
                 .can_run_breakpoint_actions = true,
                 .can_load_frame_providers = false,
                 .can_run_frame_recognizers = false,
+                .holds_run_lock = false,
+            },
+    };
+  }
+
+  static Policy PrivateState() {
+    return {
+        .view = View::Private,
+        .capabilities =
+            {
+                .can_evaluate_expressions = true,
+                .stop_others_only = false,
+                .can_try_all_threads = true,
+                .can_run_breakpoint_actions = true,
+                .can_load_frame_providers = true,
+                .can_run_frame_recognizers = true,
                 .holds_run_lock = false,
             },
     };
