@@ -25,11 +25,11 @@
 using namespace lldb;
 using namespace lldb_private;
 
-ScriptedThreadPlan::ScriptedThreadPlan(Thread &thread, const char *class_name,
-                                       const StructuredDataImpl &args_data)
+ScriptedThreadPlan::ScriptedThreadPlan(
+    Thread &thread, const ScriptedMetadata &scripted_metadata)
     : ThreadPlan(ThreadPlan::eKindPython, "Script based Thread Plan", thread,
                  eVoteNoOpinion, eVoteNoOpinion),
-      m_class_name(class_name), m_args_data(args_data), m_did_push(false),
+      m_scripted_metadata(scripted_metadata), m_did_push(false),
       m_stop_others(false) {
   ScriptInterpreter *interpreter = GetScriptInterpreter();
   if (!interpreter) {
@@ -80,9 +80,8 @@ void ScriptedThreadPlan::DidPush() {
   // the constructor, and doesn't have to care about the details of DidPush.
   m_did_push = true;
   if (m_interface) {
-    ScriptedMetadata scripted_metadata(m_class_name, {});
     auto obj_or_err = m_interface->CreatePluginObject(
-        scripted_metadata, this->shared_from_this(), m_args_data);
+        m_scripted_metadata, this->shared_from_this());
     if (!obj_or_err) {
       m_error_str = llvm::toString(obj_or_err.takeError());
       SetPlanComplete(false);
@@ -94,7 +93,7 @@ void ScriptedThreadPlan::DidPush() {
 bool ScriptedThreadPlan::ShouldStop(Event *event_ptr) {
   Log *log = GetLog(LLDBLog::Thread);
   LLDB_LOGF(log, "%s called on Scripted Thread Plan: %s )",
-            LLVM_PRETTY_FUNCTION, m_class_name.c_str());
+            LLVM_PRETTY_FUNCTION, m_scripted_metadata.GetClassName().data());
 
   bool should_stop = true;
   if (m_implementation_sp) {
@@ -112,7 +111,7 @@ bool ScriptedThreadPlan::ShouldStop(Event *event_ptr) {
 bool ScriptedThreadPlan::IsPlanStale() {
   Log *log = GetLog(LLDBLog::Thread);
   LLDB_LOGF(log, "%s called on Scripted Thread Plan: %s )",
-            LLVM_PRETTY_FUNCTION, m_class_name.c_str());
+            LLVM_PRETTY_FUNCTION, m_scripted_metadata.GetClassName().data());
 
   bool is_stale = true;
   if (m_implementation_sp) {
@@ -130,7 +129,7 @@ bool ScriptedThreadPlan::IsPlanStale() {
 bool ScriptedThreadPlan::DoPlanExplainsStop(Event *event_ptr) {
   Log *log = GetLog(LLDBLog::Thread);
   LLDB_LOGF(log, "%s called on Scripted Thread Plan: %s )",
-            LLVM_PRETTY_FUNCTION, m_class_name.c_str());
+            LLVM_PRETTY_FUNCTION, m_scripted_metadata.GetClassName().data());
 
   bool explains_stop = true;
   if (m_implementation_sp) {
@@ -149,7 +148,7 @@ bool ScriptedThreadPlan::DoPlanExplainsStop(Event *event_ptr) {
 bool ScriptedThreadPlan::MischiefManaged() {
   Log *log = GetLog(LLDBLog::Thread);
   LLDB_LOGF(log, "%s called on Scripted Thread Plan: %s )",
-            LLVM_PRETTY_FUNCTION, m_class_name.c_str());
+            LLVM_PRETTY_FUNCTION, m_scripted_metadata.GetClassName().data());
   bool mischief_managed = true;
   if (m_implementation_sp) {
     // I don't really need mischief_managed, since it's simpler to just call
@@ -167,7 +166,7 @@ bool ScriptedThreadPlan::MischiefManaged() {
 lldb::StateType ScriptedThreadPlan::GetPlanRunState() {
   Log *log = GetLog(LLDBLog::Thread);
   LLDB_LOGF(log, "%s called on Scripted Thread Plan: %s )",
-            LLVM_PRETTY_FUNCTION, m_class_name.c_str());
+            LLVM_PRETTY_FUNCTION, m_scripted_metadata.GetClassName().data());
   lldb::StateType run_state = eStateRunning;
   if (m_implementation_sp)
     run_state = m_interface->GetRunState();
@@ -178,7 +177,7 @@ void ScriptedThreadPlan::GetDescription(Stream *s,
                                         lldb::DescriptionLevel level) {
   Log *log = GetLog(LLDBLog::Thread);
   LLDB_LOGF(log, "%s called on Scripted Thread Plan: %s )",
-            LLVM_PRETTY_FUNCTION, m_class_name.c_str());
+            LLVM_PRETTY_FUNCTION, m_scripted_metadata.GetClassName().data());
   if (m_implementation_sp) {
     ScriptInterpreter *script_interp = GetScriptInterpreter();
     if (script_interp) {
@@ -189,7 +188,7 @@ void ScriptedThreadPlan::GetDescription(Stream *s,
             GetLog(LLDBLog::Thread), std::move(err),
             "Can't call ScriptedThreadPlan::GetStopDescription: {0}");
         s->Printf("Scripted thread plan implemented by class %s.",
-                  m_class_name.c_str());
+                  m_scripted_metadata.GetClassName().data());
       } else
         s->PutCString(
             reinterpret_cast<StreamString *>(stream.get())->GetData());
@@ -200,7 +199,7 @@ void ScriptedThreadPlan::GetDescription(Stream *s,
   // add something.
   if (m_stop_description.Empty())
     s->Printf("Scripted thread plan implemented by class %s.",
-              m_class_name.c_str());
+              m_scripted_metadata.GetClassName().data());
   s->PutCString(m_stop_description.GetData());
 }
 
@@ -208,7 +207,7 @@ void ScriptedThreadPlan::GetDescription(Stream *s,
 bool ScriptedThreadPlan::WillStop() {
   Log *log = GetLog(LLDBLog::Thread);
   LLDB_LOGF(log, "%s called on Scripted Thread Plan: %s )",
-            LLVM_PRETTY_FUNCTION, m_class_name.c_str());
+            LLVM_PRETTY_FUNCTION, m_scripted_metadata.GetClassName().data());
   return true;
 }
 

@@ -18,8 +18,7 @@ class ScriptedThreadPlanInterface : public ScriptedInterface {
 public:
   virtual llvm::Expected<StructuredData::GenericSP>
   CreatePluginObject(const ScriptedMetadata &scripted_metadata,
-                     lldb::ThreadPlanSP thread_plan_sp,
-                     const StructuredDataImpl &args_sp) = 0;
+                     lldb::ThreadPlanSP thread_plan_sp) = 0;
 
   virtual llvm::Expected<bool> ExplainsStop(Event *event) { return true; }
 
