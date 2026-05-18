@@ -17,6 +17,8 @@
 namespace lldb_private {
 class ScriptedMetadata {
 public:
+  ScriptedMetadata() = default;
+
   ScriptedMetadata(llvm::StringRef class_name,
                    StructuredData::DictionarySP dict_sp)
       : m_class_name(class_name.data()), m_args_sp(dict_sp) {}
@@ -29,8 +31,8 @@ public:
     }
   }
 
-  ScriptedMetadata(const ScriptedMetadata &other)
-      : m_class_name(other.m_class_name), m_args_sp(other.m_args_sp) {}
+  ScriptedMetadata(const ScriptedMetadata &other) = default;
+  ScriptedMetadata &operator=(const ScriptedMetadata &other) = default;
 
   explicit operator bool() const { return !m_class_name.empty(); }
 
