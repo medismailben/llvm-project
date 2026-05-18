@@ -14,6 +14,7 @@
 #include "lldb/Core/StructuredDataImpl.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
+#include "lldb/Utility/ScriptedMetadata.h"
 #include "lldb/Utility/UnimplementedError.h"
 #include "lldb/lldb-private.h"
 
@@ -29,6 +30,10 @@ public:
 
   StructuredData::GenericSP GetScriptObjectInstance() {
     return m_object_instance_sp;
+  }
+
+  const ScriptedMetadata &GetScriptedMetadata() const {
+    return m_scripted_metadata;
   }
 
   struct AbstractMethodRequirement {
@@ -96,6 +101,7 @@ public:
 
 protected:
   StructuredData::GenericSP m_object_instance_sp;
+  ScriptedMetadata m_scripted_metadata;
 };
 } // namespace lldb_private
 #endif // LLDB_INTERPRETER_INTERFACES_SCRIPTEDINTERFACE_H

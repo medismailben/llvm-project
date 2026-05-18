@@ -58,8 +58,7 @@ ScriptedThread::Create(ScriptedProcess &process,
 
   ExecutionContext exe_ctx(process);
   auto obj_or_err = scripted_thread_interface->CreatePluginObject(
-      thread_class_name, exe_ctx, process.m_scripted_metadata.GetArgsSP(),
-      script_object);
+      process.m_scripted_metadata, exe_ctx, script_object);
 
   if (!obj_or_err) {
     llvm::consumeError(obj_or_err.takeError());

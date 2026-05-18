@@ -37,8 +37,9 @@ ScriptedProcessPythonInterface::CreatePluginObject(
   ExecutionContextRefSP exe_ctx_ref_sp =
       std::make_shared<ExecutionContextRef>(exe_ctx);
   StructuredDataImpl sd_impl(args_sp);
-  return ScriptedPythonInterface::CreatePluginObject(class_name, script_obj,
-                                                     exe_ctx_ref_sp, sd_impl);
+  ScriptedMetadata scripted_metadata(class_name, args_sp);
+  return ScriptedPythonInterface::CreatePluginObject(
+      scripted_metadata, script_obj, exe_ctx_ref_sp, sd_impl);
 }
 
 StructuredData::DictionarySP ScriptedProcessPythonInterface::GetCapabilities() {

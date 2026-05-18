@@ -32,7 +32,8 @@ llvm::Expected<StructuredData::GenericSP>
 ScriptedBreakpointPythonInterface::CreatePluginObject(
     llvm::StringRef class_name, lldb::BreakpointSP break_sp,
     const StructuredDataImpl &args_sp) {
-  return ScriptedPythonInterface::CreatePluginObject(class_name, nullptr,
+  ScriptedMetadata scripted_metadata(class_name, {});
+  return ScriptedPythonInterface::CreatePluginObject(scripted_metadata, nullptr,
                                                      break_sp, args_sp);
 }
 

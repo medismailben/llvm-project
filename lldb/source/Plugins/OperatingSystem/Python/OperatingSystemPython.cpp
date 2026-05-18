@@ -30,6 +30,7 @@
 #include "lldb/Utility/DataBufferHeap.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/RegisterValue.h"
+#include "lldb/Utility/ScriptedMetadata.h"
 #include "lldb/Utility/StreamString.h"
 #include "lldb/Utility/StructuredData.h"
 #include "lldb/ValueObject/ValueObjectVariable.h"
@@ -116,8 +117,9 @@ OperatingSystemPython::OperatingSystemPython(lldb_private::Process *process,
     return;
 
   ExecutionContext exe_ctx(process);
+  ScriptedMetadata scripted_metadata(os_plugin_class_name, nullptr);
   auto obj_or_err = operating_system_interface->CreatePluginObject(
-      os_plugin_class_name, exe_ctx, nullptr);
+      scripted_metadata, exe_ctx, nullptr);
 
   if (!obj_or_err) {
     llvm::consumeError(obj_or_err.takeError());

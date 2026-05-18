@@ -50,7 +50,8 @@ ScriptedFrameProviderPythonInterface::CreatePluginObject(
     return llvm::createStringError("invalid frame list");
 
   StructuredDataImpl sd_impl(args_sp);
-  return ScriptedPythonInterface::CreatePluginObject(class_name, nullptr,
+  ScriptedMetadata scripted_metadata(class_name, args_sp);
+  return ScriptedPythonInterface::CreatePluginObject(scripted_metadata, nullptr,
                                                      input_frames, sd_impl);
 }
 
