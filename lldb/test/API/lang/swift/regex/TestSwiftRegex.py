@@ -37,6 +37,7 @@ class TestSwiftRegex(TestBase):
         self.expect('frame var dslRegex',
                     substrs=['(_StringProcessing.Regex<Substring>) dslRegex = {'])
 
+    @skipEmbeddedSwift
     @swiftTest
     @skipIf(macos_version=["<", "13"])
     def test_swift_regex_expr_desc(self):
