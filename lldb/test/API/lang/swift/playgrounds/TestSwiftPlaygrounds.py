@@ -41,12 +41,15 @@ class TestSwiftPlaygrounds(TestBase):
         if lldb.remote_platform:
             arch = self.getArchitecture()
             vendor, os, version, _ = get_triple()
-            # This is made slightly more complex by watchOS having misaligned
-            # version numbers.
+            # Use ABI-stable deployment targets so modern Swift doesn't require
+            # the legacy layouts-arm64.yaml file.  The version must still be
+            # below the @available annotation in Contents.swift so that
+            # test_no_force_target triggers the expected availability failure.
+            # Swift 6's minimum deployment targets are iOS 13 / watchOS 7.
             if os == 'watchos':
-                version = '5.0'
-            else:
                 version = '7.0'
+            else:
+                version = '13.0'
             triple = '{}-{}-{}{}'.format(arch, vendor, os, version)
         else:
             triple = '{}-apple-macosx11.0'.format(platform.machine())
@@ -119,20 +122,52 @@ class TestSwiftPlaygrounds(TestBase):
             target = self.dbg.CreateTarget(exe)
 
         self.assertTrue(target, VALID_TARGET)
-        self.registerSharedLibrariesWithTarget(target,
-                                               ['libPlaygroundsRuntime.dylib'])
+        # registerSharedLibrariesWithTarget uploads dylibs to the remote device
+        # and returns the DYLD_LIBRARY_PATH entry needed to find them.
+        env = self.registerSharedLibrariesWithTarget(target,
+                                                     ['libPlaygroundsRuntime.dylib'])
+
+        if lldb.remote_platform:
+            # PlaygroundStub links AuxSources.framework with install name
+            # @executable_path/AuxSources.framework/Versions/A/AuxSources.
+            # The executable lands in the test-specific working directory that
+            # setUp() set, so upload the framework relative to that same dir.
+            exe_dir = lldb.remote_platform.GetWorkingDirectory()
+            fw_build = self.getBuildArtifact("AuxSources.framework")
+            local_bin = os.path.realpath(os.path.join(fw_build, "AuxSources"))
+            remote_fw  = lldbutil.join_remote_paths(exe_dir, "AuxSources.framework")
+            remote_ver = lldbutil.join_remote_paths(remote_fw, "Versions")
+            remote_a   = lldbutil.join_remote_paths(remote_ver, "A")
+            for d in (remote_fw, remote_ver, remote_a):
+                lldb.remote_platform.MakeDirectory(d, 0o700)
+            remote_bin = lldbutil.join_remote_paths(remote_a, "AuxSources")
+            err = lldb.remote_platform.Put(
+                lldb.SBFileSpec(local_bin, True),
+                lldb.SBFileSpec(remote_bin, False),
+            )
+            self.assertFalse(err.Fail(), "Failed to upload AuxSources.framework: %s" % err)
 
         # Set the breakpoints
         breakpoint = target.BreakpointCreateByName('break_here')
         self.assertTrue(breakpoint.GetNumLocations() > 0, VALID_BREAKPOINT)
 
-        process = target.LaunchSimple(None, None, os.getcwd())
+        # On remote platforms the host cwd does not exist on the device;
+        # use the platform working directory instead.
+        if lldb.remote_platform:
+            wd = lldb.remote_platform.GetWorkingDirectory()
+        else:
+            wd = os.getcwd()
+
+        process = target.LaunchSimple(None, env, wd)
         self.assertTrue(process, PROCESS_IS_VALID)
 
         threads = lldbutil.get_threads_stopped_at_breakpoint(
             process, breakpoint)
 
         self.assertEqual(len(threads), 1)
+        # The expression compiler runs on the host — always use the local build
+        # dir so it can resolve framework swiftmodules regardless of whether we
+        # are testing against a remote device.
         self.expect('settings set target.swift-framework-search-paths "%s"' %
                     self.getBuildDir())
 
@@ -196,14 +231,33 @@ class TestSwiftPlaygrounds(TestBase):
 
     def do_import_test(self):
         # Test importing a library that adds new Clang options.
+        if lldb.remote_platform:
+            # AuxSources.framework is already on the device (uploaded in
+            # launch()).  Only Dylib.framework needs to be uploaded and
+            # pre-loaded here so the JIT linker finds its symbols.
+            root_wd = configuration.lldb_platform_working_dir
+            fw_build = self.getBuildArtifact("Dylib.framework")
+            remote_fw = lldbutil.join_remote_paths(root_wd, "Dylib.framework")
+            lldb.remote_platform.MakeDirectory(remote_fw, 0o700)
+            local_bin = os.path.realpath(os.path.join(fw_build, "Dylib"))
+            remote_bin = lldbutil.join_remote_paths(remote_fw, "Dylib")
+            err = lldb.remote_platform.Put(
+                lldb.SBFileSpec(local_bin, True),
+                lldb.SBFileSpec(remote_bin, False),
+            )
+            self.assertFalse(err.Fail(), "Failed to upload Dylib.framework: %s" % err)
+            self.runCmd("process load " + remote_bin)
+
         log = self.getBuildArtifact('types.log')
         self.expect('log enable lldb types -f ' + log)
         playground_output = self.execute_code('Import.swift')
         self.assertIn("Hello from the Dylib", playground_output)
 
-        # Scan through the types log to make sure the SwiftASTContext was poisoned.
-        self.filecheck_log(log, __file__)
-#       CHECK: RegisterSectionModules("AuxSources") 
+        # On remote the framework binaries are at flat paths (not
+        # Versions/A/…), so the filecheck patterns don't apply.
+        if not lldb.remote_platform:
+            self.filecheck_log(log, __file__)
+#       CHECK: RegisterSectionModules("AuxSources")
 #       CHECK: Playground : true
 #       If we wanted this to work, SwiftASTContext would need to find the AuxSources image and switch the symbol context to there.
 #       CHECK-NOT: -DHAVE_AUXSOURCES

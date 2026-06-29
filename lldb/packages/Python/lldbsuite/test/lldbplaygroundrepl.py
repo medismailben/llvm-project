@@ -36,13 +36,51 @@ class PlaygroundREPLTest(TestBase):
         (exit_status, output) = subprocess.getstatusoutput(command)
         return exit_status
 
+    def upload_remote_libraries(self):
+        """Upload libPlaygroundsRuntime.dylib to the remote device's root
+        working directory so DYLD_LIBRARY_PATH can find it.  Override to
+        upload additional libraries; call super() to keep the default upload."""
+        if not lldb.remote_platform:
+            return
+        from lldbsuite.test import configuration
+        root_wd = configuration.lldb_platform_working_dir
+        local_runtime = os.path.realpath(
+            self.getBuildArtifact("libPlaygroundsRuntime.dylib")
+        )
+        remote_runtime = lldbutil.join_remote_paths(
+            root_wd, "libPlaygroundsRuntime.dylib"
+        )
+        err = lldb.remote_platform.Put(
+            lldb.SBFileSpec(local_runtime, True),
+            lldb.SBFileSpec(remote_runtime, False),
+        )
+        self.assertFalse(
+            err.Fail(),
+            "Failed to upload libPlaygroundsRuntime.dylib: %s" % err,
+        )
+
     def repl_set_up(self):
         """
         Playgrounds REPL test specific setup that must happen after class setup
         """
-        target, process, thread, bkpt = lldbutil.run_to_source_breakpoint(
-            self, 'Set breakpoint here', lldb.SBFileSpec('PlaygroundStub.swift'),
-            exe_name='PlaygroundStub', extra_images=['libPlaygroundsRuntime.dylib'])
+        if lldb.remote_platform:
+            from lldbsuite.test import configuration
+            root_wd = configuration.lldb_platform_working_dir
+            launch_info = lldb.SBLaunchInfo(None)
+            launch_info.SetEnvironmentEntries(
+                ["DYLD_LIBRARY_PATH=%s" % root_wd], True
+            )
+            launch_info.SetWorkingDirectory(
+                lldb.remote_platform.GetWorkingDirectory()
+            )
+            target, process, thread, bkpt = lldbutil.run_to_source_breakpoint(
+                self, 'Set breakpoint here', lldb.SBFileSpec('PlaygroundStub.swift'),
+                exe_name='PlaygroundStub', extra_images=None,
+                launch_info=launch_info)
+        else:
+            target, process, thread, bkpt = lldbutil.run_to_source_breakpoint(
+                self, 'Set breakpoint here', lldb.SBFileSpec('PlaygroundStub.swift'),
+                exe_name='PlaygroundStub', extra_images=['libPlaygroundsRuntime.dylib'])
 
         self.frame = thread.frames[0]
         self.assertTrue(self.frame, "Frame 0 is valid.")
@@ -112,6 +150,8 @@ class PlaygroundREPLTest(TestBase):
     def test_playgrounds(self):
         # Build
         self.build_all()
+        # Upload libraries to the remote device (no-op on local)
+        self.upload_remote_libraries()
         # Prepare
         self.repl_set_up()
         # Run user test

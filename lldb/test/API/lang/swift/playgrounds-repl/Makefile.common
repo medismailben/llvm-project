@@ -3,6 +3,11 @@ SWIFT_SOURCES := PlaygroundStub.swift
 
 PlaygroundStub: libPlaygroundsRuntime.dylib
 
+# Do not serialize debugging options into the binary — the serialized
+# -Onone flag causes lldb to require SwiftOnoneSupport which is not
+# present on virtual iOS DeviceCompute devices.
+SWIFTFLAGS_EXTRAS += -Xfrontend -no-serialize-debugging-options
+
 ifneq ($(MAKECMDGOALS),libPlaygroundsRuntime.dylib)
 LD_EXTRAS := -L. -lPlaygroundsRuntime
 endif
