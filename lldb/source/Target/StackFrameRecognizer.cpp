@@ -8,10 +8,12 @@
 
 #include "lldb/Target/StackFrameRecognizer.h"
 #include "lldb/Core/Module.h"
+#include "lldb/Interpreter/Interfaces/ScriptedStackFrameRecognizerInterface.h"
 #include "lldb/Interpreter/ScriptInterpreter.h"
 #include "lldb/Symbol/Symbol.h"
 #include "lldb/Target/StackFrame.h"
 #include "lldb/Utility/RegularExpression.h"
+#include "lldb/Utility/ScriptedMetadata.h"
 
 using namespace lldb;
 using namespace lldb_private;
@@ -29,18 +31,28 @@ public:
 
 ScriptedStackFrameRecognizer::ScriptedStackFrameRecognizer(
     ScriptInterpreter *interpreter, const char *pclass)
-    : m_interpreter(interpreter), m_python_class(pclass) {
-  m_python_object_sp =
-      m_interpreter->CreateFrameRecognizer(m_python_class.c_str());
+    : m_python_class(pclass) {
+  if (!interpreter)
+    return;
+
+  m_interface_sp = interpreter->CreateScriptedStackFrameRecognizerInterface();
+  if (!m_interface_sp)
+    return;
+
+  ScriptedMetadata scripted_metadata(m_python_class, nullptr);
+  auto obj_or_err = m_interface_sp->CreatePluginObject(scripted_metadata);
+  if (!obj_or_err) {
+    llvm::consumeError(obj_or_err.takeError());
+    m_interface_sp.reset();
+  }
 }
 
 RecognizedStackFrameSP
 ScriptedStackFrameRecognizer::RecognizeFrame(lldb::StackFrameSP frame) {
-  if (!m_python_object_sp || !m_interpreter)
+  if (!m_interface_sp)
     return RecognizedStackFrameSP();
 
-  ValueObjectListSP args =
-      m_interpreter->GetRecognizedArguments(m_python_object_sp, frame);
+  ValueObjectListSP args = m_interface_sp->GetRecognizedArguments(frame);
   auto args_synthesized = std::make_shared<ValueObjectList>();
   if (args) {
     for (const auto &o : args->GetObjects())
@@ -48,7 +60,7 @@ ScriptedStackFrameRecognizer::RecognizeFrame(lldb::StackFrameSP frame) {
           *o, eValueTypeVariableArgument));
   }
 
-  bool hidden = m_interpreter->ShouldHide(m_python_object_sp, frame);
+  bool hidden = m_interface_sp->ShouldHide(frame);
 
   return RecognizedStackFrameSP(
       new ScriptedRecognizedStackFrame(args_synthesized, hidden));

@@ -255,22 +255,6 @@ public:
     return StructuredData::GenericSP();
   }
 
-  virtual StructuredData::GenericSP
-  CreateFrameRecognizer(const char *class_name) {
-    return StructuredData::GenericSP();
-  }
-
-  virtual lldb::ValueObjectListSP GetRecognizedArguments(
-      const StructuredData::ObjectSP &implementor,
-      lldb::StackFrameSP frame_sp) {
-    return lldb::ValueObjectListSP();
-  }
-
-  virtual bool ShouldHide(const StructuredData::ObjectSP &implementor,
-                          lldb::StackFrameSP frame_sp) {
-    return false;
-  }
-
   virtual StructuredData::ObjectSP
   LoadPluginModule(const FileSpec &file_spec, lldb_private::Status &error) {
     return StructuredData::ObjectSP();
@@ -581,6 +565,11 @@ public:
 
   virtual lldb::ScriptedBreakpointInterfaceSP
   CreateScriptedBreakpointInterface() {
+    return {};
+  }
+
+  virtual lldb::ScriptedStackFrameRecognizerInterfaceSP
+  CreateScriptedStackFrameRecognizerInterface() {
     return {};
   }
 

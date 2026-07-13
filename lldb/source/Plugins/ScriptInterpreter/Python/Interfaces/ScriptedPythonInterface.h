@@ -17,6 +17,7 @@
 
 #include "lldb/Interpreter/Interfaces/ScriptedInterface.h"
 #include "lldb/Utility/DataBufferHeap.h"
+#include "lldb/ValueObject/ValueObject.h"
 
 #include "../PythonDataObjects.h"
 #include "../SWIGPythonBridge.h"
@@ -661,6 +662,10 @@ protected:
 
   python::PythonObject Transform(lldb::ValueObjectSP arg) {
     return python::SWIGBridge::ToSWIGWrapper(arg);
+  }
+
+  python::PythonObject Transform(ValueObject &arg) {
+    return python::SWIGBridge::ToSWIGWrapper(arg.GetSP());
   }
 
   template <typename T, typename U>
