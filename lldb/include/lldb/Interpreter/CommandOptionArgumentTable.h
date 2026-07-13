@@ -315,6 +315,7 @@ static constexpr CommandObject::ArgumentTableEntry g_argument_table[] = {
     { lldb::eArgTypeRunMode, "run-mode", lldb::CompletionType::eNoCompletion, g_running_mode, { nullptr, false }, "Help text goes here." },
     { lldb::eArgTypeScriptedCommandSynchronicity, "script-cmd-synchronicity", lldb::CompletionType::eNoCompletion, g_script_synchro_type, { nullptr, false }, "The synchronicity to use to run scripted commands with regard to LLDB event system." },
     { lldb::eArgTypeScriptLang, "script-language", lldb::CompletionType::eNoCompletion, g_script_option_enumeration, { nullptr, false }, "The scripting language to be used for script-based commands.  Supported languages are python and lua." },
+    { lldb::eArgTypeScriptedExtension, "scripting-extension", lldb::CompletionType::eScriptedExtensionCompletion, {}, { nullptr, false }, "The name of a scripting extension." },
     { lldb::eArgTypeSearchWord, "search-word", lldb::CompletionType::eNoCompletion, {}, { nullptr, false }, "Any word of interest for search purposes." },
     { lldb::eArgTypeSelector, "selector", lldb::CompletionType::eNoCompletion, {}, { nullptr, false }, "An Objective-C selector name." },
     { lldb::eArgTypeSettingIndex, "setting-index", lldb::CompletionType::eNoCompletion, {}, { nullptr, false }, "An index into a settings variable that is an array (try 'settings list' to see all the possible settings variables and their types)." },

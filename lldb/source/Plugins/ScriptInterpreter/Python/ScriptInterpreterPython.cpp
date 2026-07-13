@@ -36,11 +36,13 @@
 #include "lldb/Target/ThreadPlan.h"
 #include "lldb/Utility/Instrumentation.h"
 #include "lldb/Utility/LLDBLog.h"
+#include "lldb/Utility/StructuredData.h"
 #include "lldb/Utility/Timer.h"
 #include "lldb/ValueObject/ValueObject.h"
 #include "lldb/lldb-enumerations.h"
 #include "lldb/lldb-forward.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorExtras.h"
@@ -263,6 +265,254 @@ StructuredData::DictionarySP ScriptInterpreterPython::GetInterpreterInfo() {
   if (!info_json)
     return nullptr;
   return info_json.CreateStructuredDictionary();
+}
+
+llvm::Expected<std::string>
+ScriptInterpreterPython::ExtensionToImportPath(
+    lldb::ScriptedExtension extension) {
+  switch (extension) {
+  case eScriptedExtensionOperatingSystem:
+    return "lldb.plugins.operating_system";
+  case eScriptedExtensionScriptedPlatform:
+    return "lldb.plugins.scripted_platform";
+  case eScriptedExtensionScriptedProcess:
+    return "lldb.plugins.scripted_process";
+  case eScriptedExtensionScriptedHook:
+    return "lldb.plugins.scripted_hook";
+  case eScriptedExtensionScriptedBreakpointResolver:
+    return "lldb.plugins.scripted_breakpoint";
+  case eScriptedExtensionScriptedThreadPlan:
+    return "lldb.plugins.scripted_thread_plan";
+  case eScriptedExtensionScriptedFrameProvider:
+    return "lldb.plugins.scripted_frame_provider";
+  case eScriptedExtensionScriptedThread:
+  case eScriptedExtensionScriptedFrame:
+    return "lldb.plugins.scripted_process";
+  case eScriptedExtensionInvalid:
+    return llvm::createStringError("invalid extension name");
+  }
+  return llvm::createStringError("invalid extension name");
+}
+
+llvm::Expected<StructuredData::ObjectSP>
+ScriptInterpreterPython::GetExtensionSchema(
+    llvm::SmallVector<llvm::StringRef> &extension_path) {
+  lldb::ScriptedExtension extension =
+      ScriptInterpreter::StringToExtension(extension_path.back());
+  auto import_path_or_err = ExtensionToImportPath(extension);
+  if (!import_path_or_err)
+    return import_path_or_err.takeError();
+
+  StreamString command_stream;
+  // __import__(path, fromlist=['']) imports the submodule and returns it
+  // directly (rather than the top-level package), as a single expression --
+  // this keeps the whole call eval-able in one line while guaranteeing the
+  // module is imported first; referencing "<import_path>.<ClassName>"
+  // directly would only work if something else had already imported
+  // <import_path> as a side effect.
+  command_stream.Printf(
+      "lldb.embedded_interpreter.generate_extension_schema("
+      "__import__('%s', fromlist=['']).%s)",
+      import_path_or_err->c_str(),
+      ScriptInterpreter::ExtensionToString(extension).data());
+
+  // eScriptReturnTypeCharStrOrNone hands back a pointer into a temporary
+  // Python object's buffer that gets destroyed (and, for a freshly created
+  // string like this one, deallocated) as soon as ExecuteOneLineWithReturn
+  // returns -- reading it afterwards is a use-after-free. Use
+  // eScriptReturnTypeOpaqueObject instead, which transfers a real owned
+  // reference we can safely extract the string from.
+  void *result_obj = nullptr;
+  if (!ExecuteOneLineWithReturn(
+          command_stream.GetData(),
+          ScriptInterpreter::eScriptReturnTypeOpaqueObject, &result_obj,
+          ExecuteScriptOptions().SetEnableIO(false)))
+    return llvm::createStringError("invalid extension schema format");
+
+  // ExecuteOneLineWithReturn releases the GIL before returning, so touching
+  // the returned object (Str() below can execute arbitrary Python code) must
+  // re-acquire it first. py_result is scoped so its destructor (a DECREF)
+  // also runs before the GIL is released below, not after.
+  std::string schema_str;
+  {
+    PyGILState_STATE gil_state = PyGILState_Ensure();
+    {
+      PythonObject py_result(PyRefType::Owned,
+                             static_cast<PyObject *>(result_obj));
+      if (py_result.IsAllocated() && py_result.get() != Py_None)
+        schema_str = py_result.Str().GetString().str();
+    }
+    PyGILState_Release(gil_state);
+  }
+
+  if (schema_str.empty())
+    return llvm::createStringError("empty extension schema");
+  return StructuredData::ParseJSON(schema_str);
+}
+
+llvm::Error ScriptInterpreterPython::ParseExtensionSchema(
+    Stream &s, llvm::StringRef output_script_prefix,
+    llvm::SmallVector<llvm::StringRef> &extension_path,
+    bool generate_non_abstract_methods) {
+  auto schema_or_err = GetExtensionSchema(extension_path);
+  if (!schema_or_err)
+    return schema_or_err.takeError();
+
+  StructuredData::ObjectSP schema = *schema_or_err;
+  StructuredData::Dictionary *dict = schema->GetAsDictionary();
+
+  llvm::StringRef base_class, import_path;
+  if (!dict->GetValueForKeyAsString("class", base_class))
+    return llvm::createStringError(
+        llvm::formatv("extension schema dictionary is missing 'class' key")
+            .str());
+  if (!dict->GetValueForKeyAsString("module", import_path))
+    return llvm::createStringError(
+        llvm::formatv("extension schema dictionary is missing 'module' key")
+            .str());
+
+  // imports
+  s.Printf("from %s import %s\n", import_path.data(), base_class.data());
+  s.EOL();
+
+  // class definition
+  s.Printf("class %s%s(%s):\n", output_script_prefix.data(), base_class.data(),
+           base_class.data());
+  s.IndentMore();
+  // members
+  StructuredData::Array *members;
+  if (!dict->GetValueForKeyAsArray("members", members))
+    return llvm::createStringError("missing 'members' key in extension schema");
+
+  for (size_t i = 0; i < members->GetSize(); i++) {
+    auto maybe_dict = members->GetItemAtIndexAsDictionary(i);
+    if (!maybe_dict)
+      return llvm::createStringError(
+          llvm::formatv(
+              "member at index {0} in extension schema isn't a dictionary")
+              .str());
+
+    StructuredData::Dictionary *member_dict = *maybe_dict;
+    llvm::StringRef symbol, args;
+    if (!member_dict->GetValueForKeyAsString("name", symbol))
+      return llvm::createStringError(
+          llvm::formatv(
+              "member at index {0} in extension schema is missing 'name' key")
+              .str());
+    if (!member_dict->GetValueForKeyAsString("signature", args))
+      return llvm::createStringError(
+          llvm::formatv("member at index {0} in extension schema is missing "
+                        "'signature' key")
+              .str());
+
+    // only generate abstract method
+    bool is_abstract = false;
+    bool has_is_abstract =
+        member_dict->GetValueForKeyAsBoolean("is_abstract", is_abstract);
+    if (!generate_non_abstract_methods)
+      if (!has_is_abstract || !is_abstract)
+        continue;
+
+    s.Indent();
+    s.Printf("def %s%s:\n", symbol.data(), args.data());
+
+    s.IndentMore();
+    llvm::StringRef documentation;
+    if (member_dict->GetValueForKeyAsString("doc", documentation)) {
+      s.Indent();
+      s.PutCString("\"\"\"\n");
+
+      llvm::SmallVector<llvm::StringRef> lines;
+      documentation.split(lines, "\n");
+
+      for (llvm::StringRef line : lines) {
+        s.Indent();
+        s.PutCString(line);
+        s.EOL();
+      }
+
+      s.Indent();
+      s.PutCString("\"\"\"");
+      s.EOL();
+    }
+
+    if (symbol == "__init__") {
+      // The base class' constructor sets up attributes (e.g. self.target,
+      // self.process) that the inherited, non-overridden methods rely on.
+      // Forward the same arguments so that state is still initialized.
+      llvm::StringRef params = args.trim("()");
+      llvm::SmallVector<llvm::StringRef> param_names;
+      params.split(param_names, ',');
+      std::vector<std::string> forwarded_args;
+      for (llvm::StringRef param : param_names) {
+        param = param.split(':').first.split('=').first.trim();
+        if (param.empty() || param == "self")
+          continue;
+        forwarded_args.push_back(param.str());
+      }
+      s.Indent();
+      s.Printf("super().__init__(%s)\n",
+               llvm::join(forwarded_args, ", ").c_str());
+    }
+
+    s.Indent();
+    s.PutCString("# TODO: Implement\n");
+    s.Indent();
+    s.PutCString("pass\n\n");
+    s.IndentLess();
+  }
+
+  return llvm::Error::success();
+}
+
+llvm::Expected<FileSpec> ScriptInterpreterPython::GenerateExtensionTemplate(
+    const std::string name,
+    std::vector<std::pair<llvm::StringRef, llvm::SmallVector<llvm::StringRef>>>
+        &extensions,
+    bool generate_non_abstract_methods, std::string output_file) {
+  StreamString generated_file_stream;
+  generated_file_stream.PutCString("import lldb\n\n");
+
+  for (auto extension_pair : extensions) {
+    if (llvm::Error err = ParseExtensionSchema(generated_file_stream, name,
+                                               extension_pair.second,
+                                               generate_non_abstract_methods))
+      return std::move(err);
+
+    generated_file_stream.PutCString("\n\n");
+  }
+
+  FileSpec save_location;
+  if (output_file.empty()) {
+    const std::string file_name =
+        "lldb_" + llvm::StringRef(name).lower() + "_extension.py";
+    save_location = HostInfo::GetGlobalTempDir();
+    FileSystem::Instance().Resolve(save_location);
+    save_location.AppendPathComponent(file_name);
+  } else {
+    save_location = FileSpec(output_file);
+    FileSystem::Instance().Resolve(save_location);
+  }
+
+  File::OpenOptions flags = File::eOpenOptionWriteOnly |
+                            File::eOpenOptionCanCreate |
+                            File::eOpenOptionTruncate;
+
+  auto opened_file = FileSystem::Instance().Open(save_location, flags);
+
+  if (!opened_file)
+    return opened_file.takeError();
+
+  FileUP file = std::move(opened_file.get());
+
+  size_t byte_size = generated_file_stream.GetSize();
+
+  Status error = file->Write(generated_file_stream.GetData(), byte_size);
+
+  if (error.Fail() || byte_size != generated_file_stream.GetSize())
+    return llvm::createStringError("Unable to write to destination file. Bytes "
+                                   "written do not match generated file size.");
+  return save_location;
 }
 
 void ScriptInterpreterPython::SharedLibraryDirectoryHelper(

@@ -748,6 +748,7 @@ enum CommandArgumentType {
   eArgTypeRunMode,
   eArgTypeScriptedCommandSynchronicity,
   eArgTypeScriptLang,
+  eArgTypeScriptedExtension,
   eArgTypeSearchWord,
   eArgTypeSelector,
   eArgTypeSettingIndex,
@@ -1477,10 +1478,11 @@ enum CompletionType {
   eCustomCompletion = (1ul << 25),
   eThreadIDCompletion = (1ul << 26),
   eManagedPluginCompletion = (1ul << 27),
+  eScriptedExtensionCompletion = (1ul << 28),
   // This last enum element is just for input validation.
   // Add new completions before this element,
   // and then increment eTerminatorCompletion's shift value
-  eTerminatorCompletion = (1ul << 28)
+  eTerminatorCompletion = (1ul << 29)
 };
 
 /// Specifies if children need to be re-computed after a call to \ref

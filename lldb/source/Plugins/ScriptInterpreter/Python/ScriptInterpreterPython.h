@@ -41,7 +41,15 @@ public:
       : ScriptInterpreter(debugger, lldb::eScriptLanguagePython),
         IOHandlerDelegateMultiline("DONE") {}
 
+  llvm::Expected<std::string>
+  ExtensionToImportPath(lldb::ScriptedExtension extension) override;
   StructuredData::DictionarySP GetInterpreterInfo() override;
+  llvm::Expected<FileSpec> GenerateExtensionTemplate(
+      const std::string name,
+      std::vector<std::pair<llvm::StringRef,
+                            llvm::SmallVector<llvm::StringRef>>> &extensions,
+      bool generate_non_abstract_methods, std::string output_file) override;
+
   static void Initialize();
   static void Terminate();
   static llvm::StringRef GetPluginNameStatic() { return "script-python"; }
@@ -50,6 +58,13 @@ public:
   static void SharedLibraryDirectoryHelper(FileSpec &this_file);
 
 protected:
+  llvm::Error
+  ParseExtensionSchema(Stream &s, llvm::StringRef output_script_prefix,
+                       llvm::SmallVector<llvm::StringRef> &extension_path,
+                       bool generate_non_abstract_methods);
+  llvm::Expected<StructuredData::ObjectSP>
+  GetExtensionSchema(llvm::SmallVector<llvm::StringRef> &extension_path);
+
   static void ComputePythonDirForApple(llvm::SmallVectorImpl<char> &path);
   static void ComputePythonDir(llvm::SmallVectorImpl<char> &path);
 };

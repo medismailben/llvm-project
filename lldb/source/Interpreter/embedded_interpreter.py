@@ -77,6 +77,31 @@ def run_python_interpreter(local_dict):
         if e.code:
             print("Script exited with code %s" % e.code)
 
+def generate_extension_schema(cls):
+    import inspect, json, typing
+
+    def _get_function_metadata(func):
+        try:
+            hints = typing.get_type_hints(func)
+            type_hints = {k: str(v) for k, v in hints.items()}
+        except Exception:
+            type_hints = {}
+        return {
+            "signature": str(inspect.signature(func)),
+            "type_hints": type_hints,
+            "is_abstract": getattr(func, "__isabstractmethod__", False),
+            "doc": inspect.getdoc(func),
+        }
+
+    members = []
+    for name, member in inspect.getmembers(cls):
+        if inspect.isfunction(member):
+            members.append({"name": name, **_get_function_metadata(member)})
+    return json.dumps(
+        {"class": cls.__name__, "module": cls.__module__, "doc": inspect.getdoc(cls), "members": members},
+    separators=(",", ":"))
+
+
 def run_one_line(local_dict, input_string):
     global g_run_one_line_str
     try:

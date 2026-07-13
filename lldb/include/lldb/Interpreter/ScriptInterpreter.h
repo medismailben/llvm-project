@@ -39,6 +39,7 @@
 #include "lldb/Utility/Broadcaster.h"
 #include "lldb/Utility/Status.h"
 #include "lldb/Utility/StructuredData.h"
+#include "lldb/Utility/UnimplementedError.h"
 #include "lldb/lldb-private.h"
 #include <optional>
 
@@ -169,6 +170,12 @@ public:
   ScriptInterpreter(Debugger &debugger, lldb::ScriptLanguage script_lang);
 
   virtual StructuredData::DictionarySP GetInterpreterInfo();
+
+  virtual llvm::Expected<FileSpec> GenerateExtensionTemplate(
+      const std::string name,
+      std::vector<std::pair<llvm::StringRef,
+                            llvm::SmallVector<llvm::StringRef>>> &extensions,
+      bool m_generate_non_abstract_methods, std::string output_file);
 
   ~ScriptInterpreter() override = default;
 
@@ -525,6 +532,11 @@ public:
   static std::string LanguageToString(lldb::ScriptLanguage language);
 
   static lldb::ScriptLanguage StringToLanguage(const llvm::StringRef &string);
+
+  virtual llvm::Expected<std::string>
+  ExtensionToImportPath(lldb::ScriptedExtension extension) {
+    return llvm::make_error<UnimplementedError>();
+  }
 
   static llvm::StringLiteral
   ExtensionToString(lldb::ScriptedExtension extension);
