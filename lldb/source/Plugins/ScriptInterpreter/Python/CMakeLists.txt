@@ -33,6 +33,7 @@ set(python_plugin_sources
   Interfaces/ScriptedHookPythonInterface.cpp
   Interfaces/ScriptedBreakpointPythonInterface.cpp
   Interfaces/ScriptedStackFrameRecognizerPythonInterface.cpp
+  Interfaces/ScriptedSyntheticChildrenPythonInterface.cpp
   Interfaces/ScriptedThreadPlanPythonInterface.cpp
   Interfaces/ScriptedThreadPythonInterface.cpp
 )

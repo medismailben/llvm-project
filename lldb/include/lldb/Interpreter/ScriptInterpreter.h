@@ -244,12 +244,6 @@ public:
     return false;
   }
 
-  virtual StructuredData::ObjectSP
-  CreateSyntheticScriptedProvider(const char *class_name,
-                                  lldb::ValueObjectSP valobj) {
-    return StructuredData::ObjectSP();
-  }
-
   virtual StructuredData::GenericSP
   CreateScriptCommandObject(const char *class_name) {
     return StructuredData::GenericSP();
@@ -333,43 +327,6 @@ public:
 
   virtual void Clear() {
     // Clean up any ref counts to SBObjects that might be in global variables
-  }
-
-  virtual size_t
-  CalculateNumChildren(const StructuredData::ObjectSP &implementor,
-                       uint32_t max) {
-    return 0;
-  }
-
-  virtual lldb::ValueObjectSP
-  GetChildAtIndex(const StructuredData::ObjectSP &implementor, uint32_t idx) {
-    return lldb::ValueObjectSP();
-  }
-
-  virtual llvm::Expected<uint32_t>
-  GetIndexOfChildWithName(const StructuredData::ObjectSP &implementor,
-                          const char *child_name) {
-    return llvm::createStringError("Type has no child named '%s'", child_name);
-  }
-
-  virtual bool
-  UpdateSynthProviderInstance(const StructuredData::ObjectSP &implementor) {
-    return false;
-  }
-
-  virtual bool MightHaveChildrenSynthProviderInstance(
-      const StructuredData::ObjectSP &implementor) {
-    return true;
-  }
-
-  virtual lldb::ValueObjectSP
-  GetSyntheticValue(const StructuredData::ObjectSP &implementor) {
-    return nullptr;
-  }
-
-  virtual ConstString
-  GetSyntheticTypeName(const StructuredData::ObjectSP &implementor) {
-    return ConstString();
   }
 
   virtual bool
@@ -570,6 +527,11 @@ public:
 
   virtual lldb::ScriptedStackFrameRecognizerInterfaceSP
   CreateScriptedStackFrameRecognizerInterface() {
+    return {};
+  }
+
+  virtual lldb::ScriptedSyntheticChildrenInterfaceSP
+  CreateScriptedSyntheticChildrenInterface() {
     return {};
   }
 

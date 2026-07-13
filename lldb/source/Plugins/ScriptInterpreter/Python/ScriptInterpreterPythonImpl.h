@@ -66,10 +66,6 @@ public:
   bool GenerateScriptAliasFunction(StringList &input,
                                    std::string &output) override;
 
-  StructuredData::ObjectSP
-  CreateSyntheticScriptedProvider(const char *class_name,
-                                  lldb::ValueObjectSP valobj) override;
-
   StructuredData::GenericSP
   CreateScriptCommandObject(const char *class_name) override;
 
@@ -85,6 +81,9 @@ public:
 
   lldb::ScriptedStackFrameRecognizerInterfaceSP
   CreateScriptedStackFrameRecognizerInterface() override;
+
+  lldb::ScriptedSyntheticChildrenInterfaceSP
+  CreateScriptedSyntheticChildrenInterface() override;
 
   lldb::ScriptedThreadInterfaceSP CreateScriptedThreadInterface() override;
 
@@ -106,29 +105,6 @@ public:
   GetDynamicSettings(StructuredData::ObjectSP plugin_module_sp, Target *target,
                      const char *setting_name,
                      lldb_private::Status &error) override;
-
-  size_t CalculateNumChildren(const StructuredData::ObjectSP &implementor,
-                              uint32_t max) override;
-
-  lldb::ValueObjectSP
-  GetChildAtIndex(const StructuredData::ObjectSP &implementor,
-                  uint32_t idx) override;
-
-  llvm::Expected<uint32_t>
-  GetIndexOfChildWithName(const StructuredData::ObjectSP &implementor,
-                          const char *child_name) override;
-
-  bool UpdateSynthProviderInstance(
-      const StructuredData::ObjectSP &implementor) override;
-
-  bool MightHaveChildrenSynthProviderInstance(
-      const StructuredData::ObjectSP &implementor) override;
-
-  lldb::ValueObjectSP
-  GetSyntheticValue(const StructuredData::ObjectSP &implementor) override;
-
-  ConstString
-  GetSyntheticTypeName(const StructuredData::ObjectSP &implementor) override;
 
   bool
   RunScriptBasedCommand(const char *impl_function, llvm::StringRef args,

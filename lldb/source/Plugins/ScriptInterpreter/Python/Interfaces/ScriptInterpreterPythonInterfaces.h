@@ -20,6 +20,7 @@
 #include "ScriptedPlatformPythonInterface.h"
 #include "ScriptedProcessPythonInterface.h"
 #include "ScriptedStackFrameRecognizerPythonInterface.h"
+#include "ScriptedSyntheticChildrenPythonInterface.h"
 #include "ScriptedThreadPlanPythonInterface.h"
 #include "ScriptedThreadPythonInterface.h"
 
