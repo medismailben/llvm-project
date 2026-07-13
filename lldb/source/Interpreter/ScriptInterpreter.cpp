@@ -229,6 +229,8 @@ ScriptInterpreter::ExtensionToString(lldb::ScriptedExtension extension) {
     return "ScriptedCommand";
   case eScriptedExtensionParsedCommand:
     return "ParsedCommand";
+  case eScriptedExtensionScriptedSummary:
+    return "ScriptedSummary";
   }
   llvm_unreachable("unhandled ScriptedExtension");
 }
@@ -253,6 +255,7 @@ ScriptInterpreter::StringToExtension(llvm::StringRef string) {
                  eScriptedExtensionScriptedSyntheticChildren)
       .CaseLower("ScriptedCommand", eScriptedExtensionScriptedCommand)
       .CaseLower("ParsedCommand", eScriptedExtensionParsedCommand)
+      .CaseLower("ScriptedSummary", eScriptedExtensionScriptedSummary)
       .Default(eScriptedExtensionInvalid);
 }
 

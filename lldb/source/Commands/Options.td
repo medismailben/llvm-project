@@ -2429,6 +2429,11 @@ let Command = "type summary add" in {
       : Option<"input-python", "P">,
         Group<3>,
         Desc<"Input Python code to use for this type manually.">;
+  def type_summary_add_python_class
+      : Option<"python-class", "l">,
+        Group<3>,
+        Arg<"PythonClass">,
+        Desc<"Use this Python class to produce a summary.">;
   def type_summary_add_expand
       : Option<"expand", "e">,
         Groups<[2, 3]>,

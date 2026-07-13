@@ -296,6 +296,8 @@ ScriptInterpreterPython::ExtensionToImportPath(
     return "lldb.plugins.scripted_command";
   case eScriptedExtensionParsedCommand:
     return "lldb.plugins.parsed_cmd";
+  case eScriptedExtensionScriptedSummary:
+    return "lldb.plugins.scripted_summary";
   case eScriptedExtensionInvalid:
     return llvm::createStringError("invalid extension name");
   }
@@ -1910,6 +1912,11 @@ ScriptInterpreterPythonImpl::CreateScriptedSyntheticChildrenInterface() {
 ScriptedCommandInterfaceSP
 ScriptInterpreterPythonImpl::CreateScriptedCommandInterface() {
   return std::make_shared<ScriptedCommandPythonInterface>(*this);
+}
+
+ScriptedSummaryInterfaceSP
+ScriptInterpreterPythonImpl::CreateScriptedSummaryInterface() {
+  return std::make_shared<ScriptedSummaryPythonInterface>(*this);
 }
 
 ScriptedThreadInterfaceSP

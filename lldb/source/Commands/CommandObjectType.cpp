@@ -146,7 +146,9 @@ private:
     ConstString m_name;
     std::string m_python_script;
     std::string m_python_function;
+    std::string m_class_name;
     bool m_is_add_script = false;
+    bool m_is_class_based = false;
     std::string m_category;
     uint32_t m_ptr_match_depth = 1;
   };
@@ -156,6 +158,8 @@ private:
   Options *GetOptions() override { return &m_options; }
 
   bool Execute_ScriptSummary(Args &command, CommandReturnObject &result);
+
+  bool Execute_PythonClassSummary(Args &command, CommandReturnObject &result);
 
   bool Execute_StringSummary(Args &command, CommandReturnObject &result);
 
@@ -1229,6 +1233,10 @@ Status CommandObjectTypeSummaryAdd::CommandOptions::SetOptionValue(
   case 'P':
     m_is_add_script = true;
     break;
+  case 'l':
+    m_class_name = std::string(option_arg);
+    m_is_class_based = true;
+    break;
   case 'w':
     m_category = std::string(option_arg);
     break;
@@ -1254,8 +1262,10 @@ void CommandObjectTypeSummaryAdd::CommandOptions::OptionParsingStarting(
   m_name.Clear();
   m_python_script = "";
   m_python_function = "";
+  m_class_name = "";
   m_format_string = "";
   m_is_add_script = false;
+  m_is_class_based = false;
   m_category = "default";
 }
 
@@ -1350,6 +1360,48 @@ bool CommandObjectTypeSummaryAdd::Execute_ScriptSummary(
 
   // if I am here, script_format must point to something good, so I can add
   // that as a script summary to all interested parties
+
+  Status error;
+
+  for (auto &entry : command.entries()) {
+    AddSummary(ConstString(entry.ref()), script_format, m_options.m_match_type,
+               m_options.m_category, &error);
+    if (error.Fail()) {
+      result.AppendError(error.AsCString());
+      return false;
+    }
+  }
+
+  if (m_options.m_name) {
+    AddNamedSummary(m_options.m_name, script_format, &error);
+    if (error.Fail()) {
+      result.AppendError(error.AsCString());
+      result.AppendError("added to types, but not given a name");
+      return false;
+    }
+  }
+
+  return result.Succeeded();
+}
+
+bool CommandObjectTypeSummaryAdd::Execute_PythonClassSummary(
+    Args &command, CommandReturnObject &result) {
+  const size_t argc = command.GetArgumentCount();
+
+  if (argc < 1 && !m_options.m_name) {
+    result.AppendErrorWithFormat("%s takes one or more args",
+                                 m_cmd_name.c_str());
+    return false;
+  }
+
+  if (m_options.m_class_name.empty()) {
+    result.AppendError("must provide a Python class name");
+    return false;
+  }
+
+  TypeSummaryImplSP script_format = std::make_shared<ScriptedSummaryFormat>(
+      m_options.m_flags, m_options.m_class_name.c_str(),
+      m_options.m_ptr_match_depth);
 
   Status error;
 
@@ -1553,7 +1605,13 @@ void CommandObjectTypeSummaryAdd::DoExecute(Args &command,
                                             CommandReturnObject &result) {
   WarnOnPotentialUnquotedUnsignedType(command, result);
 
-  if (m_options.m_is_add_script) {
+  if (m_options.m_is_class_based) {
+#if LLDB_ENABLE_PYTHON
+    Execute_PythonClassSummary(command, result);
+#else
+    result.AppendError("python is disabled");
+#endif
+  } else if (m_options.m_is_add_script) {
 #if LLDB_ENABLE_PYTHON
     Execute_ScriptSummary(command, result);
 #else

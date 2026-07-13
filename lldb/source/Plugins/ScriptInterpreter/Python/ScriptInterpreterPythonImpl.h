@@ -84,6 +84,8 @@ public:
 
   lldb::ScriptedCommandInterfaceSP CreateScriptedCommandInterface() override;
 
+  lldb::ScriptedSummaryInterfaceSP CreateScriptedSummaryInterface() override;
+
   lldb::ScriptedThreadInterfaceSP CreateScriptedThreadInterface() override;
 
   lldb::ScriptedFrameInterfaceSP CreateScriptedFrameInterface() override;
