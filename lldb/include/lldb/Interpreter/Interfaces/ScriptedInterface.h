@@ -62,18 +62,20 @@ public:
   static Ret ErrorWithMessage(llvm::StringRef caller_name,
                               llvm::StringRef error_msg, Status &error,
                               LLDBLog log_category = LLDBLog::Process) {
+    // Log the error for debugging (includes function signature for context).
     LLDB_LOGF(GetLog(log_category), "%s ERROR = %s", caller_name.data(),
               error_msg.data());
-    std::string full_error_message =
-        llvm::Twine(caller_name + llvm::Twine(" ERROR = ") +
-                    llvm::Twine(error_msg))
-            .str();
-    if (const char *detailed_error = error.AsCString())
-      full_error_message +=
-          llvm::Twine(llvm::Twine(" (") + llvm::Twine(detailed_error) +
-                      llvm::Twine(")"))
-              .str();
-    error = Status(std::move(full_error_message));
+
+    // For user-facing messages, just pass through the Status if it already
+    // has detailed information (like Python tracebacks); otherwise set it.
+    llvm::StringRef existing_error = error.AsCString();
+    if (!error.Fail() || existing_error.empty()) {
+      // Status is empty, populate it with the simple error message.
+      error = Status::FromErrorString(error_msg.data());
+    }
+    // If Status already has content, leave it as-is (it has the Python
+    // traceback).
+
     return {};
   }
 
@@ -105,4 +107,5 @@ protected:
   std::optional<ScriptedMetadata> m_scripted_metadata;
 };
 } // namespace lldb_private
+
 #endif // LLDB_INTERPRETER_INTERFACES_SCRIPTEDINTERFACE_H
