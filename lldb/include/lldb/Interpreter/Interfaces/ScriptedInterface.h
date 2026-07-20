@@ -20,6 +20,7 @@
 
 #include "llvm/Support/Compiler.h"
 
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -36,6 +37,17 @@ public:
   const std::optional<ScriptedMetadata> &GetScriptedMetadata() const {
     return m_scripted_metadata;
   }
+
+  /// Set error callback to surface Python exceptions directly to users.
+  ///
+  /// This allows command handlers to receive Python exception details
+  /// immediately rather than relying on diagnostic broadcasts.
+  ///
+  /// \param callback Function to call with Status containing exception details.
+  virtual void SetErrorCallback(std::function<void(const Status &)> callback) {}
+
+  /// Clear the error callback.
+  virtual void ClearErrorCallback() {}
 
   struct AbstractMethodRequirement {
     llvm::StringLiteral name;

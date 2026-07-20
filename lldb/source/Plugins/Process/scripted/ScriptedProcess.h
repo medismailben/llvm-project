@@ -91,6 +91,18 @@ public:
 
   void *GetImplementation() override;
 
+  /// Set error callback to surface Python exceptions directly to users.
+  ///
+  /// This allows command handlers to receive Python exception details
+  /// immediately rather than relying on diagnostic broadcasts.
+  ///
+  /// \param callback Function to call with Status containing exception details.
+  void SetScriptedInterfaceErrorCallback(
+      std::function<void(const Status &)> callback);
+
+  /// Clear the error callback.
+  void ClearScriptedInterfaceErrorCallback();
+
   void ForceScriptedState(lldb::StateType state) override {
     // If we're about to stop, we should fetch the loaded dynamic libraries
     // dictionary before emitting the private stop event to avoid having the

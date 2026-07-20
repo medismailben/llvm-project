@@ -603,3 +603,14 @@ void *ScriptedProcess::GetImplementation() {
     return object_instance_sp->GetAsGeneric()->GetValue();
   return nullptr;
 }
+
+void ScriptedProcess::SetScriptedInterfaceErrorCallback(
+    std::function<void(const Status &)> callback) {
+  if (m_interface_up)
+    m_interface_up->SetErrorCallback(std::move(callback));
+}
+
+void ScriptedProcess::ClearScriptedInterfaceErrorCallback() {
+  if (m_interface_up)
+    m_interface_up->ClearErrorCallback();
+}

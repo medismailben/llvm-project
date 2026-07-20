@@ -9,12 +9,14 @@
 #ifndef LLDB_SOURCE_PLUGINS_SCRIPTINTERPRETER_PYTHON_INTERFACES_SCRIPTEDPYTHONINTERFACE_H
 #define LLDB_SOURCE_PLUGINS_SCRIPTINTERPRETER_PYTHON_INTERFACES_SCRIPTEDPYTHONINTERFACE_H
 
+#include <functional>
 #include <optional>
 #include <sstream>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 
+#include "lldb/Core/Debugger.h"
 #include "lldb/Interpreter/Interfaces/ScriptedInterface.h"
 #include "lldb/Utility/DataBufferHeap.h"
 
@@ -28,6 +30,22 @@ class ScriptedPythonInterface : virtual public ScriptedInterface {
 public:
   ScriptedPythonInterface(ScriptInterpreterPythonImpl &interpreter);
   ~ScriptedPythonInterface() override = default;
+
+  /// Set callback to surface Python exceptions to CommandReturnObject.
+  ///
+  /// When set, this callback will be invoked whenever a Python exception occurs
+  /// in scripting affordance methods, allowing errors to be surfaced directly
+  /// to the user via CommandReturnObject::AppendError().
+  ///
+  /// If no callback is registered, errors will be reported via
+  /// Debugger::ReportError() instead.
+  ///
+  /// \param callback Function to call with Status containing exception details.
+  using ErrorCallback = std::function<void(const Status &)>;
+  void SetErrorCallback(ErrorCallback callback) override {
+    m_error_callback = std::move(callback);
+  }
+  void ClearErrorCallback() override { m_error_callback = nullptr; }
 
   enum class AbstractMethodCheckerCases {
     eNotImplemented,
@@ -522,6 +540,11 @@ public:
                                 : "<unknown>",
           method_name, detailed_error);
 
+      // Surface error to user: use callback if available.
+      if (m_error_callback) {
+        m_error_callback(error);
+      }
+
       return ErrorWithMessage<T>(
           caller_signature, "python static method could not be called", error);
     }
@@ -625,6 +648,11 @@ protected:
           GetScriptedMetadata() ? GetScriptedMetadata()->GetClassName()
                                 : "<unknown>",
           method_name, detailed_error);
+
+      // Surface error to user: use callback if available.
+      if (m_error_callback) {
+        m_error_callback(error);
+      }
 
       return ErrorWithMessage<T>(caller_signature,
                                  "python method could not be called", error);
@@ -826,6 +854,11 @@ protected:
 
   // The lifetime is managed by the ScriptInterpreter
   ScriptInterpreterPythonImpl &m_interpreter;
+
+  // Optional callback for surfacing errors to users (e.g.,
+  // CommandReturnObject). If not set, errors are reported via
+  // Debugger::ReportError().
+  ErrorCallback m_error_callback;
 };
 
 template <>
