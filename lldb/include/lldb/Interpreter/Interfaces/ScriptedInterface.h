@@ -82,11 +82,11 @@ public:
   static bool CheckStructuredDataObject(llvm::StringRef caller, T obj,
                                         Status &error) {
     if (!obj)
-      return ErrorWithMessage<bool>(caller, "Null Structured Data object",
+      return ErrorWithMessage<bool>(caller, "null structured data object",
                                     error);
 
     if (!obj->IsValid()) {
-      return ErrorWithMessage<bool>(caller, "Invalid StructuredData object",
+      return ErrorWithMessage<bool>(caller, "invalid structured data object",
                                     error);
     }
 

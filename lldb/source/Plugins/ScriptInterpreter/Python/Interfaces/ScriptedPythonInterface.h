@@ -189,11 +189,11 @@ public:
         !(llvm::StringRef(m_interpreter.GetDictionaryName()).empty());
     if (!has_class_name && !has_interpreter_dict && !script_obj) {
       if (!has_class_name)
-        return create_error("Missing script class name.");
+        return create_error("missing script class name");
       else if (!has_interpreter_dict)
-        return create_error("Invalid script interpreter dictionary.");
+        return create_error("invalid script interpreter dictionary");
       else
-        return create_error("Missing scripting object.");
+        return create_error("missing scripting object");
     }
 
     Locker py_lock(&m_interpreter, Locker::AcquireLock | Locker::NoSTDIN,
@@ -209,14 +209,14 @@ public:
           PythonModule::MainModule().ResolveName<python::PythonDictionary>(
               m_interpreter.GetDictionaryName());
       if (!dict.IsAllocated())
-        return create_error("Could not find interpreter dictionary: {0}",
+        return create_error("could not find interpreter dictionary: {0}",
                             m_interpreter.GetDictionaryName());
 
       auto init =
           PythonObject::ResolveNameWithDictionary<python::PythonCallable>(
               class_name, dict);
       if (!init.IsAllocated())
-        return create_error("Could not find script class: {0}",
+        return create_error("could not find script class: {0}",
                             class_name.data());
 
       std::tuple<Args...> original_args = std::forward_as_tuple(args...);
@@ -236,7 +236,7 @@ public:
       }
 
       llvm::Expected<PythonObject> expected_return_object =
-          create_error("Resulting object is not initialized.");
+          create_error("resulting object is not initialized");
 
       // This relax the requirement on the number of argument for
       // initializing scripting extension if the size of the interface
@@ -258,8 +258,8 @@ public:
           // before we return with a different error, or its destructor
           // will abort.
           llvm::consumeError(expected_return_object.takeError());
-          return create_error("Passed arguments ({0}) doesn't match the number "
-                              "of expected arguments ({1}).",
+          return create_error("passed arguments ({0}) doesn't match the number "
+                              "of expected arguments ({1})",
                               num_args, arg_info->max_positional_args);
         }
 
@@ -291,16 +291,16 @@ public:
     }
 
     if (!result.IsValid())
-      return create_error("Resulting object is not a valid Python Object.");
+      return create_error("resulting object is not a valid Python object");
     if (!result.HasAttribute("__class__"))
-      return create_error("Resulting object doesn't have '__class__' member.");
+      return create_error("resulting object doesn't have '__class__' member");
 
     PythonObject obj_class = result.GetAttributeValue("__class__");
     if (!obj_class.IsValid())
-      return create_error("Resulting class object is not a valid.");
+      return create_error("resulting class object is not valid");
     if (!obj_class.HasAttribute("__name__"))
       return create_error(
-          "Resulting object class doesn't have '__name__' member.");
+          "resulting object class doesn't have '__name__' member");
     PythonString obj_class_name =
         obj_class.GetAttributeValue("__name__").AsType<PythonString>();
 
@@ -314,21 +314,21 @@ public:
       case AbstractMethodCheckerCases::eNotImplemented:
         abstract_method_errors = llvm::joinErrors(
             std::move(abstract_method_errors),
-            std::move(create_error("Abstract method {0}.{1} not implemented.",
+            std::move(create_error("abstract method {0}.{1} not implemented",
                                    obj_class_name.GetString(),
                                    method_checker.first)));
         break;
       case AbstractMethodCheckerCases::eNotAllocated:
         abstract_method_errors = llvm::joinErrors(
             std::move(abstract_method_errors),
-            std::move(create_error("Abstract method {0}.{1} not allocated.",
+            std::move(create_error("abstract method {0}.{1} not allocated",
                                    obj_class_name.GetString(),
                                    method_checker.first)));
         break;
       case AbstractMethodCheckerCases::eNotCallable:
         abstract_method_errors = llvm::joinErrors(
             std::move(abstract_method_errors),
-            std::move(create_error("Abstract method {0}.{1} not callable.",
+            std::move(create_error("abstract method {0}.{1} not callable",
                                    obj_class_name.GetString(),
                                    method_checker.first)));
         break;
@@ -350,7 +350,7 @@ public:
           abstract_method_errors = llvm::joinErrors(
               std::move(abstract_method_errors),
               std::move(create_error(
-                  "Abstract method {0}.{1} has unexpected argument count.",
+                  "abstract method {0}.{1} has unexpected argument count",
                   obj_class_name.GetString(), method_checker.first)));
         } else {
           auto payload = std::get<
@@ -359,8 +359,8 @@ public:
           abstract_method_errors = llvm::joinErrors(
               std::move(abstract_method_errors),
               std::move(
-                  create_error("Abstract method {0}.{1} has unexpected "
-                               "argument count (expected {2} but has {3}).",
+                  create_error("abstract method {0}.{1} has unexpected "
+                               "argument count (expected {2} but has {3})",
                                obj_class_name.GetString(), method_checker.first,
                                payload.required_argument_count,
                                payload.actual_argument_count)));
@@ -771,7 +771,7 @@ protected:
       original_arg = boolean_arg.GetValue();
     else
       error = Status::FromErrorStringWithFormatv(
-          "{}: Invalid boolean argument.", LLVM_PRETTY_FUNCTION);
+          "{0}: invalid boolean argument", LLVM_PRETTY_FUNCTION);
   }
 
   template <std::size_t... I, typename... Args>

@@ -166,21 +166,20 @@ bool ScriptedThread::LoadArtificialStackFrames() {
   Status error;
   if (!arr_sp)
     return ScriptedInterface::ErrorWithMessage<bool>(
-        LLVM_PRETTY_FUNCTION, "Failed to get scripted thread stackframes.",
+        LLVM_PRETTY_FUNCTION, "failed to get scripted thread stackframes",
         error, LLDBLog::Thread);
 
   size_t arr_size = arr_sp->GetSize();
   if (!arr_size)
     return ScriptedInterface::ErrorWithMessage<bool>(
-        LLVM_PRETTY_FUNCTION, "StackFrame array is empty.", error,
+        LLVM_PRETTY_FUNCTION, "stackframe array is empty", error,
         LLDBLog::Thread);
 
   if (arr_size > std::numeric_limits<uint32_t>::max())
     return ScriptedInterface::ErrorWithMessage<bool>(
         LLVM_PRETTY_FUNCTION,
-        llvm::Twine(
-            "StackFrame array size (" + llvm::Twine(arr_size) +
-            ") is greater than maximum authorized for a StackFrameList.")
+        llvm::Twine("stackframe array size (" + llvm::Twine(arr_size) +
+                    ") is greater than maximum authorized for a StackFrameList")
             .str(),
         error, LLDBLog::Thread);
 
@@ -194,8 +193,8 @@ bool ScriptedThread::LoadArtificialStackFrames() {
       ScriptedInterface::ErrorWithMessage<bool>(
           LLVM_PRETTY_FUNCTION,
           llvm::Twine(
-              "Couldn't get artificial stackframe dictionary at index (" +
-              llvm::Twine(idx) + llvm::Twine(") from stackframe array."))
+              "couldn't get artificial stackframe dictionary at index (" +
+              llvm::Twine(idx) + llvm::Twine(") from stackframe array"))
               .str(),
           error, LLDBLog::Thread);
       return error.ToError();
@@ -206,7 +205,7 @@ bool ScriptedThread::LoadArtificialStackFrames() {
     if (!dict->GetValueForKeyAsInteger("pc", pc)) {
       ScriptedInterface::ErrorWithMessage<bool>(
           LLVM_PRETTY_FUNCTION,
-          "Couldn't find value for key 'pc' in stackframe dictionary.", error,
+          "couldn't find value for key 'pc' in stackframe dictionary", error,
           LLDBLog::Thread);
       return error.ToError();
     }
@@ -234,9 +233,8 @@ bool ScriptedThread::LoadArtificialStackFrames() {
     if (!object_sp || !object_sp->GetAsGeneric()) {
       ScriptedInterface::ErrorWithMessage<bool>(
           LLVM_PRETTY_FUNCTION,
-          llvm::Twine("Couldn't get artificial stackframe object at index (" +
-                      llvm::Twine(idx) +
-                      llvm::Twine(") from stackframe array."))
+          llvm::Twine("couldn't get artificial stackframe object at index (" +
+                      llvm::Twine(idx) + llvm::Twine(") from stackframe array"))
               .str(),
           error, LLDBLog::Thread);
       return error.ToError();
@@ -288,8 +286,8 @@ bool ScriptedThread::LoadArtificialStackFrames() {
     if (!frames->SetFrameAtIndex(frame_list_idx, synth_frame_sp))
       return ScriptedInterface::ErrorWithMessage<bool>(
           LLVM_PRETTY_FUNCTION,
-          llvm::Twine("Couldn't add frame (" + llvm::Twine(idx) +
-                      llvm::Twine(") to ScriptedThread StackFrameList."))
+          llvm::Twine("couldn't add frame (" + llvm::Twine(idx) +
+                      llvm::Twine(") to ScriptedThread StackFrameList"))
               .str(),
           error, LLDBLog::Thread);
     frame_list_idx++;
@@ -313,7 +311,7 @@ bool ScriptedThread::CalculateStopInfo() {
   Status error;
   if (!dict_sp)
     return ScriptedInterface::ErrorWithMessage<bool>(
-        LLVM_PRETTY_FUNCTION, "Failed to get scripted thread stop info.", error,
+        LLVM_PRETTY_FUNCTION, "failed to get scripted thread stop info", error,
         LLDBLog::Thread);
 
   // If we're at a BreakpointSite, mark that we stopped there and
@@ -334,14 +332,14 @@ bool ScriptedThread::CalculateStopInfo() {
   if (!dict_sp->GetValueForKeyAsInteger("type", stop_reason_type))
     return ScriptedInterface::ErrorWithMessage<bool>(
         LLVM_PRETTY_FUNCTION,
-        "Couldn't find value for key 'type' in stop reason dictionary.", error,
+        "couldn't find value for key 'type' in stop reason dictionary", error,
         LLDBLog::Thread);
 
   StructuredData::Dictionary *data_dict;
   if (!dict_sp->GetValueForKeyAsDictionary("data", data_dict))
     return ScriptedInterface::ErrorWithMessage<bool>(
         LLVM_PRETTY_FUNCTION,
-        "Couldn't find value for key 'data' in stop reason dictionary.", error,
+        "couldn't find value for key 'data' in stop reason dictionary", error,
         LLDBLog::Thread);
 
   switch (stop_reason_type) {
@@ -413,8 +411,8 @@ bool ScriptedThread::CalculateStopInfo() {
   default:
     return ScriptedInterface::ErrorWithMessage<bool>(
         LLVM_PRETTY_FUNCTION,
-        llvm::Twine("Unsupported stop reason type (" +
-                    llvm::Twine(stop_reason_type) + llvm::Twine(")."))
+        llvm::Twine("unsupported stop reason type (" +
+                    llvm::Twine(stop_reason_type) + llvm::Twine(")"))
             .str(),
         error, LLDBLog::Thread);
   }

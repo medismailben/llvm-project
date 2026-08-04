@@ -360,7 +360,7 @@ bool ScriptedProcess::DoUpdateThreadList(ThreadList &old_thread_list,
   if (!thread_info_sp)
     return ScriptedInterface::ErrorWithMessage<bool>(
         LLVM_PRETTY_FUNCTION,
-        "Couldn't fetch thread list from Scripted Process.", error);
+        "couldn't fetch thread list from scripted process", error);
 
   // Because `StructuredData::Dictionary` uses a `std::map<ConstString,
   // ObjectSP>` for storage, each item is sorted based on the key alphabetical
@@ -392,7 +392,7 @@ bool ScriptedProcess::DoUpdateThreadList(ThreadList &old_thread_list,
   if (!keys->ForEach(sort_keys) || sorted_threads.size() != thread_count)
     // Might be worth showing the unsorted thread list instead of return early.
     return ScriptedInterface::ErrorWithMessage<bool>(
-        LLVM_PRETTY_FUNCTION, "Couldn't sort thread list.", error);
+        LLVM_PRETTY_FUNCTION, "couldn't sort thread list", error);
 
   auto create_scripted_thread =
       [this, &error, &new_thread_list](
@@ -402,7 +402,7 @@ bool ScriptedProcess::DoUpdateThreadList(ThreadList &old_thread_list,
 
     if (!object_sp)
       return ScriptedInterface::ErrorWithMessage<bool>(
-          LLVM_PRETTY_FUNCTION, "Invalid thread info object", error);
+          LLVM_PRETTY_FUNCTION, "invalid thread info object", error);
 
     auto thread_or_error =
         ScriptedThread::Create(*this, object_sp->GetAsGeneric());
@@ -423,7 +423,7 @@ bool ScriptedProcess::DoUpdateThreadList(ThreadList &old_thread_list,
     if (!reg_ctx_sp)
       return ScriptedInterface::ErrorWithMessage<bool>(
           LLVM_PRETTY_FUNCTION,
-          llvm::Twine("Invalid Register Context for thread " + llvm::Twine(idx))
+          llvm::Twine("invalid register context for thread " + llvm::Twine(idx))
               .str(),
           error);
 
