@@ -31,6 +31,12 @@ public:
 
   static constexpr const uint8_t x86_64_push_opcode                = 0x50;
   static constexpr const uint8_t x86_64_pop_opcode                 = 0x58;
+  static constexpr const uint8_t x86_64_nop_opcode                 = 0x90;
+
+  /// Encoding of rsp in the push/pop opcodes above. The trampoline saves rsp
+  /// with the other general purpose registers so that `register_context` below
+  /// can describe it, but it must never be popped back into rsp.
+  static constexpr const uint8_t x86_64_rsp_regnum                 = 4;
 
   static constexpr const uint8_t x86_64_rexb_opcode                = 0x41;
   static constexpr const uint8_t x86_64_rexw_opcode                = 0x48;
@@ -123,30 +129,7 @@ public:
   bool GetPointerReturnRegister(const char *&name) override;
   bool GetFramePointerRegister(const char *&name) override;
 
-  /// Allocate a memory stub for the fast condition breakpoint trampoline, and
-  /// build it by saving the register context, calling the argument structure
-  /// builder, passing the resulting structure to the condition checker,
-  /// restoring the register context, running the copied instructions and]
-  /// jumping back to the user source code.
-  ///
-  /// \param[in] instrs_size
-  ///    The size in bytes of the copied instructions.
-  ///
-  /// \param[in] data
-  ///    The copied instructions buffer.
-  ///
-  /// \param[in] jmp_addr
-  ///    The address of the source .
-  ///
-  /// \param[in] util_func_addr
-  ///    The address of the JIT-ed argument structure builder.
-  ///
-  /// \param[in] cond_expr_addr
-  ///    The address of the JIT-ed condition checker.
-  ///
-  /// \return
-  ///    \b true If building the Trampoline succeeded, \b false otherwise.
-  ///
+  /// \copydoc lldb_private::ABI::SetupFastConditionalBreakpointTrampoline()
   bool SetupFastConditionalBreakpointTrampoline(
       lldb_private::BreakpointInjectedSite *bp_inject_site) override;
 

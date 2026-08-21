@@ -1898,10 +1898,17 @@ Process::CreateBreakpointSite(const BreakpointLocationSP &constituent,
   return LLDB_INVALID_BREAK_ID;
 }
 
-lldb::WritableDataBufferSP Process::SaveInstructions(Address & address) {
+lldb::WritableDataBufferSP Process::SaveInstructions(Address &address) {
   Log *log = GetLog(LLDBLog::JITLoader);
 
   TargetSP target_sp = m_target_wp.lock();
+  if (!target_sp)
+    return nullptr;
+
+  ABISP abi_sp = GetABI();
+  if (!abi_sp)
+    return nullptr;
+
   const char *plugin_name = nullptr;
   const char *flavor = nullptr;
   const char *cpu = nullptr;
@@ -1916,14 +1923,33 @@ lldb::WritableDataBufferSP Process::SaveInstructions(Address & address) {
   }
 
   lldb::addr_t addr = address.GetCallableLoadAddress(target_sp.get());
-  AddressRange last_block_range = function->GetAddressRanges().back();
-  lldb::addr_t last_block_address =
-      last_block_range.GetBaseAddress().GetCallableLoadAddress(target_sp.get());
 
-  lldb::addr_t disasm_range_size = last_block_address - addr;
-  if (!disasm_range_size) {
-    LLDB_LOG(log, "JIT: Disassemble range too small: {0} bytes",
-             disasm_range_size);
+  // Disassembling has to stop at the end of the range that holds the site, so
+  // that the disassembler is never handed bytes belonging to another function.
+  lldb::addr_t range_end = LLDB_INVALID_ADDRESS;
+  for (const AddressRange &range : function->GetAddressRanges()) {
+    const lldb::addr_t range_start =
+        range.GetBaseAddress().GetCallableLoadAddress(target_sp.get());
+    if (addr >= range_start && addr < range_start + range.GetByteSize()) {
+      range_end = range_start + range.GetByteSize();
+      break;
+    }
+  }
+
+  if (range_end == LLDB_INVALID_ADDRESS) {
+    LLDB_LOG(log, "JIT: {0:x} is not inside any address range of '{1}'", addr,
+             function->GetName());
+    return nullptr;
+  }
+
+  const lldb::addr_t disasm_range_size = range_end - addr;
+  const size_t jump_size = abi_sp->GetJumpSize();
+
+  if (disasm_range_size < jump_size) {
+    LLDB_LOG(
+        log,
+        "JIT: Only {0} bytes left in '{1}' after {2:x}, the branch needs {3}",
+        disasm_range_size, function->GetName(), addr, jump_size);
     return nullptr;
   }
 
@@ -1940,29 +1966,36 @@ lldb::WritableDataBufferSP Process::SaveInstructions(Address & address) {
 
   InstructionList *instructions = &disassembler_sp->GetInstructionList();
 
-  DataExtractor data;
-
   size_t instructions_count = 0;
   size_t instructions_size = 0;
-  size_t jump_size = GetABI()->GetJumpSize();
   const ExecutionContext exe_ctx(this);
 
-  for (size_t i = 0; i < instructions->GetSize(); i++) {
+  // Whole instructions have to be relocated, so keep taking them until the
+  // branch is fully covered.
+  for (size_t i = 0;
+       i < instructions->GetSize() && instructions_size < jump_size; i++) {
     InstructionSP instruction = instructions->GetInstructionAtIndex(i);
 
-    instruction->GetData(data);
-    uint32_t size = instruction->Decode(*disassembler_sp.get(), data, 0);
-
-    if (instructions_size < jump_size) {
-      instructions_size += size;
-      instructions_count++;
+    const uint32_t size = instruction->GetOpcode().GetByteSize();
+    if (!size) {
+      LLDB_LOG(log, "JIT: Couldn't determine the size of instruction {0}", i);
+      return nullptr;
     }
 
-    LLDB_LOGV(log, "%#llx <+%llu>: %s, %s\t\t(%u)",
+    instructions_size += size;
+    instructions_count++;
+
+    LLDB_LOGV(log, "{0:x} <+{1}>: {2} {3}\t\t({4})",
               instruction->GetAddress().GetLoadAddress(target_sp.get()),
               instruction->GetAddress().GetOffset(),
               instruction->GetMnemonic(&exe_ctx),
               instruction->GetOperands(&exe_ctx), size);
+  }
+
+  if (instructions_size < jump_size) {
+    LLDB_LOG(log, "JIT: Only found {0} bytes of instructions, need {1}",
+             instructions_size, jump_size);
+    return nullptr;
   }
 
   LLDB_LOGV(log, "JIT: Instruction count: {0}", instructions_count);

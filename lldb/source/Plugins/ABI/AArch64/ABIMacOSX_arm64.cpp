@@ -13,8 +13,11 @@
 #include <vector>
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/TargetParser/Triple.h"
 
+#include "Utility/ARM64_DWARF_Registers.h"
+#include "lldb/Breakpoint/BreakpointInjectedSite.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/Value.h"
@@ -23,7 +26,6 @@
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
 #include "lldb/Utility/ConstString.h"
-#include "Utility/ARM64_DWARF_Registers.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/RegisterValue.h"
@@ -60,6 +62,43 @@ llvm::Expected<std::string> ABIMacOSX_arm64::GetRegisterName(uint32_t num) {
   return GetMCName(reg_name.str());
 }
 
+/// AArch64 `nop`, little endian. Two of these are emitted at the end of the
+/// trampoline to reserve room for the displaced instruction and the branch back
+/// to user code.
+static const uint8_t g_aarch64_nop_bytes[] = {0x1f, 0x20, 0x03, 0xd5};
+
+/// `b` encodes a signed 26 bit immediate scaled by the instruction size, which
+/// gives it a reach of +/-128MiB.
+static bool IsBranchInRange(int64_t byte_offset) {
+  if (byte_offset % ABIMacOSX_arm64::aarch64_instr_size)
+    return false;
+  return llvm::isInt<26>(byte_offset / ABIMacOSX_arm64::aarch64_instr_size);
+}
+
+/// Locate the pair of reserved nops at the end of the emitted trampoline.
+///
+/// Scanning for them rather than hardcoding an instruction index keeps this
+/// working when the assembler changes how many instructions the preceding code
+/// needs, which it does depending on the immediates and literal pools involved.
+static lldb::offset_t FindTrampolineNopSlots(llvm::ArrayRef<uint8_t> buffer) {
+  const size_t instr_size = ABIMacOSX_arm64::aarch64_instr_size;
+  const size_t slots_size = 2 * instr_size;
+
+  if (buffer.size() < slots_size)
+    return LLDB_INVALID_OFFSET;
+
+  for (lldb::offset_t offset = 0; offset + slots_size <= buffer.size();
+       offset += instr_size) {
+    if (!std::memcmp(buffer.data() + offset, g_aarch64_nop_bytes,
+                     sizeof(g_aarch64_nop_bytes)) &&
+        !std::memcmp(buffer.data() + offset + instr_size, g_aarch64_nop_bytes,
+                     sizeof(g_aarch64_nop_bytes)))
+      return offset;
+  }
+
+  return LLDB_INVALID_OFFSET;
+}
+
 bool ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
     BreakpointInjectedSite *bp_injected_site) {
   Log *log = GetLog(LLDBLog::JITLoader);
@@ -76,14 +115,8 @@ bool ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
     return false;
   }
 
-  size_t copied_instr_size = GetJumpSize();
-
-  /// Initially, assume that we will patch a single instruction (b offset) to
-  /// branch to the trampoline. We will update the return address after saving
-  /// the instructions.
-  //  const lldb::addr_t return_addr = bp_injected_site->GetLoadAddress() +
-  //  copied_instr_size; // + 1 ?
-
+  // A single `b` displaces exactly one instruction, which is checked against
+  // what SaveInstructions() returns below.
   std::stringstream ss;
 
   ss << "__attribute__((naked,noreturn)) void $__lldb_emit_trampoline() {\n"
@@ -132,14 +165,24 @@ bool ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   const lldb::addr_t cond_expr_addr =
       bp_injected_site->GetConditionExpressionAddress();
 
+  // AArch64 requires the stack pointer to stay 16 byte aligned for any sp
+  // relative access, so reserve a rounded up amount rather than the exact size
+  // of the argument structure.
+  const uint64_t args_struct_size =
+      llvm::alignTo<16>(bp_injected_site->GetArgsStructSize());
+
   ss << "           mov x0, sp\n"
-     << "           sub sp, sp, #" << bp_injected_site->GetArgsStructSize()
-     << "\n"
+     << "           sub sp, sp, #" << args_struct_size << "\n"
      << "           mov x1, sp\n"
      << "           ldr x17, =0x" << std::hex << util_func_addr << "\n"
      << "           blr x17\n"
      << "           ldr x17, =0x" << std::hex << cond_expr_addr << "\n"
      << "           blr x17\n"
+     << "\n"
+     << "           // Release the argument structure so that the offsets "
+        "below "
+        "are relative to the register_context frame again\n"
+     << "           add sp, sp, #" << std::dec << args_struct_size << "\n"
      << "\n"
      << "           // Restore registers from the stack in reverse order\n"
      << "           ldr     x30, [sp, #0xf0]\n"
@@ -159,11 +202,9 @@ bool ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
      << "           ldp     x2, x3, [sp, #0x10]\n"
      << "           ldp     x0, x1, [sp, #0x00]\n"
      << "\n"
-     << "           ldr     x1, [sp, #0xf8]\n"
-     << "           mov     sp, x1\n"
-     << "           \n"
      << "           // Free allocated stack memory for register_context "
-        "structure\n"
+        "structure. The saved sp at #0xf8 is only there for the condition "
+        "checker to read, restoring it here would clobber x1.\n"
      << "           add     sp, sp, #0x100\n";
 
   /// Allocate space to copy inferior instructions and jump back to user's code
@@ -181,7 +222,17 @@ bool ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   addr_t bp_load_addr = bp_addr.GetLoadAddress(target_sp.get());
   auto saved_instrs = process_sp->SaveInstructions(bp_addr);
   if (!saved_instrs) {
-    //    error = "FCB: Couldn't save instructions";
+    LLDB_LOG(log,
+             "JIT: Couldn't save the instructions displaced by the branch");
+    return false;
+  }
+
+  // Only the two nop slots reserved at the end of the trampoline are available
+  // for the displaced instruction and the branch back.
+  if (saved_instrs->GetByteSize() != aarch64_instr_size) {
+    LLDB_LOG(log,
+             "JIT: Expected {0} bytes of displaced instructions, saved {1}",
+             aarch64_instr_size, saved_instrs->GetByteSize());
     return false;
   }
 
@@ -208,12 +259,36 @@ bool ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
     return false;
   }
 
-  /// Run copied instructions and jump back to user's code
-  /// FIXME: Disassemble trampoline and detect first `nop` instr
-  const lldb::offset_t copied_instr_offset = 45 * aarch64_instr_size;
+  const auto &trampoline_buffer = trampoline_instr->GetData();
+
+  /// Run copied instructions and jump back to user's code. The slots are the
+  /// two trailing nops emitted above; locating them by scanning keeps this
+  /// independent of how many instructions the assembler produced for the code
+  /// before them.
+  const lldb::offset_t copied_instr_offset =
+      FindTrampolineNopSlots(trampoline_buffer);
+
+  if (copied_instr_offset == LLDB_INVALID_OFFSET) {
+    LLDB_LOG(log,
+             "JIT: Couldn't find the reserved nop slots in the trampoline");
+    return false;
+  }
+
   const intptr_t source_branch_target =
       bp_load_addr - trampoline_addr + copied_instr_offset + aarch64_instr_size;
-  //  const bool bp_before_trampoline = branch_to_source_target < 0;
+
+  // `b` reaches +/-128MiB, and the trampoline is deliberately allocated far
+  // from the code it patches, so both directions have to be checked.
+  if (!IsBranchInRange(source_branch_target) ||
+      !IsBranchInRange(static_cast<int64_t>(trampoline_addr) -
+                       static_cast<int64_t>(bp_load_addr))) {
+    LLDB_LOG(
+        log,
+        "JIT: Trampoline at {0:x} is out of branch range of the site {1:x}",
+        trampoline_addr, bp_load_addr);
+    return false;
+  }
+
   ss = std::stringstream();
   ss << "__attribute__((naked,noreturn)) void $__lldb_emit_branch_to_source() "
         "{\n"
@@ -226,8 +301,6 @@ bool ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   auto branch_instr = EmitAssembly("emit_branch_to_source", ss, exe_ctx);
   if (!branch_instr)
     return false;
-
-  const auto &trampoline_buffer = trampoline_instr->GetData();
 
   /// Copy inferior instructions into trampoline.
   std::memcpy(&trampoline_buffer[copied_instr_offset], saved_instrs->GetBytes(),
@@ -259,14 +332,15 @@ bool ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
 
   written_bytes = process_sp->WriteMemory(
       bp_load_addr, branch_instr->GetBytes(), aarch64_instr_size, error);
-  if (written_bytes != copied_instr_size || error.Fail()) {
+  if (written_bytes != aarch64_instr_size || error.Fail()) {
     LLDB_LOG(log, "JIT: Couldn't patch inferior with branch to trampoline");
     return false;
   }
 
+  // The trampoline returns to the instruction after the branch it displaced.
   lldb::ModuleSP trampoline_module_sp =
       CreateModuleForFastConditionalBreakpointTrampoline(
-          trampoline_addr, trampoline_size, bp_load_addr);
+          trampoline_addr, trampoline_size, bp_load_addr + aarch64_instr_size);
 
   if (!trampoline_module_sp) {
     LLDB_LOG(log, "JIT: Couldn't get trampoline module");

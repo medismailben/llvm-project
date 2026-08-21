@@ -163,29 +163,23 @@ public:
     return llvm::make_error<UnimplementedError>();
   }
 
-  /// Allocate a memory stub for the fast condition breakpoint trampoline, and
-  /// build it by saving the register context, calling the argument structure
+  /// Allocate a memory stub for the fast conditional breakpoint trampoline and
+  /// build it, by saving the register context, calling the argument structure
   /// builder, passing the resulting structure to the condition checker,
-  /// restoring the register context, running the copied instructions and]
-  /// jumping back to the user source code.
+  /// restoring the register context, running the instructions displaced by the
+  /// branch and jumping back to the user's code.
   ///
-  /// \param[in] instrs_size
-  ///    The size in bytes of the copied instructions.
+  /// The site is patched with a branch to the trampoline as part of this call,
+  /// and a module describing the trampoline is added to the target so that the
+  /// unwinder can walk out of it.
   ///
-  /// \param[in] data
-  ///    The copied instructions buffer.
-  ///
-  /// \param[in] jmp_addr
-  ///    The address of the source .
-  ///
-  /// \param[in] util_func_addr
-  ///    The address of the JIT-ed argument structure builder.
-  ///
-  /// \param[in] cond_expr_addr
-  ///    The address of the JIT-ed condition checker.
+  /// \param[in] bp_inject_site
+  ///    The site to patch. It carries the addresses of the JIT-ed argument
+  ///    structure builder and condition checker, and the variable metadata
+  ///    needed to size the argument structure.
   ///
   /// \return
-  ///    The address of the Fast Conditional Breakpoint Trampoline.
+  ///    \b true if the trampoline was built and installed, \b false otherwise.
   ///
   virtual bool SetupFastConditionalBreakpointTrampoline(
       BreakpointInjectedSite *bp_inject_site) {

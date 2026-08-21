@@ -66,10 +66,14 @@ lldb::WritableDataBufferSP ABI::EmitAssembly(llvm::StringRef name,
                                              std::stringstream &expr,
                                              ExecutionContext exe_ctx) {
   Log *log = GetLog(LLDBLog::JITLoader);
-  std::string symbol_name = "$__lldb_";
-  symbol_name += name.data();
 
-  Target &target = GetProcessSP()->GetTarget();
+  ProcessSP process_sp = GetProcessSP();
+  if (!process_sp)
+    return nullptr;
+
+  std::string symbol_name = ("$__lldb_" + name).str();
+
+  Target &target = process_sp->GetTarget();
 
   auto utility_fn_or_error = target.CreateUtilityFunction(
       expr.str(), symbol_name, eLanguageTypeC, exe_ctx);
@@ -129,6 +133,11 @@ lldb::ModuleSP ABI::CreateModuleForFastConditionalBreakpointTrampoline(
   }
 
   ProcessSP process_sp = m_process_wp.lock();
+
+  if (!process_sp) {
+    LLDB_LOG(log, "JIT: No live process to create the trampoline module for");
+    return nullptr;
+  }
 
   lldb::ModuleSP trampoline_module_sp =
       Module::CreateModuleFromObjectFile<ObjectFileTrampoline>(process_sp,

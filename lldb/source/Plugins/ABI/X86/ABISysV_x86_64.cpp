@@ -9,13 +9,15 @@
 #include "ABISysV_x86_64.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/TargetParser/Triple.h"
 
+#include "lldb/Breakpoint/BreakpointInjectedSite.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/Value.h"
-#include "lldb/Expression/IRMemoryMap.h"
 #include "lldb/Symbol/UnwindPlan.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/RegisterContext.h"
@@ -23,6 +25,7 @@
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
 #include "lldb/Utility/ConstString.h"
+#include "lldb/Utility/DataBufferHeap.h"
 #include "lldb/Utility/DataExtractor.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
@@ -32,6 +35,7 @@
 #include "lldb/ValueObject/ValueObjectMemory.h"
 #include "lldb/ValueObject/ValueObjectRegister.h"
 
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -72,41 +76,73 @@ bool ABISysV_x86_64::GetFramePointerRegister(const char *&name) {
 
 llvm::Expected<ABISysV_x86_64::OpcodeArray>
 ABISysV_x86_64::GetDebugTrapOpcode() {
-  static const llvm::SmallVector<uint8_t, 8> g_aarch64_opcode[] = {
-      {0xCC},       // int3 = 0xCC
-      {0x0B, 0x0F}, // ud2 = 0x0f0b
+  static const llvm::SmallVector<uint8_t, 8> g_x86_64_debug_trap_opcodes[] = {
+      {0xCC},       // int3
+      {0x0F, 0x0B}, // ud2
   };
 
-  return llvm::ArrayRef(g_aarch64_opcode);
+  return llvm::ArrayRef(g_x86_64_debug_trap_opcodes);
 }
 
 bool ABISysV_x86_64::SetupFastConditionalBreakpointTrampoline(
     BreakpointInjectedSite *bp_injected_site) {
   Log *log = GetLog(LLDBLog::JITLoader);
 
-  lldb::addr_t jmp_addr = bp_injected_site->GetLoadAddress();
+  ProcessSP process_sp = m_process_wp.lock();
+  if (!process_sp) {
+    LLDB_LOG(log, "JIT: No live process to install the trampoline into");
+    return false;
+  }
 
+  const lldb::addr_t jmp_addr = bp_injected_site->GetLoadAddress();
   const lldb::addr_t cond_expr_addr =
       bp_injected_site->GetConditionExpressionAddress();
   const lldb::addr_t util_func_addr =
       bp_injected_site->GetUtilityFunctionAddress();
 
-  ProcessSP process_sp = m_process_wp.lock();
+  // The instructions displaced by the branch have to run out of the trampoline,
+  // so save them before anything patches the site.
+  Address &bp_addr = bp_injected_site->GetRealAddress();
+  WritableDataBufferSP saved_instrs = process_sp->SaveInstructions(bp_addr);
 
-  // Copy saved instructions to the inferior memory buffer.
-  Status error;
-  uint8_t alignment = 8;
-  uint32_t permission =
-      ePermissionsReadable | ePermissionsWritable | ePermissionsExecutable;
-  IRMemoryMap::AllocationPolicy policy = IRMemoryMap::eAllocationPolicyMirror;
+  if (!saved_instrs) {
+    LLDB_LOG(log,
+             "JIT: Couldn't save the instructions displaced by the branch");
+    return false;
+  }
 
-  IRMemoryMap memory_map(process_sp->GetTarget().shared_from_this());
+  const size_t instrs_size = saved_instrs->GetByteSize();
 
-  size_t context_size =
+  // Fewer bytes than the branch needs means the branch would overwrite an
+  // instruction that was never copied out.
+  if (instrs_size < x86_64_jmp_size) {
+    LLDB_LOG(
+        log,
+        "JIT: Saved {0} bytes of displaced instructions, need at least {1}",
+        instrs_size, x86_64_jmp_size);
+    return false;
+  }
+
+  const size_t variable_count = bp_injected_site->GetVariableCount();
+  const size_t address_size_in_byte =
+      bp_injected_site->GetTargetSP()->GetArchitecture().GetAddressByteSize();
+
+  // The ABI requires the stack pointer to be 16 byte aligned at a call
+  // boundary, so reserve a rounded up amount rather than the exact size of the
+  // argument structure.
+  const uint64_t args_struct_size =
+      llvm::alignTo<16>(variable_count * address_size_in_byte);
+
+  // The reservation is encoded as the signed imm8 of a single sub/add pair.
+  if (args_struct_size > std::numeric_limits<int8_t>::max()) {
+    LLDB_LOG(log,
+             "JIT: Argument structure of {0} bytes is too large to reserve",
+             args_struct_size);
+    return false;
+  }
+
+  const size_t context_size =
       x86_64_saved_register_size + x86_64_volatile_register_size;
-
-  size_t instrs_size = 0;
-  uint8_t *instrs_data = nullptr;
 
   /// Saving General Purpose Registers.
   size_t expected_trampoline_size = context_size;
@@ -131,163 +167,182 @@ bool ABISysV_x86_64::SetupFastConditionalBreakpointTrampoline(
   /// Jump back to user's code.
   expected_trampoline_size += x86_64_jmp_size;
 
-  auto trampoline_addr_or_err = memory_map.Malloc(
-      expected_trampoline_size, alignment, permission, policy, true);
-  if (!trampoline_addr_or_err) {
-    LLDB_LOG_ERROR(log, trampoline_addr_or_err.takeError(), "JIT: Couldn't allocate trampoline buffer: {0}");
-    return LLDB_INVALID_ADDRESS;
+  // The address is needed up front because every control transfer emitted below
+  // is relative to it.
+  Status error;
+  const uint32_t permissions = ePermissionsReadable | ePermissionsExecutable;
+  const lldb::addr_t expected_trampoline_addr =
+      process_sp->NextFCBTrampolineAllocation(jmp_addr);
+  const lldb::addr_t trampoline_addr = process_sp->AllocateMemory(
+      expected_trampoline_size, permissions, error, expected_trampoline_addr);
+
+  if (trampoline_addr == LLDB_INVALID_ADDRESS || error.Fail()) {
+    LLDB_LOG(log, "JIT: Couldn't allocate trampoline buffer: {0}",
+             error.AsCString());
+    return false;
   }
 
-  lldb::addr_t trampoline_addr = *trampoline_addr_or_err;
-
-  if (trampoline_addr == LLDB_INVALID_ADDRESS) {
-    LLDB_LOG(log, "JIT: Couldn't allocate trampoline buffer");
-    return LLDB_INVALID_ADDRESS;
+  if (!process_sp->NewFCBTrampolineAllocation(trampoline_addr,
+                                              expected_trampoline_size)) {
+    LLDB_LOG(log, "JIT: Allocated trampoline address {0:x} is already in use",
+             trampoline_addr);
+    return false;
   }
 
-  size_t trampoline_size = 0;
+  llvm::SmallVector<uint8_t, 128> trampoline;
+  trampoline.reserve(expected_trampoline_size);
 
-  uint8_t trampoline_buffer[expected_trampoline_size];
+  bool displacement_out_of_range = false;
 
-  uint8_t regs_ctx[context_size];
-  /// Saving General Purpose Registers.
-  for (size_t i = 0; i < 8; i++)
-    regs_ctx[i] = x86_64_push_opcode + i;
-  for (size_t i = 0; i < 8; i++) {
-    size_t offset = x86_64_volatile_register_size + 2 * i;
-    regs_ctx[offset] = x86_64_rexb_opcode;
-    regs_ctx[offset + 1] = x86_64_push_opcode + i;
+  // call and jmp both take a 32 bit displacement from the end of the
+  // instruction, so the trampoline, the JIT-ed helpers and the patched site all
+  // have to live within 2GB of each other.
+  auto append_displacement = [&](lldb::addr_t next_instr_addr,
+                                 lldb::addr_t target) {
+    const int64_t displacement =
+        static_cast<int64_t>(target) - static_cast<int64_t>(next_instr_addr);
+
+    if (!llvm::isInt<32>(displacement)) {
+      LLDB_LOG(log,
+               "JIT: Displacement from {0:x} to {1:x} doesn't fit in 32 bits",
+               next_instr_addr, target);
+      displacement_out_of_range = true;
+      return;
+    }
+
+    // Encode little endian explicitly so that a big endian host can still
+    // produce a valid x86_64 instruction stream.
+    const uint32_t encoded = static_cast<uint32_t>(displacement);
+    for (unsigned byte = 0; byte < sizeof(uint32_t); ++byte)
+      trampoline.push_back((encoded >> (8 * byte)) & 0xff);
+  };
+
+  auto append_call = [&](lldb::addr_t target) {
+    trampoline.push_back(x86_64_call_opcode);
+    append_displacement(trampoline_addr + trampoline.size() + sizeof(uint32_t),
+                        target);
+  };
+
+  auto append_jmp = [&](lldb::addr_t target) {
+    trampoline.push_back(x86_64_jmp_opcode);
+    append_displacement(trampoline_addr + trampoline.size() + sizeof(uint32_t),
+                        target);
+  };
+
+  /// Saving General Purpose Registers. The resulting block of stack memory is
+  /// what the JIT-ed helper reads as `register_context`, so this order has to
+  /// stay in sync with the struct declared in the header.
+  for (uint8_t reg = 0; reg < 8; ++reg)
+    trampoline.push_back(x86_64_push_opcode + reg);
+  for (uint8_t reg = 0; reg < 8; ++reg) {
+    trampoline.push_back(x86_64_rexb_opcode);
+    trampoline.push_back(x86_64_push_opcode + reg);
   }
-  std::memcpy(trampoline_buffer, &regs_ctx, context_size);
-  trampoline_size += context_size;
 
   /// Pass register context address to argument structure builder.
-  uint8_t mov_buffer[x86_64_mov_size];
-  mov_buffer[0] = x86_64_rexw_opcode;
-  mov_buffer[1] = x86_64_mov_opcode;
-  mov_buffer[2] = x86_64_rsp_rdi_sib_byte; // mov rsp, rdi
-  std::memcpy(&trampoline_buffer[trampoline_size], &mov_buffer,
-              x86_64_mov_size);
-  trampoline_size += x86_64_mov_size;
-
-  size_t variable_count = bp_injected_site->GetVariableCount();
-  size_t address_size_in_byte =
-      bp_injected_site->GetTargetSP()->GetArchitecture().GetAddressByteSize();
+  trampoline.append({x86_64_rexw_opcode, x86_64_mov_opcode,
+                     x86_64_rsp_rdi_sib_byte}); // mov rsp, rdi
 
   /// Allocating argument structure on the stack.
-  uint8_t sub_buffer[x86_64_sub_size];
-  sub_buffer[0] = x86_64_rexw_opcode;
-  sub_buffer[1] = x86_64_sub_opcode;
-  sub_buffer[2] = x86_64_sub_byte;
-  sub_buffer[3] = variable_count * address_size_in_byte;
-  std::memcpy(&trampoline_buffer[trampoline_size], &sub_buffer,
-              x86_64_sub_size);
-  trampoline_size += x86_64_sub_size;
+  trampoline.append({x86_64_rexw_opcode, x86_64_sub_opcode, x86_64_sub_byte,
+                     static_cast<uint8_t>(args_struct_size)});
 
-  /// Pass register context address to argument structure builder.
-  mov_buffer[0] = x86_64_rexw_opcode;
-  mov_buffer[1] = x86_64_mov_opcode;
-  mov_buffer[2] = x86_64_rsp_rsi_sib_byte; // mov rsp, rsi
-  std::memcpy(&trampoline_buffer[trampoline_size], &mov_buffer,
-              x86_64_mov_size);
-  trampoline_size += x86_64_mov_size;
+  /// Pass argument structure address to argument structure builder.
+  trampoline.append({x86_64_rexw_opcode, x86_64_mov_opcode,
+                     x86_64_rsp_rsi_sib_byte}); // mov rsp, rsi
 
   /// Call argument structure builder.
-  uint8_t call_buffer[x86_64_call_size];
-  uint32_t call_offset =
-      -x86_64_call_size - trampoline_size - trampoline_addr + util_func_addr;
-  call_buffer[0] = x86_64_call_opcode;
-  std::memcpy(&call_buffer[1], &call_offset, sizeof(uint32_t));
-  std::memcpy(&trampoline_buffer[trampoline_size], call_buffer,
-              x86_64_call_size);
-  trampoline_size += x86_64_call_size;
+  append_call(util_func_addr);
 
   /// Pass returned argument structure to condition expression evaluator.
-  mov_buffer[2] = x86_64_rax_rdi_sib_byte; // mov rax, rdi
-  std::memcpy(&trampoline_buffer[trampoline_size], &mov_buffer,
-              x86_64_mov_size);
-  trampoline_size += x86_64_mov_size;
+  trampoline.append({x86_64_rexw_opcode, x86_64_mov_opcode,
+                     x86_64_rax_rdi_sib_byte}); // mov rax, rdi
 
   /// Call condition expression evaluator.
-  call_offset =
-      -x86_64_call_size - trampoline_size - trampoline_addr + cond_expr_addr;
-  call_buffer[0] = x86_64_call_opcode;
-  std::memcpy(&call_buffer[1], &call_offset, sizeof(uint32_t));
-  std::memcpy(&trampoline_buffer[trampoline_size], call_buffer,
-              x86_64_call_size);
-  trampoline_size += x86_64_call_size;
+  append_call(cond_expr_addr);
 
   /// Re-Align stack pointer
-  uint8_t add_buffer[x86_64_add_size];
-  add_buffer[0] = x86_64_rexw_opcode;
-  add_buffer[1] = x86_64_add_opcode;
-  add_buffer[2] = x86_64_add_byte;
-  add_buffer[3] = variable_count * address_size_in_byte;
-  std::memcpy(&trampoline_buffer[trampoline_size], &add_buffer,
-              x86_64_sub_size);
-  trampoline_size += x86_64_add_size;
+  trampoline.append({x86_64_rexw_opcode, x86_64_add_opcode, x86_64_add_byte,
+                     static_cast<uint8_t>(args_struct_size)});
 
-  /// Restore General Purpose Registers.
-  for (size_t i = 0; i < 8; i++) {
-    regs_ctx[2 * i] = x86_64_rexb_opcode;
-    regs_ctx[2 * i + 1] =
-        x86_64_pop_opcode + x86_64_volatile_register_size - i - 1;
+  /// Restore General Purpose Registers, in the exact reverse order of the
+  /// pushes above. The slot holding rsp is popped into rax rather than rsp:
+  /// restoring the stack pointer mid sequence would move it past the remaining
+  /// slots and the rest of the restore would read garbage. rax is popped again
+  /// by the last instruction below, so using it as a scratch register here has
+  /// no effect.
+  for (uint8_t reg = 8; reg-- > 0;) {
+    trampoline.push_back(x86_64_rexb_opcode);
+    trampoline.push_back(x86_64_pop_opcode + reg);
   }
-  for (size_t i = 0; i < 8; i++)
-    regs_ctx[x86_64_saved_register_size + i] =
-        x86_64_pop_opcode + x86_64_volatile_register_size - i - 1;
-  std::memcpy(&trampoline_buffer[trampoline_size], &regs_ctx, context_size);
-  trampoline_size += context_size;
+  for (uint8_t reg = 8; reg-- > 0;) {
+    const uint8_t popped_reg = (reg == x86_64_rsp_regnum) ? 0 : reg;
+    trampoline.push_back(x86_64_pop_opcode + popped_reg);
+  }
 
   /// Run copied instructions.
-  std::memcpy(&trampoline_buffer[trampoline_size], instrs_data, instrs_size);
-  trampoline_size += instrs_size;
+  trampoline.append(saved_instrs->GetBytes(),
+                    saved_instrs->GetBytes() + instrs_size);
 
-  /// Jump back to user's code.
-  uint8_t jmp_buffer[x86_64_jmp_size];
-  uint32_t jmp_offset = jmp_addr - trampoline_addr - trampoline_size;
+  /// Jump back to user's code, past the branch that was patched in below.
+  append_jmp(jmp_addr + instrs_size);
 
-  jmp_buffer[0] = x86_64_jmp_opcode;
-  std::memcpy(&jmp_buffer[1], &jmp_offset, sizeof(uint32_t));
-  std::memcpy(&trampoline_buffer[trampoline_size], jmp_buffer, x86_64_jmp_size);
-  trampoline_size += x86_64_jmp_size;
+  if (displacement_out_of_range) {
+    LLDB_LOG(log, "JIT: Trampoline is out of reach of the code it patches");
+    return false;
+  }
 
-  if (trampoline_size != expected_trampoline_size) {
+  if (trampoline.size() != expected_trampoline_size) {
     LLDB_LOG(
         log,
         "JIT: Trampoline size ({0} bytes) is not the one expected ({1} bytes)",
-        trampoline_size, expected_trampoline_size);
+        trampoline.size(), expected_trampoline_size);
     return false;
   }
 
   size_t written_bytes = process_sp->WriteMemory(
-      trampoline_addr, &trampoline_buffer, trampoline_size, error);
+      trampoline_addr, trampoline.data(), trampoline.size(), error);
 
-  if (written_bytes != trampoline_size || error.Fail()) {
+  if (written_bytes != trampoline.size() || error.Fail()) {
     LLDB_LOG(log, "JIT: Couldn't write trampoline buffer to inferior");
     return false;
   }
 
   // Overwrite current instruction with JMP.
-  jmp_offset = trampoline_addr - jmp_addr - x86_64_jmp_size;
+  llvm::SmallVector<uint8_t, 8> patch;
+  displacement_out_of_range = false;
+  patch.push_back(x86_64_jmp_opcode);
+  {
+    const int64_t displacement =
+        static_cast<int64_t>(trampoline_addr) -
+        static_cast<int64_t>(jmp_addr + x86_64_jmp_size);
+    if (!llvm::isInt<32>(displacement)) {
+      LLDB_LOG(log,
+               "JIT: Trampoline at {0:x} is out of reach of the site {1:x}",
+               trampoline_addr, jmp_addr);
+      return false;
+    }
+    const uint32_t encoded = static_cast<uint32_t>(displacement);
+    for (unsigned byte = 0; byte < sizeof(uint32_t); ++byte)
+      patch.push_back((encoded >> (8 * byte)) & 0xff);
+  }
 
-  jmp_buffer[0] = x86_64_jmp_opcode;
-  std::memcpy(&jmp_buffer[1], &jmp_offset, sizeof(uint32_t));
-
-  for (size_t i = 0; i < x86_64_jmp_size; i++)
-    LLDB_LOGV(log, "0x{:x}", jmp_buffer[i]);
+  // Any byte of the displaced instructions that the branch does not cover would
+  // be executed as part of the branch, so pad the rest with nops.
+  while (patch.size() < instrs_size)
+    patch.push_back(x86_64_nop_opcode);
 
   written_bytes =
-      process_sp->WriteMemory(jmp_addr, jmp_buffer, x86_64_jmp_size, error);
+      process_sp->WriteMemory(jmp_addr, patch.data(), patch.size(), error);
 
-  if (written_bytes != x86_64_jmp_size || error.Fail()) {
+  if (written_bytes != patch.size() || error.Fail()) {
     LLDB_LOG(log, "JIT: Couldn't override instruction with branching");
     return false;
   }
 
   lldb::ModuleSP trampoline_module_sp =
       CreateModuleForFastConditionalBreakpointTrampoline(
-          trampoline_addr, trampoline_size, jmp_addr);
+          trampoline_addr, trampoline.size(), jmp_addr + instrs_size);
 
   if (!trampoline_module_sp) {
     LLDB_LOG(log, "JIT: Couldn't get trampoline module");
@@ -304,8 +359,6 @@ bool ABISysV_x86_64::SetupFastConditionalBreakpointTrampoline(
     LLDB_LOG(log, "JIT: Couldn't add trampoline module to image list");
     return false;
   }
-
-  jmp_addr = trampoline_addr;
 
   return true;
 }

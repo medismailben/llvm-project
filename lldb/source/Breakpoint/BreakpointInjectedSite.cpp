@@ -16,6 +16,8 @@
 
 #include "lldb/Target/ABI.h"
 
+#include "lldb/Utility/DataBufferHeap.h"
+
 #include "llvm/Support/DataExtractor.h"
 #include "llvm/Support/FormatAdapters.h"
 
@@ -139,35 +141,35 @@ bool BreakpointInjectedSite::BuildConditionExpression(void) {
 
   error.Clear();
 
-  void *buffer = std::calloc(jit_addr_range.GetByteSize(), sizeof(uint8_t));
+  WritableDataBufferSP buffer(
+      new DataBufferHeap(jit_addr_range.GetByteSize(), 0));
 
   lldb::addr_t jit_addr =
       jit_addr_range.GetBaseAddress().GetCallableLoadAddress(m_target_sp.get());
 
   size_t memory_read = m_target_sp->GetProcessSP()->ReadMemory(
-      jit_addr, buffer, jit_addr_range.GetByteSize(), error);
+      jit_addr, buffer->GetBytes(), jit_addr_range.GetByteSize(), error);
 
   if (memory_read != jit_addr_range.GetByteSize() || error.Fail()) {
     m_condition_expression_sp.reset();
-    error = Status::FromErrorString("Couldn't read jit memory");
+    LLDB_LOG(log, "FCB: Couldn't read jit memory");
     return false;
   }
 
   PlatformSP platform_sp = m_target_sp->GetPlatform();
 
   if (!platform_sp) {
-    error = Status::FromErrorString("Couldn't get running platform");
+    LLDB_LOG(log, "FCB: Couldn't get running platform");
     return false;
   }
 
   if (!platform_sp->GetSoftwareBreakpointTrapOpcode(*m_target_sp.get(), this)) {
-    error = Status::FromErrorString(
-        "Couldn't get current architecture trap opcode");
+    LLDB_LOG(log, "FCB: Couldn't get current architecture trap opcode");
     return false;
   }
 
-  if (!ResolveTrapAddress(buffer, memory_read)) {
-    error = Status::FromErrorString("Couldn't find trap in jitter expression");
+  if (!ResolveTrapAddress(buffer->GetBytes(), memory_read)) {
+    LLDB_LOG(log, "FCB: Couldn't find trap in jitted expression");
     return false;
   }
 
@@ -235,7 +237,10 @@ bool BreakpointInjectedSite::ResolveTrapAddress(void *jit, size_t size) {
     // Within a same platform, the compiler can generate different opcodes for
     // the same debug trap builtin. https://reviews.llvm.org/D84014
     for (auto &abi_trap_code : *abi_debug_trap_opcode) {
-      if (!memcmp(instr_opcode, abi_trap_code.data(), trap_size)) {
+      // Compare the whole candidate opcode and nothing beyond it: trap_size is
+      // the size of the instruction being examined, which can be larger.
+      if (trap_size == abi_trap_code.size() &&
+          !memcmp(instr_opcode, abi_trap_code.data(), abi_trap_code.size())) {
         addr_t addr =
             instr->GetAddress().GetOpcodeLoadAddress(m_target_sp.get());
         m_trap_addr = addr;
@@ -249,7 +254,11 @@ bool BreakpointInjectedSite::ResolveTrapAddress(void *jit, size_t size) {
 
 llvm::DataExtractor
 BreakpointInjectedSite::GetLLVMDataExtractor(const DataExtractor &lldb_data) {
-  llvm::StringRef data(lldb_data.PeekCStr(0));
+  // The expression bytes are binary, not a string: they routinely contain zero
+  // bytes both as opcodes and inside operands, so the length has to come from
+  // the buffer rather than from a terminator.
+  llvm::StringRef data(reinterpret_cast<const char *>(lldb_data.GetDataStart()),
+                       lldb_data.GetByteSize());
   bool is_le = (lldb_data.GetByteOrder() == lldb::eByteOrderLittle);
   uint32_t data_addr_size = lldb_data.GetAddressByteSize();
   llvm::DataExtractor llvm_data =
@@ -379,7 +388,13 @@ bool BreakpointInjectedSite::CreateArgumentsStructure() {
   expr.reserve(2048);
   std::string name = "$__lldb_create_args_struct";
 
-  ABISP abi_sp = m_owner_exe_ctx.GetProcessSP()->GetABI();
+  ProcessSP process_sp = m_owner_exe_ctx.GetProcessSP();
+  ABISP abi_sp = process_sp ? process_sp->GetABI() : nullptr;
+
+  if (!abi_sp) {
+    LLDB_LOG(log, "FCB: Couldn't get the target's ABI");
+    return false;
+  }
 
   expr += "extern \"C\"\n"
           "{\n"
@@ -432,7 +447,13 @@ bool BreakpointInjectedSite::CreateArgumentsStructure() {
 std::string BreakpointInjectedSite::ParseDWARFExpression(size_t expr_idx,
                                                          Status &error) {
   std::string expr;
-  ABISP abi_sp = m_owner_exe_ctx.GetProcessSP()->GetABI();
+  ProcessSP process_sp = m_owner_exe_ctx.GetProcessSP();
+  ABISP abi_sp = process_sp ? process_sp->GetABI() : nullptr;
+
+  if (!abi_sp) {
+    error = Status::FromErrorString("Couldn't get the target's ABI");
+    return "";
+  }
 
   size_t num_processed_vars = 0;
 
@@ -525,7 +546,9 @@ std::string BreakpointInjectedSite::ParseDWARFExpression(size_t expr_idx,
     default: {
       return llvm::createStringError(
           llvm::formatv("Failed to resolve frame base attribute: Unsupported "
-                        "DWARF opcode ({0}).",
+                        "DWARF opcode ({0}). DW_OP_call_frame_cfa, which GCC "
+                        "emits, needs the function's CFA rule and is not "
+                        "supported yet.",
                         opcode));
     }
     }
@@ -540,7 +563,8 @@ std::string BreakpointInjectedSite::ParseDWARFExpression(size_t expr_idx,
     for (auto op : fb_expr) {
       auto fb_or_err = resolve_frame_base(op);
       if (!fb_or_err) {
-        llvm::consumeError(fb_or_err.takeError());
+        LLDB_LOG_ERROR(GetLog(LLDBLog::JITLoader), fb_or_err.takeError(),
+                       "FCB: {0}");
         continue;
       }
       frame_bases.push_back(std::move(*fb_or_err));
@@ -563,6 +587,14 @@ std::string BreakpointInjectedSite::ParseDWARFExpression(size_t expr_idx,
       break;
     }
     case llvm::dwarf::DW_OP_fbreg: {
+      // Without a resolved frame base there is nothing to offset from, and
+      // reading frame_bases.front() here would be undefined behavior.
+      if (frame_bases.empty()) {
+        error = Status::FromErrorString(
+            "Couldn't resolve the frame base of the enclosing function");
+        return "";
+      }
+
       int64_t operand = op.getRawOperand(0);
       expr += "   src_addr = (void*) (regs->" + frame_bases.front() + " + " +
               std::to_string(operand) +
@@ -608,15 +640,17 @@ std::string BreakpointInjectedSite::ParseDWARFExpression(size_t expr_idx,
       uint8_t reg_num = op.getCode() - llvm::dwarf::DW_OP_breg0;
       uint64_t reg_offset = op.getRawOperand(0);
 
-      RegisterContext *reg_ctx = m_owner_exe_ctx.GetRegisterContext();
-      if (!reg_ctx)
+      // The operand is a DWARF register number, so it has to be resolved
+      // through the ABI like the frame base above. Going through the
+      // RegisterContext instead would index its own register array and produce
+      // the name of an unrelated register.
+      auto reg_name_or_err = abi_sp->GetRegisterName(reg_num);
+      if (!reg_name_or_err) {
+        error = Status::FromError(reg_name_or_err.takeError());
         return "";
+      }
 
-      const char *reg_name = reg_ctx->GetRegisterName(reg_num);
-      if (!reg_name)
-        return "";
-
-      expr += "   src_addr = (void*) (regs->" + std::string(reg_name) + " + " +
+      expr += "   src_addr = (void*) (regs->" + *reg_name_or_err + " + " +
               std::to_string(reg_offset) +
               ");\n"
               "   dst_addr = (void*) (arg_struct + " +
@@ -625,7 +659,8 @@ std::string BreakpointInjectedSite::ParseDWARFExpression(size_t expr_idx,
               "   memcpy(dst_addr, &src_addr, count);\n";
     } break;
     default: {
-      error.Clear();
+      // Not a location this pass knows how to materialize. Leave the slot out
+      // of the structure rather than emitting something wrong.
       num_processed_vars--;
       break;
     }
