@@ -21,9 +21,14 @@ class FastConditionalBreakpoitsTestCase(TestBase):
         # Call super's setUp().
         TestBase.setUp(self)
         self.file = lldb.SBFileSpec("main.c")
-        self.comment = "Find the line number of condition breakpoint for local_count"
-        self.condition = '"local_count == 9"'
-        self.extra_options = "-c " + self.condition + " -I"
+        self.comment = "break here for local_count"
+        # Two forms on purpose. The command interpreter needs the expression
+        # quoted so it survives argument splitting; SBBreakpointLocation takes the
+        # expression itself, and passing the quoted form there makes the condition
+        # a string literal, which is always true and captures no variables.
+        self.condition = "local_count == 9"
+        self.quoted_condition = '"' + self.condition + '"'
+        self.extra_options = "-c " + self.quoted_condition + " -I"
         self.binary = "a.out"
 
     @skipIfWindows
@@ -37,7 +42,8 @@ class FastConditionalBreakpoitsTestCase(TestBase):
     def test_fast_conditional_breakpoint_flag_api(self):
         """Exercise fast conditional breakpoints with SB API"""
         self.build()
-        self.enable_fast_conditional_breakpoint(use_interpreter=False)
+        self.enable_fast_conditional_breakpoint(use_interpreter=False,
+                                                set_thread_index=True)
 
     @skipIfWindows
     @add_test_categories(["pyapi"])
@@ -53,7 +59,8 @@ class FastConditionalBreakpoitsTestCase(TestBase):
         self.build()
         self.inject_invalid_fast_conditional_breakpoint()
 
-    def enable_fast_conditional_breakpoint(self, use_interpreter):
+    def enable_fast_conditional_breakpoint(self, use_interpreter,
+                                           set_thread_index=False):
         exe = self.getBuildArtifact(self.binary)
         self.target = self.dbg.CreateTarget(exe)
         self.assertTrue(self.target, VALID_TARGET)
@@ -63,7 +70,7 @@ class FastConditionalBreakpoitsTestCase(TestBase):
                 self, self.comment, self.extra_options
             )
 
-            self.runCmd("breakpoint modify " + self.condition + " 1")
+            self.runCmd("breakpoint modify " + self.quoted_condition + " 1")
 
             self.expect("breakpoint list -f", substrs=["(FAST)"])
         else:
@@ -86,14 +93,16 @@ class FastConditionalBreakpoitsTestCase(TestBase):
                 breakpoint.GetThreadName() is None,
                 "the thread name should be invalid")
 
-            # Let's set the thread index for this breakpoint and verify that it is,
-            # indeed, being set correctly and there's only one thread for the
-            # process.
-            breakpoint.SetThreadIndex(1)
-            self.assertTrue(
-                breakpoint.GetThreadIndex() == 1,
-                "the thread index has been set correctly",
-            )
+            # Only where the breakpoint is never armed. A condition evaluated
+            # in the process runs on whichever thread reaches the site and
+            # cannot honour a thread filter, so asking for both is refused and
+            # the condition falls back to the debugger.
+            if set_thread_index:
+                breakpoint.SetThreadIndex(1)
+                self.assertTrue(
+                    breakpoint.GetThreadIndex() == 1,
+                    "the thread index has been set correctly",
+                )
 
             # Get the breakpoint location from breakpoint after we verified that,
             # indeed, it has one location.
@@ -135,26 +144,41 @@ class FastConditionalBreakpoitsTestCase(TestBase):
             "there should be a thread stopped due to breakpoint condition",
         )
 
+        # The stop lands inside the JIT-ed condition, which was reached from the
+        # trampoline, which was branched to from the user's code. Name the frames
+        # in the failure message: an equality assertion that only says "False is
+        # not true" gives nothing to go on when the stack is not what we expect.
+        names = [
+            "#%u %s %s at 0x%x"
+            % (
+                f.GetFrameID(),
+                f.GetModule().GetFileSpec().GetFilename(),
+                f.GetFunctionName(),
+                f.GetPC(),
+            )
+            for f in thread.frames
+        ]
+
         frame0 = thread.GetFrameAtIndex(0)
-        expected_fn_name = "$__lldb_expr(void*)"
         self.assertTrue(frame0 and frame0.IsValid())
-        self.assertTrue(frame0.GetFunctionName() == expected_fn_name)
+        self.assertEqual(frame0.GetFunctionName(), "$__lldb_expr(void*)", names)
 
         frame1 = thread.GetFrameAtIndex(1)
-        expected_fn_name = "$__lldb_jitted_conditional_bp_trampoline"
-        self.assertTrue(frame1 and frame0.IsValid())
-        self.assertTrue(frame1.GetFunctionName() == expected_fn_name)
+        self.assertTrue(frame1 and frame1.IsValid())
+        self.assertEqual(
+            frame1.GetFunctionName(),
+            "$__lldb_jitted_conditional_bp_trampoline",
+            names,
+        )
 
         frame2 = thread.GetFrameAtIndex(2)
-        expected_fn_name = "main"
-        self.assertTrue(frame2 and frame0.IsValid())
-        self.assertTrue(frame2.GetFunctionName() == expected_fn_name)
+        self.assertTrue(frame2 and frame2.IsValid())
+        self.assertEqual(frame2.GetFunctionName(), "main", names)
 
-        # the hit count for the breakpoint should be 1.
-        self.assertTrue(breakpoint.GetHitCount() == 1)
+        self.assertEqual(breakpoint.GetHitCount(), 1)
 
         line = line_number(self.file.GetFilename(), self.comment)
-        self.assertTrue(frame2.GetLineEntry().GetLine() == line)
+        self.assertEqual(frame2.GetLineEntry().GetLine(), line)
 
         # TODO: Check that the variable is actually equal to "9"
         # Currently, the assertion fails because the SBAPI doesn't

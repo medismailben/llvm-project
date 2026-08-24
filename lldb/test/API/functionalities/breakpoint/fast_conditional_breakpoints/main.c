@@ -15,9 +15,9 @@ int condition(void) {
 int main(int argc, char *argv[]) {
   int local_count = 0;
   for (int i = 0; i < 10000000; i++) {
-    printf("local_count = %d\n",
-           local_count++); // Find the line number of condition breakpoint for
-                           // local_count
+    // Keep this marker on one line: the test finds this line by source regex,
+    // and a wrapped comment matches nothing.
+    printf("local_count = %d\n", local_count++); // break here for local_count
   }
 
   return 0;
