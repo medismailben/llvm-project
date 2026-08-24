@@ -139,6 +139,9 @@ bool DynamicLoaderMacOS::ProcessDidExec() {
 
 // Clear out the state of this class.
 void DynamicLoaderMacOS::DoClear() {
+  // Nothing left to observe the teardown with, so stop deferring on its account.
+  m_expects_image_list_teardown = false;
+
   std::lock_guard<std::recursive_mutex> guard(m_mutex);
 
   if (LLDB_BREAK_ID_IS_VALID(m_break_id))
@@ -149,6 +152,48 @@ void DynamicLoaderMacOS::DoClear() {
   m_break_id = LLDB_INVALID_BREAK_ID;
   m_dyld_handover_break_id = LLDB_INVALID_BREAK_ID;
   m_libsystem_fully_initalized = false;
+}
+
+/// The dyld process state, or nothing when it cannot be read.
+static std::optional<std::string> GetDyldProcessState(Process *process) {
+  StructuredData::ObjectSP state_sp(process->GetDynamicLoaderProcessState());
+  if (!state_sp)
+    return std::nullopt;
+  StructuredData::Dictionary *dict = state_sp->GetAsDictionary();
+  if (!dict || dict->HasKey("error") ||
+      !dict->HasKey("process_state string"))
+    return std::nullopt;
+  return dict->GetValueForKey("process_state string")
+      ->GetAsString()
+      ->GetValue()
+      .str();
+}
+
+void DynamicLoaderMacOS::DidAttach() {
+  // Latch before delegating: the base implementation goes straight on to fetch
+  // the initial image list, which is what resolves breakpoints for the first
+  // time.
+  //
+  // "not started" means dyld has not yet relocated itself into the shared cache,
+  // and doing so makes it report that its images moved, which tears down every
+  // module lldb knows about. Anything else means that has already happened, or
+  // that this is an attach to a running process where it never will.
+  //
+  // A state that cannot be read latches false, so an older debugserver or a stub
+  // without the packet behaves as it did before rather than never settling.
+  std::optional<std::string> state = GetDyldProcessState(m_process);
+  m_expects_image_list_teardown =
+      state && *state == "dyld_process_state_not_started";
+
+  DynamicLoaderDarwin::DidAttach();
+}
+
+void DynamicLoaderMacOS::DidLaunch() {
+  std::optional<std::string> state = GetDyldProcessState(m_process);
+  m_expects_image_list_teardown =
+      state && *state == "dyld_process_state_not_started";
+
+  DynamicLoaderDarwin::DidLaunch();
 }
 
 bool DynamicLoaderMacOS::IsFullyInitialized() {
@@ -410,6 +455,10 @@ bool DynamicLoaderMacOS::NotifyBreakpointHit(void *baton,
               dyld_instance->UnloadAllImages();
             } else if (dyld_mode == 3 && image_infos_count == 1) {
               // dyld_image_dyld_moved
+
+              // The teardown this flag warned about is happening now, so
+              // anything deferred until afterwards can go ahead.
+              dyld_instance->m_expects_image_list_teardown = false;
 
               dyld_instance->ClearNotificationBreakpoint();
               dyld_instance->UnloadAllImages();

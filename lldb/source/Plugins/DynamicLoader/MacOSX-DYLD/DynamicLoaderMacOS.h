@@ -85,6 +85,14 @@ protected:
 
   bool IsFullyInitialized() override;
 
+  bool ExpectsImageListTeardown() override {
+    return m_expects_image_list_teardown;
+  }
+
+  void DidAttach() override;
+
+  void DidLaunch() override;
+
   static bool
   NotifyBreakpointHit(void *baton,
                       lldb_private::StoppointCallbackContext *context,
@@ -115,6 +123,11 @@ protected:
                                             // debugservers that don't support
                                             // the "reason:exec" annotation.
   bool m_libsystem_fully_initalized;
+  /// Whether dyld has yet to relocate itself and make lldb rebuild every module.
+  ///
+  /// Latched when the process is first examined rather than sampled on demand,
+  /// so that a breakpoint set at a later stop still knows a teardown is coming.
+  bool m_expects_image_list_teardown = false;
 };
 
 #endif // LLDB_SOURCE_PLUGINS_DYNAMICLOADER_MACOSX_DYLD_DYNAMICLOADERMACOS_H

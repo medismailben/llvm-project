@@ -399,6 +399,20 @@ public:
     return false;
   }
 
+  /// Whether this dynamic loader still expects to discard every module it has
+  /// reported and rediscover them.
+  ///
+  /// Some dynamic loaders relocate themselves early in process startup, which
+  /// forces lldb to throw away and rebuild its whole view of the inferior's
+  /// images. Work keyed to a module does not survive that, so a caller that is
+  /// about to do something expensive per module, or to compile code into the
+  /// inferior on a breakpoint's behalf, is better off waiting.
+  ///
+  /// \return
+  ///     \b true if a teardown is still expected, \b false if the loader has
+  ///     either already done it or never will.
+  virtual bool ExpectsImageListTeardown() { return false; }
+
   /// Return whether the dynamic loader is fully initialized and it's safe to
   /// call its APIs.
   ///

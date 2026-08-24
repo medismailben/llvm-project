@@ -2403,6 +2403,14 @@ public:
   /// reintroduce those problems at the trap address.
   lldb::BreakpointSiteSP FindInjectedSiteByTrapAddress(lldb::addr_t trap_addr);
 
+  /// Build the injected sites that were postponed while the dynamic loader was
+  /// still going to discard every module.
+  ///
+  /// Called when modules load. A location whose injection was deferred has a
+  /// plain site in the meantime, so the breakpoint works throughout; this only
+  /// upgrades it.
+  llvm::Error FlushDeferredInjections();
+
   /// Give back the trampoline reservation made by
   /// NewFCBTrampolineAllocation() and deallocate its pages.
   ///
@@ -3593,6 +3601,11 @@ protected:
       m_breakpoint_site_list; ///< This is the list of breakpoint
                               /// locations we intend to insert in
                               /// the target.
+  /// Locations whose injected condition is waiting for the dynamic loader to
+  /// settle, as (breakpoint, location) ids. Ids rather than pointers so that a
+  /// location going away in the meantime needs no bookkeeping here.
+  std::vector<std::pair<lldb::break_id_t, lldb::break_id_t>>
+      m_deferred_injections;
   std::map<lldb::addr_t, size_t> m_fcb_allocations; ///< A map holding the fixed
                                                     /// trampoline allocations'
                                                     /// address / size

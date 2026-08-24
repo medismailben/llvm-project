@@ -1952,6 +1952,30 @@ Process::CreateBreakpointSite(const BreakpointLocationSP &constituent,
         constituent, use_hardware, log, llvm::createStringError(error_msg));
   };
 
+  // Injecting a condition compiles code into the inferior and registers a module
+  // for the trampoline, none of which survives the dynamic loader discarding
+  // every module. Doing it now would mean doing it twice, and the discarded
+  // attempt leaves a second trampoline module claiming the same address as the
+  // one that replaces it, which makes finding its unwind plan a coin flip.
+  //
+  // Take a plain site for the moment and upgrade it once the loader has settled.
+  // Deliberately a plain site rather than none at all: a breakpoint with no site
+  // never fires, and a slow condition is a much better failure than a silent one.
+  const bool defer_injection =
+      constituent->GetInjectCondition() && [this]() {
+        DynamicLoader *dyld = GetDynamicLoader();
+        return dyld && dyld->ExpectsImageListTeardown();
+      }();
+
+  if (defer_injection) {
+    LLDB_LOG(log,
+             "FCB: postponing the injection for {0}.{1} until the dynamic "
+             "loader has settled",
+             constituent->GetBreakpoint().GetID(), constituent->GetID());
+    m_deferred_injections.emplace_back(constituent->GetBreakpoint().GetID(),
+                                       constituent->GetID());
+  }
+
   // Look up this breakpoint site.  If it exists, then add this new
   // constituent, otherwise create a new breakpoint site and add it.
   if (BreakpointSiteSP bp_site_sp =
@@ -1959,7 +1983,7 @@ Process::CreateBreakpointSite(const BreakpointLocationSP &constituent,
     // An injected condition can only join the existing site if that site is
     // itself injected, since the condition of every constituent has to be
     // folded into a single in-process expression.
-    if (constituent->GetInjectCondition()) {
+    if (constituent->GetInjectCondition() && !defer_injection) {
       BreakpointInjectedSite *bp_injected_site =
           llvm::dyn_cast<BreakpointInjectedSite>(bp_site_sp.get());
 
@@ -1997,7 +2021,7 @@ Process::CreateBreakpointSite(const BreakpointLocationSP &constituent,
 
   BreakpointSiteSP bp_site_sp;
 
-  if (constituent->GetInjectCondition()) {
+  if (constituent->GetInjectCondition() && !defer_injection) {
     // Everything in this block is guarded by GetInjectCondition() so that the
     // retry performed by FallbackToRegularBreakpointSite() terminates. Do not
     // hoist any of it out of here.
@@ -2214,6 +2238,50 @@ lldb::addr_t Process::NextFCBTrampolineAllocation(lldb::addr_t bp_load_addr)
   const size_t num_pages = std::ceil(static_cast<double>(size) / page_size);
 
   return addr + page_size * num_pages + 1;
+}
+
+llvm::Error Process::FlushDeferredInjections() {
+  Log *log = GetLog(LLDBLog::JITLoader);
+
+  if (m_deferred_injections.empty())
+    return llvm::Error::success();
+
+  DynamicLoader *dyld = GetDynamicLoader();
+  if (dyld && dyld->ExpectsImageListTeardown())
+    return llvm::Error::success();
+
+  // Move before iterating: resolving a location compiles code into the inferior,
+  // which loads modules, which brings us back here.
+  auto deferred = std::move(m_deferred_injections);
+  m_deferred_injections.clear();
+
+  llvm::Error error = llvm::Error::success();
+  for (auto [break_id, loc_id] : deferred) {
+    BreakpointSP bp_sp = GetTarget().GetBreakpointByID(break_id);
+    if (!bp_sp)
+      continue;
+
+    BreakpointLocationSP loc_sp = bp_sp->FindLocationByID(loc_id);
+    if (!loc_sp || !loc_sp->GetInjectCondition())
+      continue;
+
+    // Already injected, so the ordinary re-resolution got there first.
+    BreakpointSiteSP site_sp = loc_sp->GetBreakpointSite();
+    if (site_sp && llvm::isa<BreakpointInjectedSite>(site_sp.get()))
+      continue;
+
+    LLDB_LOG(log, "FCB: upgrading {0}.{1} now that the loader has settled",
+             break_id, loc_id);
+
+    if (llvm::Error clear_error = loc_sp->ClearBreakpointSite()) {
+      error = llvm::joinErrors(std::move(error), std::move(clear_error));
+      continue;
+    }
+    if (llvm::Error resolve_error = loc_sp->ResolveBreakpointSite())
+      error = llvm::joinErrors(std::move(error), std::move(resolve_error));
+  }
+
+  return error;
 }
 
 lldb::BreakpointSiteSP
@@ -6778,6 +6846,13 @@ addr_t Process::ResolveIndirectFunction(const Address *address, Status &error) {
 }
 
 void Process::ModulesDidLoad(ModuleList &module_list) {
+  // A breakpoint whose injected condition was postponed while the dynamic loader
+  // was still going to discard every module gets it now. The ordinary
+  // re-resolution usually beats this, since Target::ModulesDidLoad() updates
+  // breakpoints before calling us, in which case this only drops the entry.
+  LLDB_LOG_ERROR(GetLog(LLDBLog::JITLoader), FlushDeferredInjections(),
+                 "FCB: couldn't build a postponed injected condition: {0}");
+
   // Inform the system runtime of the modified modules.
   SystemRuntime *sys_runtime = GetSystemRuntime();
   if (sys_runtime)
