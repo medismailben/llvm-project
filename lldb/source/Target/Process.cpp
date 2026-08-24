@@ -2010,6 +2010,22 @@ Process::CreateBreakpointSite(const BreakpointLocationSP &constituent,
       return fallback_with_error(
           "Current ABI doesn't support JIT-ed breakpoint conditions");
 
+    // An injected condition is evaluated by whichever thread reaches the site,
+    // and the trampoline has no way to know which threads the breakpoint applies
+    // to. A trap on a thread the breakpoint filters out cannot be attributed to
+    // it, and an unattributed trap is not just reported oddly: nothing advances
+    // the pc past it, so the inferior resumes onto the same trap and spins.
+    //
+    // Refuse instead, and let the condition be evaluated out of process where
+    // the filter is applied before the condition is.
+    if (const ThreadSpec *thread_spec =
+            constituent->GetOptionsSpecifyingKind(BreakpointOptions::eThreadSpec)
+                .GetThreadSpecNoCreate())
+      if (thread_spec->HasSpecification())
+        return fallback_with_error(
+            "the breakpoint only applies to some threads, which a condition "
+            "evaluated in the process cannot honour");
+
     // Build user expression's IR from condition
     std::unique_ptr<BreakpointInjectedSite> bp_injected_site(
         new BreakpointInjectedSite(constituent, load_addr));
