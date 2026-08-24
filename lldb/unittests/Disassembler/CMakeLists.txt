@@ -1,7 +1,7 @@
 set(disas_srcs "")
 
 if("ARM" IN_LIST LLVM_TARGETS_TO_BUILD)
-  list(APPEND
+  list(APPEND disas_srcs
     ARM/TestArm64Disassembly.cpp
     ARM/TestArmv7Disassembly.cpp
   )
