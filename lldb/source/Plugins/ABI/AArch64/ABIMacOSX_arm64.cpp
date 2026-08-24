@@ -81,6 +81,32 @@ static bool IsBranchInRange(int64_t byte_offset) {
   return llvm::isInt<26>(byte_offset / instr_size);
 }
 
+/// Encode an unconditional `b` to \a byte_offset bytes from itself, little
+/// endian.
+///
+/// Assembling a single branch by handing text to clang and JIT-ing the result
+/// costs a full parse of the expression prefix, an IR pass and an allocation in
+/// the inferior, all to produce four bytes. Doing it directly is what the
+/// x86_64 builder already does, and it keeps the cost of arming a breakpoint
+/// proportional to the work that actually has to happen.
+///
+/// \a byte_offset has to be in range, see IsBranchInRange().
+static void EncodeAArch64Branch(int64_t byte_offset,
+                                uint8_t out[ABIMacOSX_arm64::aarch64_instr_size]) {
+  constexpr uint32_t b_opcode = 0x14000000;
+  constexpr uint32_t imm26_mask = 0x03ffffff;
+
+  assert(IsBranchInRange(byte_offset) && "branch offset out of reach");
+
+  // Arithmetic shift, so a negative offset keeps its sign before it is
+  // truncated to the 26 bit field.
+  const uint32_t instruction =
+      b_opcode | (static_cast<uint32_t>(byte_offset >> 2) & imm26_mask);
+
+  for (unsigned byte = 0; byte < ABIMacOSX_arm64::aarch64_instr_size; ++byte)
+    out[byte] = (instruction >> (8 * byte)) & 0xff;
+}
+
 /// Locate the pair of reserved nops at the end of the emitted trampoline.
 ///
 /// Scanning for them rather than hardcoding an instruction index keeps this
@@ -313,25 +339,13 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
         trampoline_addr, bp_load_addr));
   }
 
-  ss = std::stringstream();
-  ss << "__attribute__((naked,noreturn)) void $__lldb_emit_branch_to_source() "
-        "{\n"
-     << "    __asm__ (\n"
-     << "      R\"(\n"
-     << "           b " << source_branch_target << "\n"
-     << "        )\");\n"
-     << "}";
-
-  auto branch_instr = EmitAssembly("emit_branch_to_source", ss, exe_ctx);
-  if (!branch_instr)
-    return llvm::createStringError(
-        "couldn't assemble the branch back to the user's code");
-
-  /// Copy inferior instructions into trampoline.
+  /// Copy inferior instructions into trampoline, then the branch back to the
+  /// instruction after the one they came from.
   std::memcpy(&trampoline_buffer[copied_instr_offset], saved_instrs->GetBytes(),
               saved_instrs->GetByteSize());
-  std::memcpy(&trampoline_buffer[copied_instr_offset + aarch64_instr_size],
-              branch_instr->GetBytes(), aarch64_instr_size);
+  EncodeAArch64Branch(source_branch_target,
+                      &trampoline_buffer[copied_instr_offset +
+                                         aarch64_instr_size]);
 
   // The trampoline is only registered as a module once everything below
   // succeeds, so this is the one chance to see what was built.
@@ -347,22 +361,12 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   /// Patch inferior to branch to trampoline
   const int64_t trampoline_branch_target =
       static_cast<int64_t>(trampoline_addr) - static_cast<int64_t>(bp_load_addr);
-  ss = std::stringstream();
-  ss << "__attribute__((naked,noreturn)) void "
-        "$__lldb_emit_branch_to_trampoline() {\n"
-     << "    __asm__ (\n"
-     << "      R\"(\n"
-     << "           b " << trampoline_branch_target << "\n"
-     << "        )\");\n"
-     << "}";
 
-  branch_instr = EmitAssembly("emit_branch_to_trampoline", ss, exe_ctx);
-  if (!branch_instr)
-    return llvm::createStringError(
-        "couldn't assemble the branch to the trampoline");
+  uint8_t trampoline_branch[aarch64_instr_size];
+  EncodeAArch64Branch(trampoline_branch_target, trampoline_branch);
 
-  written_bytes = process_sp->WriteMemory(
-      bp_load_addr, branch_instr->GetBytes(), aarch64_instr_size, error);
+  written_bytes = process_sp->WriteMemory(bp_load_addr, trampoline_branch,
+                                          aarch64_instr_size, error);
   if (written_bytes != aarch64_instr_size || error.Fail()) {
     return llvm::createStringError(
         "Couldn't patch inferior with branch to trampoline");

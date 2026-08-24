@@ -472,12 +472,25 @@ lldb::addr_t AllocatedMemoryCache::AllocateMemory(size_t byte_size,
   std::pair<PermissionsToBlockMap::iterator, PermissionsToBlockMap::iterator>
       range = m_memory_map.equal_range(permissions);
 
-  // A caller asking for a particular address cannot be served out of an
+  // A caller asking for a particular address cannot be served out of just any
   // existing block, because a block hands back whichever chunk happens to be
-  // free rather than a chosen one. Those requests go straight to a fresh page.
+  // free rather than a chosen one. A block that already covers the requested
+  // address is another matter: its pages are mapped exactly where the caller
+  // wanted them, and asking the inferior for a fixed mapping there would fail
+  // anyway now that the region is live. So prefer that block, and only fall
+  // through to a fresh page when there is no such block or it is full.
   if (requested_addr == LLDB_INVALID_ADDRESS) {
     for (PermissionsToBlockMap::iterator pos = range.first; pos != range.second;
          ++pos) {
+      addr = (*pos).second->ReserveBlock(byte_size);
+      if (addr != LLDB_INVALID_ADDRESS)
+        break;
+    }
+  } else {
+    for (PermissionsToBlockMap::iterator pos = range.first; pos != range.second;
+         ++pos) {
+      if (!(*pos).second->Contains(requested_addr))
+        continue;
       addr = (*pos).second->ReserveBlock(byte_size);
       if (addr != LLDB_INVALID_ADDRESS)
         break;

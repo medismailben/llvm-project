@@ -1614,6 +1614,22 @@ Status Process::DisableBreakpointSiteByID(lldb::user_id_t break_id) {
 llvm::Error Process::ExecuteBreakpointSiteAction(BreakpointSite &site,
                                                  BreakpointAction action,
                                                  bool forbid_delay) {
+  // An injected site is installed by the branch to its trampoline, which the
+  // ABI already wrote, so there is no trap opcode for the software breakpoint
+  // machinery to manage. Letting it run would write a trap over that branch and
+  // defeat the whole point of the feature: the inferior would stop on every hit
+  // and have its condition evaluated out of process, and only reach the
+  // trampoline via the single step that steps over the trap.
+  //
+  // FIXME: Disabling an injected site should put the displaced instruction back
+  // rather than only recording the state, so that a disabled breakpoint stops
+  // running its condition in the inferior.
+  if (llvm::isa<BreakpointInjectedSite>(&site)) {
+    std::lock_guard<std::recursive_mutex> guard(m_delayed_breakpoints_mutex);
+    SetBreakpointSiteEnabled(site, action == BreakpointAction::Enable);
+    return llvm::Error::success();
+  }
+
   // Breakpoints immediately affect running processes, so do not delay them.
   forbid_delay |= StateIsRunningState(GetPrivateState());
 
@@ -1877,13 +1893,22 @@ Process::CreateBreakpointSite(const BreakpointLocationSP &constituent,
         new BreakpointInjectedSite(constituent, load_addr));
 
     // Setup a call before the copied instructions
-    if (!bp_injected_site->BuildConditionExpression())
+    if (!bp_injected_site->BuildConditionExpression()) {
+      bp_injected_site.reset();
       return fallback_with_error("Couldn't build the condition expression");
+    }
 
     if (llvm::Error error = abi_sp->SetupFastConditionalBreakpointTrampoline(
-            bp_injected_site.get()))
+            bp_injected_site.get())) {
+      // Let the failed site go before retrying. Releasing it un-patches the
+      // site and drops the JIT-ed condition, and dropping that unloads modules,
+      // which runs breakpoint bookkeeping re-entrantly. If that ran after the
+      // retry it would tear down the very site the retry just installed, and
+      // the location would come back from here unresolved.
+      bp_injected_site.reset();
       return FallbackToRegularBreakpointSite(constituent, use_hardware, log,
                                              std::move(error));
+    }
 
     bp_site_sp.reset(bp_injected_site.release());
     bp_site_sp->AddConstituent(constituent);
