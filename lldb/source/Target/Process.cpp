@@ -1624,10 +1624,10 @@ llvm::Error Process::ExecuteBreakpointSiteAction(BreakpointSite &site,
   // FIXME: Disabling an injected site should put the displaced instruction back
   // rather than only recording the state, so that a disabled breakpoint stops
   // running its condition in the inferior.
-  if (llvm::isa<BreakpointInjectedSite>(&site)) {
-    std::lock_guard<std::recursive_mutex> guard(m_delayed_breakpoints_mutex);
-    SetBreakpointSiteEnabled(site, action == BreakpointAction::Enable);
-    return llvm::Error::success();
+  if (auto *injected_site = llvm::dyn_cast<BreakpointInjectedSite>(&site)) {
+    return action == BreakpointAction::Enable
+               ? EnableInjectedBreakpoint(*injected_site)
+               : DisableInjectedBreakpoint(*injected_site);
   }
 
   // Breakpoints immediately affect running processes, so do not delay them.
@@ -1781,6 +1781,128 @@ llvm::Error Process::UpdateBreakpointSites(
     error = llvm::joinErrors(std::move(error), new_error.takeError());
   }
   return error;
+}
+
+llvm::Error Process::EnableInjectedBreakpoint(BreakpointInjectedSite &site) {
+  Log *log = GetLog(LLDBLog::Breakpoints);
+
+  if (!site.HasPatch())
+    return llvm::createStringError(
+        "the trampoline builder never finished, so there is no branch to "
+        "install");
+
+  // The ABI writes the patch itself, so a freshly built site is already
+  // installed and enabling it has nothing to do.
+  if (site.IsPatched()) {
+    SetBreakpointSiteEnabled(site, true);
+    return llvm::Error::success();
+  }
+
+  const addr_t addr = site.GetPatchAddress();
+  llvm::ArrayRef<uint8_t> patch = site.GetPatchBytes();
+  llvm::ArrayRef<uint8_t> displaced = site.GetDisplacedBytes();
+
+  // Nothing to write to. Record the state so the site still looks consistent.
+  if (!IsAlive()) {
+    SetBreakpointSiteEnabled(site, true);
+    return llvm::Error::success();
+  }
+
+  // Only overwrite bytes we recognise. After a module reload or an exec the code
+  // at this address may not be the code the patch was built against, and writing
+  // a branch to our trampoline over an unrelated instruction would corrupt the
+  // inferior rather than merely fail to work.
+  llvm::SmallVector<uint8_t, 8> current(displaced.size());
+  Status error;
+  if (DoReadMemory(addr, current.data(), current.size(), error) !=
+          current.size() ||
+      error.Fail())
+    return llvm::createStringError(
+        llvm::formatv("couldn't read the {0} bytes at {1:x} the branch to the "
+                      "trampoline would overwrite: {2}",
+                      current.size(), addr, error.AsCString()));
+
+  if (!std::equal(current.begin(), current.end(), displaced.begin()))
+    return llvm::createStringError(llvm::formatv(
+        "the code at {0:x} is no longer the code the branch to the trampoline "
+        "was built for, so it was left alone",
+        addr));
+
+  if (DoWriteMemory(addr, patch.data(), patch.size(), error) != patch.size() ||
+      error.Fail())
+    return llvm::createStringError(
+        llvm::formatv("couldn't write the branch to the trampoline at {0:x}: "
+                      "{1}",
+                      addr, error.AsCString()));
+
+  m_memory_cache.Flush(addr, patch.size());
+
+  site.SetPatched(true);
+  SetBreakpointSiteEnabled(site, true);
+
+  LLDB_LOG(log, "FCB: installed the branch to the trampoline at {0:x}", addr);
+  return llvm::Error::success();
+}
+
+llvm::Error Process::DisableInjectedBreakpoint(BreakpointInjectedSite &site) {
+  Log *log = GetLog(LLDBLog::Breakpoints);
+
+  // Idempotent, which is what lets the destructor call this unconditionally
+  // after a disable has already taken the patch out.
+  if (!site.IsPatched()) {
+    SetBreakpointSiteEnabled(site, false);
+    return llvm::Error::success();
+  }
+
+  const addr_t addr = site.GetPatchAddress();
+  llvm::ArrayRef<uint8_t> patch = site.GetPatchBytes();
+  llvm::ArrayRef<uint8_t> displaced = site.GetDisplacedBytes();
+
+  // A process that has exited or been detached from cannot be written to, and
+  // every normal teardown goes through here, so this is not a failure.
+  if (!IsAlive()) {
+    site.SetPatched(false);
+    SetBreakpointSiteEnabled(site, false);
+    return llvm::Error::success();
+  }
+
+  llvm::SmallVector<uint8_t, 8> current(patch.size());
+  Status error;
+  if (DoReadMemory(addr, current.data(), current.size(), error) !=
+          current.size() ||
+      error.Fail())
+    return llvm::createStringError(llvm::formatv(
+        "couldn't read the branch to the trampoline at {0:x} back: {1}", addr,
+        error.AsCString()));
+
+  // Somebody else owns these bytes now. Report success anyway: the caller is
+  // tearing the site down and refusing here would leave it in the site list
+  // forever, and there is nothing useful left to undo.
+  if (!std::equal(current.begin(), current.end(), patch.begin())) {
+    LLDB_LOG(log,
+             "FCB: the branch to the trampoline is no longer at {0:x}, so the "
+             "displaced instructions were not put back",
+             addr);
+    site.SetPatched(false);
+    SetBreakpointSiteEnabled(site, false);
+    return llvm::Error::success();
+  }
+
+  if (DoWriteMemory(addr, displaced.data(), displaced.size(), error) !=
+          displaced.size() ||
+      error.Fail())
+    return llvm::createStringError(llvm::formatv(
+        "couldn't put the {0} instructions displaced at {1:x} back: {2}",
+        displaced.size(), addr, error.AsCString()));
+
+  m_memory_cache.Flush(addr, displaced.size());
+
+  site.SetPatched(false);
+  SetBreakpointSiteEnabled(site, false);
+
+  LLDB_LOG(log, "FCB: took the branch to the trampoline back out at {0:x}",
+           addr);
+  return llvm::Error::success();
 }
 
 lldb::break_id_t Process::FallbackToRegularBreakpointSite(
@@ -2122,6 +2244,18 @@ size_t Process::RemoveBreakpointOpcodesFromBuffer(addr_t bp_addr, size_t size,
                                          bp_sites_in_range)) {
     bp_sites_in_range.ForEach([bp_addr, size,
                                buf](BreakpointSite *bp_site) -> void {
+      // An injected site has no trap opcode in the inferior: the branch to its
+      // trampoline is the real code, and it is what the caller wants to see.
+      // Its saved-opcode buffer is never populated either, so masking with it
+      // hands back zeroes and makes the patched instruction read as `udf #0x0`.
+      //
+      // Note the byte size is not zero, so IntersectsRange() below does not
+      // filter these out on its own: BuildConditionExpression() asks the
+      // platform for a trap opcode in order to recognise the injected trap, and
+      // that sets it.
+      if (llvm::isa<BreakpointInjectedSite>(bp_site))
+        return;
+
       if (bp_site->GetType() == BreakpointSite::eSoftware) {
         addr_t intersect_addr;
         size_t intersect_size;
@@ -2884,6 +3018,13 @@ size_t Process::WriteMemory(addr_t addr, const void *buf, size_t size,
       return;
 
     if (bp->GetType() != BreakpointSite::eSoftware)
+      return;
+
+    // An injected site keeps no shadow copy of the code it displaced: the
+    // branch to its trampoline is the code. Diverting a write into its
+    // saved-opcode buffer, which nothing maintains and nothing reads back,
+    // silently drops the write instead of applying it. Let it through.
+    if (llvm::isa<BreakpointInjectedSite>(bp))
       return;
 
     addr_t intersect_addr;

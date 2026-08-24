@@ -2350,6 +2350,24 @@ public:
   // doesn't work for a specific process plug-in.
   virtual Status DisableSoftwareBreakpoint(BreakpointSite *bp_site);
 
+  /// Install the branch to the trampoline that makes an injected site fire.
+  ///
+  /// Idempotent: a site the ABI has just patched is already installed, so
+  /// enabling it only records the state.
+  llvm::Error EnableInjectedBreakpoint(BreakpointInjectedSite &site);
+
+  /// Take the branch to the trampoline back out and put the instructions it
+  /// displaced back, so that a disabled breakpoint stops evaluating its
+  /// condition in the inferior.
+  ///
+  /// Idempotent, so that destroying a site that was already disabled does not
+  /// write to the inferior a second time.
+  ///
+  /// The trampoline is deliberately left allocated: a thread may be executing
+  /// inside it, and its tail branches back to the instruction after the patch,
+  /// so it has to outlive the branch. Only destroying the site releases it.
+  llvm::Error DisableInjectedBreakpoint(BreakpointInjectedSite &site);
+
   StopPointSiteList<lldb_private::BreakpointSite> &GetBreakpointSiteList();
 
   const StopPointSiteList<lldb_private::BreakpointSite> &

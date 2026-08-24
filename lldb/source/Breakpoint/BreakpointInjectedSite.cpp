@@ -28,6 +28,33 @@ BreakpointInjectedSite::BreakpointInjectedSite(
       m_real_addr(owner->GetAddress()), m_trap_addr(LLDB_INVALID_ADDRESS),
       m_args_struct_size(0) {}
 
+void BreakpointInjectedSite::SetPatchedInstructions(
+    lldb::addr_t address, WritableDataBufferSP patch,
+    WritableDataBufferSP displaced) {
+  assert(patch && displaced && "a patch needs both halves to be reversible");
+  assert(patch->GetByteSize() == displaced->GetByteSize() &&
+         "the patch and what it displaced have to cover the same bytes");
+
+  m_patch_addr = address;
+  m_patch_instructions_sp = std::move(patch);
+  m_displaced_instructions_sp = std::move(displaced);
+  m_patched = true;
+}
+
+llvm::ArrayRef<uint8_t> BreakpointInjectedSite::GetPatchBytes() const {
+  if (!m_patch_instructions_sp)
+    return {};
+  return {m_patch_instructions_sp->GetBytes(),
+          m_patch_instructions_sp->GetByteSize()};
+}
+
+llvm::ArrayRef<uint8_t> BreakpointInjectedSite::GetDisplacedBytes() const {
+  if (!m_displaced_instructions_sp)
+    return {};
+  return {m_displaced_instructions_sp->GetBytes(),
+          m_displaced_instructions_sp->GetByteSize()};
+}
+
 BreakpointInjectedSite::~BreakpointInjectedSite() {
   Log *log = GetLog(LLDBLog::JITLoader);
 
@@ -36,31 +63,16 @@ BreakpointInjectedSite::~BreakpointInjectedSite() {
 
   ProcessSP process_sp = m_target_sp->GetProcessSP();
 
-  // Undo the patch first. While the branch is still installed a thread can
-  // enter the trampoline at any moment, so the trampoline has to outlive it.
+  // Take the patch out first. While the branch is installed a thread can enter
+  // the trampoline at any moment, so the trampoline has to outlive it.
   //
-  // Leaving the patch behind would also send the inferior into a trampoline
-  // nothing owns any more, and re-resolving the location would disassemble our
-  // own branch instead of the instruction it displaced. This doubles as the
-  // unwind path for a trampoline builder that fails after patching: dropping
-  // the site restores the inferior.
-  if (process_sp && m_displaced_instructions_sp) {
-    // The raw load address rather than m_real_addr: by the time a site is torn
-    // down the module it belonged to may already be gone, and with it the
-    // section load list an Address needs to resolve. The bytes are still
-    // mapped, so the write itself is fine.
-    const addr_t addr = GetLoadAddress();
-    const size_t size = m_displaced_instructions_sp->GetByteSize();
-
-    Status error;
-    const size_t written = process_sp->WriteMemory(
-        addr, m_displaced_instructions_sp->GetBytes(), size, error);
-
-    if (written != size || error.Fail())
-      LLDB_LOG(log, "FCB: Couldn't restore the {0} bytes displaced at {1:x}: {2}",
-               size, addr, error.AsCString() ? error.AsCString()
-                                             : "unknown error");
-  }
+  // This doubles as the unwind path for a trampoline builder that fails after
+  // patching: dropping the site restores the inferior. Disabling the site
+  // already did this in the common case, and the write is idempotent, so a
+  // disable followed by destruction does not write twice.
+  if (process_sp)
+    LLDB_LOG_ERROR(log, process_sp->DisableInjectedBreakpoint(*this),
+                   "FCB: couldn't take the patch out: {0}");
 
   // Now that nothing can reach the trampoline, stop describing it. Keeping the
   // module would leave a symbol and an unwind plan pointing at memory that is

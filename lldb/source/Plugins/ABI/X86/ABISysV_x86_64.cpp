@@ -353,8 +353,12 @@ llvm::Error ABISysV_x86_64::SetupFastConditionalBreakpointTrampoline(
 
   // From here on the inferior is modified, so the site owns the job of putting
   // the original instructions back. Any failure below destroys the site, which
-  // undoes the patch.
-  bp_injected_site->SetDisplacedInstructions(saved_instrs);
+  // undoes the patch. The patch includes the nop padding, so it covers exactly
+  // the bytes saved_instrs holds.
+  bp_injected_site->SetPatchedInstructions(
+      jmp_addr,
+      std::make_shared<DataBufferHeap>(patch.data(), patch.size()),
+      saved_instrs);
 
   // What the trampoline subtracts from rsp before calling the condition
   // checker: one slot per pushed register, plus the argument structure. The

@@ -128,15 +128,34 @@ public:
 
   size_t GetArgsStructSize() const { return m_args_struct_size; }
 
-  /// Hand over the original bytes that the branch to the trampoline overwrote,
-  /// so that they can be put back when this site goes away.
+  /// Hand over the patch: where it was written, the bytes the branch to the
+  /// trampoline is made of, and the bytes it overwrote.
   ///
   /// The ABI calls this once the site is patched. Until it does, destroying the
   /// site leaves the inferior unmodified, which is what makes it safe for the
   /// trampoline builder to bail out half way through.
-  void SetDisplacedInstructions(lldb::WritableDataBufferSP displaced) {
-    m_displaced_instructions_sp = std::move(displaced);
+  ///
+  /// Both halves arrive together because a site that knows what it displaced but
+  /// not what it wrote can be taken out of the inferior and never put back.
+  ///
+  /// The address is recorded rather than recomputed from the site's Address,
+  /// because by the time a site is disabled the module it belonged to may be
+  /// gone, and with it the section load list an Address needs to resolve.
+  void SetPatchedInstructions(lldb::addr_t address,
+                              lldb::WritableDataBufferSP patch,
+                              lldb::WritableDataBufferSP displaced);
+
+  /// Whether the ABI got far enough to record a patch that can be put back.
+  bool HasPatch() const {
+    return m_patch_instructions_sp && m_displaced_instructions_sp;
   }
+
+  /// Whether the branch to the trampoline is in the inferior right now.
+  bool IsPatched() const { return m_patched; }
+
+  lldb::addr_t GetPatchAddress() const { return m_patch_addr; }
+  llvm::ArrayRef<uint8_t> GetPatchBytes() const;
+  llvm::ArrayRef<uint8_t> GetDisplacedBytes() const;
 
   /// Take ownership of the trampoline reservation this site branches to, so
   /// that the pages are given back when the site goes away.
@@ -155,6 +174,10 @@ public:
 
 private:
   friend class Process;
+
+  /// Record whether the branch to the trampoline is installed. Only Process
+  /// writes this, because only Process writes to the inferior.
+  void SetPatched(bool patched) { m_patched = patched; }
 
   // Constructor
 
@@ -237,6 +260,13 @@ private:
   /// The instructions the branch to the trampoline overwrote, kept so the patch
   /// can be undone. Empty until the ABI has actually patched the site.
   lldb::WritableDataBufferSP m_displaced_instructions_sp;
+  /// The bytes the branch to the trampoline is made of, kept so that re-enabling
+  /// the site is one write rather than a rebuild.
+  lldb::WritableDataBufferSP m_patch_instructions_sp;
+  /// Where the patch was written.
+  lldb::addr_t m_patch_addr = LLDB_INVALID_ADDRESS;
+  /// Whether the patch is in the inferior right now.
+  bool m_patched = false;
   /// The trampoline this site branches to, owned by the site.
   lldb::addr_t m_trampoline_addr = LLDB_INVALID_ADDRESS;
   /// The module describing the trampoline, owned by the site.

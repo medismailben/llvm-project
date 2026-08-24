@@ -27,6 +27,7 @@
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
 #include "lldb/Utility/ConstString.h"
+#include "lldb/Utility/DataBufferHeap.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/RegisterValue.h"
@@ -375,7 +376,11 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   // From here on the inferior is modified, so the site owns the job of putting
   // the original instruction back. Any failure below destroys the site, which
   // undoes the patch.
-  bp_injected_site->SetDisplacedInstructions(saved_instrs);
+  bp_injected_site->SetPatchedInstructions(
+      bp_load_addr,
+      std::make_shared<DataBufferHeap>(trampoline_branch,
+                                       aarch64_instr_size),
+      saved_instrs);
 
   // What the trampoline subtracts from sp before calling the condition checker:
   // the register_context frame plus the argument structure. The unwinder needs
