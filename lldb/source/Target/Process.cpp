@@ -2200,6 +2200,23 @@ lldb::addr_t Process::NextFCBTrampolineAllocation(lldb::addr_t bp_load_addr)
   return addr + page_size * num_pages + 1;
 }
 
+lldb::BreakpointSiteSP
+Process::FindInjectedSiteByTrapAddress(lldb::addr_t trap_addr) {
+  if (trap_addr == LLDB_INVALID_ADDRESS)
+    return nullptr;
+
+  lldb::BreakpointSiteSP found;
+  m_breakpoint_site_list.ForEach([trap_addr, &found](BreakpointSite *site) {
+    if (found)
+      return;
+    auto *injected_site = llvm::dyn_cast<BreakpointInjectedSite>(site);
+    if (injected_site && injected_site->GetTrapAddress() == trap_addr)
+      found = std::static_pointer_cast<BreakpointSite>(
+          injected_site->shared_from_this());
+  });
+  return found;
+}
+
 bool Process::FreeFCBTrampolineAllocation(lldb::addr_t addr) {
   Log *log = GetLog(LLDBLog::JITLoader);
 

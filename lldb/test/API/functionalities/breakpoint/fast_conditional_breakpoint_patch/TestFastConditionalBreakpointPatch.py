@@ -14,6 +14,7 @@ import time
 import lldb
 from lldbsuite.test.decorators import *
 from lldbsuite.test.lldbtest import *
+from lldbsuite.test import lldbutil
 
 
 class FastConditionalBreakpointPatchTestCase(TestBase):
@@ -57,11 +58,9 @@ class FastConditionalBreakpointPatchTestCase(TestBase):
             "the condition was not injected, so it fell back to the debugger",
         )
 
-        # An injected condition traps inside the JIT-ed expression, and lldb does
-        # not currently attribute that trap to the breakpoint, so the stop
-        # arrives as a plain EXC_BREAKPOINT rather than eStopReasonBreakpoint.
-        # Assert the state rather than the reason: tying these tests to the
-        # reason would make them fail the day that is improved.
+        # The stop reason itself is asserted by
+        # test_stop_is_attributed_to_the_breakpoint, so that a regression there
+        # does not fail every test in this file.
         self.assertState(process.GetState(), lldb.eStateStopped)
 
         return process, breakpoint, location
@@ -160,33 +159,18 @@ class FastConditionalBreakpointPatchTestCase(TestBase):
 
     @skipUnlessDarwin
     @skipIf(archs=no_match(["arm64", "arm64e", "x86_64"]))
-    @expectedFailureAll(
-        bugnumber="an injected trap is not recognised as a breakpoint, so "
-        "resuming re-executes it"
-    )
     @add_test_categories(["pyapi"])
     def test_inferior_resumes_through_the_patch(self):
         """The inferior runs to completion through a patched site.
 
-        The trampoline runs the instruction the branch displaced and then
-        branches back to the instruction after it. Getting that second branch
-        wrong sends the inferior somewhere arbitrary, which would show up here as
-        a crash rather than a clean exit.
-
-        Expected to fail today, and the reason is worth spelling out because it
-        is a real gap rather than a test artifact. The condition traps on a
-        `brk` compiled into the JIT-ed expression, which is a permanent
-        instruction rather than a trap lldb installed, so there is no breakpoint
-        site at that address. Nothing advances the pc past it, and resuming
-        re-executes the same trap forever: the process cannot make progress from
-        an injected stop.
-
-        Advancing past the trap is all that is needed, because the rest of the
-        JIT-ed expression returns into the trampoline, which restores the
-        registers, runs the displaced instruction and branches back to user
-        code. That belongs in StopInfo, alongside attributing the stop to the
-        breakpoint so it reports as `breakpoint N.M` rather than
-        EXC_BREAKPOINT.
+        Two things have to hold. The trampoline has to run the instruction the
+        branch displaced and then branch back to the instruction after it;
+        getting that second branch wrong sends the inferior somewhere arbitrary,
+        which shows up here as a crash rather than a clean exit. And the pc has
+        to be advanced past the trap the condition stopped on, which is an
+        instruction compiled into the JIT-ed expression rather than a trap lldb
+        installed, so nothing lifts it: leaving the pc on it means resuming
+        re-executes the same trap forever.
         """
         process, breakpoint, location = self.arm("counter == 9")
 
@@ -224,6 +208,33 @@ class FastConditionalBreakpointPatchTestCase(TestBase):
             frame.GetLineEntry().GetLine(),
             line_number("main.c", self.comment),
             "stopped on the wrong line",
+        )
+
+    @skipUnlessDarwin
+    @skipIf(archs=no_match(["arm64", "arm64e", "x86_64"]))
+    @add_test_categories(["pyapi"])
+    def test_stop_is_attributed_to_the_breakpoint(self):
+        """An injected stop reports as the breakpoint that caused it.
+
+        The condition traps inside the JIT-ed expression, at an address no
+        breakpoint site is registered under, so the stop has to be matched back
+        to its site by trap address. Without that it arrives as a bare
+        EXC_BREAKPOINT: no breakpoint stop reason, no hit count, and nothing to
+        advance the pc past the trap.
+        """
+        process, breakpoint, _ = self.arm("counter == 9")
+
+        thread = lldbutil.get_stopped_thread(
+            process, lldb.eStopReasonBreakpoint)
+        self.assertTrue(
+            thread,
+            "the stop was not attributed to the breakpoint, so it arrived as a "
+            "plain exception",
+        )
+        self.assertEqual(
+            breakpoint.GetHitCount(),
+            1,
+            "the breakpoint's hit count was not maintained",
         )
 
     @skipUnlessDarwin

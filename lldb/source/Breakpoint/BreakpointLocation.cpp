@@ -243,13 +243,18 @@ bool BreakpointLocation::ConditionSaysStop(ExecutionContext &exe_ctx,
     return false;
   }
 
-  bool inject_condition = GetInjectCondition();
-
-  if (inject_condition) {
-    // TODO: Evalutates condition is case of multi-condition
-    // BreakpointInjectSite
-    return false;
-  }
+  // An injected condition has already been evaluated, in the inferior, and the
+  // only reason control got here is that it came out true and trapped.
+  // Evaluating it again out of process would cost the round trip this feature
+  // exists to avoid, and could disagree with the answer the inferior reached: by
+  // now the variables it read may have moved on.
+  //
+  // FIXME: A site with several locations folds all their conditions into one
+  // expression, so the trap says that some condition was true rather than which
+  // one, and every location at the site reports a hit. Stopping too often is the
+  // safe direction, but it is still wrong.
+  if (GetInjectCondition())
+    return true;
 
   error.Clear();
 
@@ -278,9 +283,9 @@ bool BreakpointLocation::ConditionSaysStop(ExecutionContext &exe_ctx,
       return true;
     }
 
-    ExecutionPolicy execution_policy = inject_condition
-                                           ? eExecutionPolicyAlways
-                                           : eExecutionPolicyOnlyWhenNeeded;
+    // An injected condition returned above, so anything reaching here is a
+    // condition the debugger evaluates itself.
+    ExecutionPolicy execution_policy = eExecutionPolicyOnlyWhenNeeded;
 
     if (!m_user_expression_sp->Parse(diagnostics, exe_ctx, execution_policy,
                                      true, false)) {
@@ -305,7 +310,7 @@ bool BreakpointLocation::ConditionSaysStop(ExecutionContext &exe_ctx,
   options.SetTryAllThreads(true);
   options.SetSuppressPersistentResult(
       true); // Don't generate a user variable for condition expressions.
-  options.SetInjectCondition(inject_condition);
+  options.SetInjectCondition(false);
 
   Status expr_error;
 

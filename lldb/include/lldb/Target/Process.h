@@ -2391,6 +2391,18 @@ public:
 
   lldb::addr_t NextFCBTrampolineAllocation(lldb::addr_t bp_load_addr) const;
 
+  /// The injected site whose condition traps at \a trap_addr, if any.
+  ///
+  /// An injected site is registered in the site list under the address it
+  /// patched, but its trap is an instruction compiled into the JIT-ed condition
+  /// somewhere else entirely, so a stop at the trap finds nothing by address.
+  ///
+  /// The trap address is deliberately not registered in the site list as a
+  /// second entry: that list is keyed by address and drives the trap-opcode
+  /// fix-ups in ReadMemory and WriteMemory, so a site appearing twice would
+  /// reintroduce those problems at the trap address.
+  lldb::BreakpointSiteSP FindInjectedSiteByTrapAddress(lldb::addr_t trap_addr);
+
   /// Give back the trampoline reservation made by
   /// NewFCBTrampolineAllocation() and deallocate its pages.
   ///
