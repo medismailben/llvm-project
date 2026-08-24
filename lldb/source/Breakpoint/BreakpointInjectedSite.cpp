@@ -338,6 +338,23 @@ bool BreakpointInjectedSite::GatherArgumentsMetadata() {
     return false;
   }
 
+  // A condition that reads no variable from the program is a constant, so there
+  // is nothing for the inferior to decide that could not have been decided when
+  // the breakpoint was set. Refuse rather than build a trampoline, a JIT-ed
+  // expression and an argument structure to evaluate it.
+  //
+  // This also keeps the feature away from a case it does not handle correctly:
+  // with no variables the argument structure is zero bytes, so the trampoline
+  // reserves nothing for it and hands the condition a pointer to its own saved
+  // register context, and the unwind out of the trampoline picks the wrong plan
+  // and loses the user's frame.
+  if (captured_or_err->variables.empty()) {
+    LLDB_LOG(log,
+             "FCB: the condition reads no variables, so evaluating it in the "
+             "inferior would decide nothing");
+    return false;
+  }
+
   // The layout is authoritative, including its padding. Accumulating a size
   // from the variables this pass happens to understand would disagree with what
   // the condition expression was compiled to read.
