@@ -161,6 +161,11 @@ public:
 
   ClangExpressionDeclMap *DeclMap() { return m_type_system_helper.DeclMap(); }
 
+  llvm::Expected<std::vector<lldb::ExpressionVariableSP>>
+  GetCapturedVariables() override;
+
+  void ResetCapturedVariables() override { ResetDeclMap(); }
+
   void ResetDeclMap() { m_type_system_helper.ResetDeclMap(); }
 
   void ResetDeclMap(ExecutionContext &exe_ctx,

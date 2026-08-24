@@ -2373,6 +2373,13 @@ public:
 
   lldb::addr_t NextFCBTrampolineAllocation(lldb::addr_t bp_load_addr) const;
 
+  /// Give back the trampoline reservation made by
+  /// NewFCBTrampolineAllocation() and deallocate its pages.
+  ///
+  /// \return
+  ///     \b true if the reservation was found and released, \b false otherwise.
+  bool FreeFCBTrampolineAllocation(lldb::addr_t addr);
+
   Status DisableBreakpointSiteByID(lldb::user_id_t break_id);
 
   Status EnableBreakpointSiteByID(lldb::user_id_t break_id);

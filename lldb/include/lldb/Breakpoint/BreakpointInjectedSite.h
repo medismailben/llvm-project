@@ -128,6 +128,31 @@ public:
 
   size_t GetArgsStructSize() const { return m_args_struct_size; }
 
+  /// Hand over the original bytes that the branch to the trampoline overwrote,
+  /// so that they can be put back when this site goes away.
+  ///
+  /// The ABI calls this once the site is patched. Until it does, destroying the
+  /// site leaves the inferior unmodified, which is what makes it safe for the
+  /// trampoline builder to bail out half way through.
+  void SetDisplacedInstructions(lldb::WritableDataBufferSP displaced) {
+    m_displaced_instructions_sp = std::move(displaced);
+  }
+
+  /// Take ownership of the trampoline reservation this site branches to, so
+  /// that the pages are given back when the site goes away.
+  ///
+  /// Call this as soon as the allocation succeeds: a trampoline builder that
+  /// fails afterwards drops the site, which is what releases it.
+  void SetTrampolineAllocation(lldb::addr_t address) {
+    m_trampoline_addr = address;
+  }
+
+  /// Take ownership of the module describing the trampoline, which is what
+  /// makes its addresses symbolicate and its unwind plan reachable.
+  void SetTrampolineModule(lldb::ModuleSP module_sp) {
+    m_trampoline_module_sp = std::move(module_sp);
+  }
+
 private:
   friend class Process;
 
@@ -209,6 +234,13 @@ private:
   std::vector<VariableMetadata> m_metadatas;
   /// The size of the JIT-ed argument structure.
   size_t m_args_struct_size;
+  /// The instructions the branch to the trampoline overwrote, kept so the patch
+  /// can be undone. Empty until the ABI has actually patched the site.
+  lldb::WritableDataBufferSP m_displaced_instructions_sp;
+  /// The trampoline this site branches to, owned by the site.
+  lldb::addr_t m_trampoline_addr = LLDB_INVALID_ADDRESS;
+  /// The module describing the trampoline, owned by the site.
+  lldb::ModuleSP m_trampoline_module_sp;
 };
 
 } // namespace lldb_private

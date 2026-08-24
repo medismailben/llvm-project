@@ -466,25 +466,27 @@ lldb::addr_t AllocatedMemoryCache::AllocateMemory(size_t byte_size,
                                                   Status &error, addr_t addr) {
   std::lock_guard<std::recursive_mutex> guard(m_mutex);
 
+  const addr_t requested_addr = addr;
+  addr = LLDB_INVALID_ADDRESS;
+
   std::pair<PermissionsToBlockMap::iterator, PermissionsToBlockMap::iterator>
       range = m_memory_map.equal_range(permissions);
 
-  bool reserved_block = false;
-  for (PermissionsToBlockMap::iterator pos = range.first; pos != range.second;
-       ++pos) {
-    if (addr == LLDB_INVALID_ADDRESS ||
-        (addr != LLDB_INVALID_ADDRESS && (*pos).second->Contains(addr))) {
+  // A caller asking for a particular address cannot be served out of an
+  // existing block, because a block hands back whichever chunk happens to be
+  // free rather than a chosen one. Those requests go straight to a fresh page.
+  if (requested_addr == LLDB_INVALID_ADDRESS) {
+    for (PermissionsToBlockMap::iterator pos = range.first; pos != range.second;
+         ++pos) {
       addr = (*pos).second->ReserveBlock(byte_size);
-      reserved_block = true;
+      if (addr != LLDB_INVALID_ADDRESS)
+        break;
     }
-
-    if (reserved_block)
-      break;
   }
 
-  if (!reserved_block) {
+  if (addr == LLDB_INVALID_ADDRESS) {
     AllocatedBlockSP block_sp(
-        AllocatePage(byte_size, permissions, 16, error, addr));
+        AllocatePage(byte_size, permissions, 16, error, requested_addr));
 
     if (block_sp)
       addr = block_sp->ReserveBlock(byte_size);

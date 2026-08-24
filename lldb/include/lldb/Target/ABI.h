@@ -108,7 +108,25 @@ public:
 
   virtual lldb::UnwindPlanSP CreateDefaultUnwindPlan() = 0;
 
-  virtual lldb::UnwindPlanSP CreateTrampolineUnwindPlan(lldb::addr_t return_address) {
+  /// Describe how to unwind out of a fast conditional breakpoint trampoline.
+  ///
+  /// A trampoline is reached by a branch rather than a call, so the stack
+  /// pointer of the function it was branched out of is unchanged. That makes
+  /// the canonical frame address of the trampoline frame equal to that stack
+  /// pointer, which is \a frame_size above where the stack pointer sits once
+  /// the trampoline has built its frame.
+  ///
+  /// \param[in] site_address
+  ///     The patched address in the user's code. Reported as the program
+  ///     counter of the frame above, because the displaced instructions have
+  ///     not run yet when the condition is evaluated.
+  ///
+  /// \param[in] frame_size
+  ///     How much the trampoline subtracts from the stack pointer before
+  ///     calling the condition checker: the saved register context plus the
+  ///     argument structure.
+  virtual lldb::UnwindPlanSP
+  CreateTrampolineUnwindPlan(lldb::addr_t site_address, size_t frame_size) {
     return {};
   }
 
@@ -179,12 +197,23 @@ public:
   ///    needed to size the argument structure.
   ///
   /// \return
-  ///    \b true if the trampoline was built and installed, \b false otherwise.
+  ///    Success if the trampoline was built and installed, otherwise the reason
+  ///    it could not be. That reason is shown to the user as the explanation
+  ///    for why the condition is evaluated out of process instead, so it should
+  ///    read as a sentence rather than as a log line.
   ///
-  virtual bool SetupFastConditionalBreakpointTrampoline(
+  virtual llvm::Error SetupFastConditionalBreakpointTrampoline(
       BreakpointInjectedSite *bp_inject_site) {
-    return false;
+    return llvm::createStringError(llvm::formatv(
+        "the {0} ABI does not implement injected conditions", GetPluginName()));
   }
+
+  /// Log the disassembly of a freshly built trampoline.
+  ///
+  /// The trampoline is only registered as a module once it is installed, so
+  /// this is the only way to inspect it when something goes wrong before that.
+  void LogTrampolineDisassembly(llvm::ArrayRef<uint8_t> trampoline,
+                                lldb::addr_t address);
 
   virtual llvm::ArrayRef<uint8_t> GetJumpOpcode() { return {}; }
 
@@ -253,8 +282,24 @@ protected:
   lldb::ProcessWP m_process_wp;
   std::unique_ptr<llvm::MCRegisterInfo> m_mc_register_info_up;
 
+  /// Wrap an installed trampoline in a Module so that the unwinder can walk out
+  /// of it.
+  ///
+  /// \param[in] address
+  ///     Where the trampoline was installed.
+  ///
+  /// \param[in] size
+  ///     Its size in bytes.
+  ///
+  /// \param[in] site_address
+  ///     The patched address in the user's code.
+  ///
+  /// \param[in] frame_size
+  ///     How much the trampoline subtracts from the stack pointer before
+  ///     calling the condition checker.
   lldb::ModuleSP CreateModuleForFastConditionalBreakpointTrampoline(
-      lldb::addr_t address, std::size_t size, lldb::addr_t return_address);
+      lldb::addr_t address, std::size_t size, lldb::addr_t site_address,
+      size_t frame_size);
 
 private:
   ABI(const ABI &) = delete;

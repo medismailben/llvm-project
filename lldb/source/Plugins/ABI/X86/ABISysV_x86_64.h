@@ -96,7 +96,8 @@ public:
 
   lldb::UnwindPlanSP CreateDefaultUnwindPlan() override;
 
-  lldb::UnwindPlanSP CreateTrampolineUnwindPlan(lldb::addr_t return_address) override;
+  lldb::UnwindPlanSP CreateTrampolineUnwindPlan(lldb::addr_t site_address,
+                                                size_t frame_size) override;
 
   bool RegisterIsVolatile(const lldb_private::RegisterInfo *reg_info) override;
 
@@ -130,7 +131,7 @@ public:
   bool GetFramePointerRegister(const char *&name) override;
 
   /// \copydoc lldb_private::ABI::SetupFastConditionalBreakpointTrampoline()
-  bool SetupFastConditionalBreakpointTrampoline(
+  llvm::Error SetupFastConditionalBreakpointTrampoline(
       lldb_private::BreakpointInjectedSite *bp_inject_site) override;
 
   size_t GetJumpSize() override { return x86_64_jmp_size; }

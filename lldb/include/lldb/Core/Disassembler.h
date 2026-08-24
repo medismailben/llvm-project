@@ -32,6 +32,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -173,6 +174,64 @@ public:
 
   virtual bool IsAuthenticated() = 0;
 
+  /// Whether any operand of this instruction is relative to the program
+  /// counter.
+  ///
+  /// Copying such an instruction to a different address changes what it refers
+  /// to, so anything that relocates instructions must either adjust the operand
+  /// or decline to move it.
+  ///
+  /// This is a best effort answer derived from the instruction descriptor, so
+  /// it is deliberately biased towards \b true: a caller that relocates
+  /// instructions is expected to treat it as "may be position dependent" rather
+  /// than as proof.
+  ///
+  /// \return
+  ///     \b false only when the instruction is known to be position
+  ///     independent, \b true when it is PC-relative or when the disassembler
+  ///     cannot tell.
+  virtual bool IsPCRelative() { return true; }
+
+  /// The address this instruction refers to through a PC-relative operand.
+  ///
+  /// \param[in] pc
+  ///     The address to interpret this instruction at. The result is in the
+  ///     same address domain as this argument.
+  ///
+  /// \return
+  ///     The referenced address, or \b std::nullopt when the instruction is not
+  ///     PC-relative, or when the target cannot be known without running the
+  ///     program, as is the case for an indirect branch.
+  virtual std::optional<lldb::addr_t> GetReferencedAddress(lldb::addr_t pc) {
+    return std::nullopt;
+  }
+
+  /// How this instruction touches a register.
+  ///
+  /// Aliasing is accounted for, so asking about "x16" also reports an access
+  /// through "w16", and asking about "rax" reports an access through "eax".
+  struct RegisterAccess {
+    /// The instruction reads the register, including reading it as part of a
+    /// read-modify-write.
+    bool reads = true;
+    /// The instruction overwrites the register without depending on its
+    /// previous contents.
+    bool writes = false;
+  };
+
+  /// Whether this instruction reads or writes \a reg_name.
+  ///
+  /// Biased like IsPCRelative(): a disassembler that cannot answer reports a
+  /// read and no write, which is what makes a caller doing liveness analysis
+  /// conclude that the register is live and give up.
+  ///
+  /// \param[in] reg_name
+  ///     The register name as the disassembler spells it, matched
+  ///     case-insensitively.
+  virtual RegisterAccess GetRegisterAccess(llvm::StringRef reg_name) {
+    return RegisterAccess();
+  }
+
   bool CanSetBreakpoint();
 
   virtual size_t Decode(const Disassembler &disassembler,
@@ -231,6 +290,12 @@ public:
   }
 
   virtual bool IsCall() { return false; }
+
+  /// Whether this instruction returns from the function.
+  ///
+  /// Unlike GetControlFlowKind(), which only x86 implements, this comes from the
+  /// instruction descriptor and so works on every target.
+  virtual bool IsReturn() { return false; }
 
   static const char *GetNameForInstructionControlFlowKind(
       lldb::InstructionControlFlowKind instruction_control_flow_kind);

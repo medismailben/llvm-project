@@ -19,6 +19,7 @@
 #include "Utility/ARM64_DWARF_Registers.h"
 #include "lldb/Breakpoint/BreakpointInjectedSite.h"
 #include "lldb/Core/Module.h"
+#include "lldb/Core/PatchSiteAnalysis.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/Value.h"
 #include "lldb/Target/Process.h"
@@ -70,9 +71,14 @@ static const uint8_t g_aarch64_nop_bytes[] = {0x1f, 0x20, 0x03, 0xd5};
 /// `b` encodes a signed 26 bit immediate scaled by the instruction size, which
 /// gives it a reach of +/-128MiB.
 static bool IsBranchInRange(int64_t byte_offset) {
-  if (byte_offset % ABIMacOSX_arm64::aarch64_instr_size)
+  // Signed arithmetic throughout: aarch64_instr_size is unsigned, so dividing a
+  // negative offset by it directly would convert the offset to a huge unsigned
+  // value and report every backward branch as unreachable.
+  constexpr int64_t instr_size = ABIMacOSX_arm64::aarch64_instr_size;
+
+  if (byte_offset % instr_size)
     return false;
-  return llvm::isInt<26>(byte_offset / ABIMacOSX_arm64::aarch64_instr_size);
+  return llvm::isInt<26>(byte_offset / instr_size);
 }
 
 /// Locate the pair of reserved nops at the end of the emitted trampoline.
@@ -99,24 +105,30 @@ static lldb::offset_t FindTrampolineNopSlots(llvm::ArrayRef<uint8_t> buffer) {
   return LLDB_INVALID_OFFSET;
 }
 
-bool ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
+llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
     BreakpointInjectedSite *bp_injected_site) {
-  Log *log = GetLog(LLDBLog::JITLoader);
-
   TargetSP target_sp = bp_injected_site->GetTargetSP();
-  if (!target_sp) {
-    // Add logging
-    return false;
-  }
+  if (!target_sp)
+    return llvm::createStringError("the breakpoint site has no target");
 
   ProcessSP process_sp = target_sp->GetProcessSP();
-  if (!process_sp) {
-    // Add logging
-    return false;
-  }
+  if (!process_sp)
+    return llvm::createStringError("there is no live process to patch");
 
   // A single `b` displaces exactly one instruction, which is checked against
   // what SaveInstructions() returns below.
+  //
+  // Everything after this assumes the displaced instruction can run from a
+  // different address and that nothing else in the function reaches into the
+  // bytes being overwritten. Refuse rather than corrupt the inferior when that
+  // does not hold; the caller falls back to evaluating the condition out of
+  // process.
+  if (llvm::Error error = PatchSiteAnalysis::CanPatch(
+          *process_sp, bp_injected_site->GetRealAddress(),
+          aarch64_instr_size)) {
+    return error;
+  }
+
   std::stringstream ss;
 
   ss << "__attribute__((naked,noreturn)) void $__lldb_emit_trampoline() {\n"
@@ -216,24 +228,22 @@ bool ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   ExecutionContext exe_ctx = bp_injected_site->GetOwnerExecutionContext();
   auto trampoline_instr = EmitAssembly("emit_trampoline", ss, exe_ctx);
   if (!trampoline_instr)
-    return false;
+    return llvm::createStringError("couldn't assemble the trampoline");
 
   Address &bp_addr = bp_injected_site->GetRealAddress();
   addr_t bp_load_addr = bp_addr.GetLoadAddress(target_sp.get());
   auto saved_instrs = process_sp->SaveInstructions(bp_addr);
   if (!saved_instrs) {
-    LLDB_LOG(log,
-             "JIT: Couldn't save the instructions displaced by the branch");
-    return false;
+    return llvm::createStringError(
+        "Couldn't save the instructions displaced by the branch");
   }
 
   // Only the two nop slots reserved at the end of the trampoline are available
   // for the displaced instruction and the branch back.
   if (saved_instrs->GetByteSize() != aarch64_instr_size) {
-    LLDB_LOG(log,
-             "JIT: Expected {0} bytes of displaced instructions, saved {1}",
-             aarch64_instr_size, saved_instrs->GetByteSize());
-    return false;
+    return llvm::createStringError(
+        llvm::formatv("Expected {0} bytes of displaced instructions, saved {1}",
+                      aarch64_instr_size, saved_instrs->GetByteSize()));
   }
 
   /// Allocate trampoline +100MiB from the bp site
@@ -249,15 +259,18 @@ bool ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
       trampoline_size, permission, error, trampoline_expected_addr);
   // Check that the returned trampoline addr is the paged aligned expected addr.
   if (!trampoline_addr || trampoline_addr == LLDB_INVALID_ADDRESS) {
-    LLDB_LOG(log, "JIT: Couldn't allocate trampoline buffer");
-    return false;
+    return llvm::createStringError("Couldn't allocate trampoline buffer");
   }
 
   if (!process_sp->NewFCBTrampolineAllocation(trampoline_addr,
                                               trampoline_size)) {
-    LLDB_LOG(log, "JIT: Allocated trampoline address already in use");
-    return false;
+    return llvm::createStringError(
+        "Allocated trampoline address already in use");
   }
+
+  // The site owns the reservation from here on, so any failure below releases
+  // it by destroying the site.
+  bp_injected_site->SetTrampolineAllocation(trampoline_addr);
 
   const auto &trampoline_buffer = trampoline_instr->GetData();
 
@@ -269,24 +282,35 @@ bool ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
       FindTrampolineNopSlots(trampoline_buffer);
 
   if (copied_instr_offset == LLDB_INVALID_OFFSET) {
-    LLDB_LOG(log,
-             "JIT: Couldn't find the reserved nop slots in the trampoline");
-    return false;
+    return llvm::createStringError(
+        "Couldn't find the reserved nop slots in the trampoline");
   }
 
-  const intptr_t source_branch_target =
-      bp_load_addr - trampoline_addr + copied_instr_offset + aarch64_instr_size;
+  // `b <imm>` assembles the immediate as a PC-relative byte offset, so the
+  // offset has to be measured from where the instruction ends up in the
+  // trampoline, not from wherever the assembler happened to lay it out. The
+  // branch back occupies the second nop slot, right after the displaced
+  // instruction in the first, and resumes at the instruction following the one
+  // the patch overwrote.
+  //
+  // Signed throughout: every term is an unsigned type, so computing this in
+  // their arithmetic and only then storing it signed relies on wraparound.
+  const int64_t source_resume_addr = static_cast<int64_t>(bp_load_addr) +
+                                     static_cast<int64_t>(aarch64_instr_size);
+  const int64_t source_branch_addr =
+      static_cast<int64_t>(trampoline_addr) +
+      static_cast<int64_t>(copied_instr_offset) +
+      static_cast<int64_t>(aarch64_instr_size);
+  const int64_t source_branch_target = source_resume_addr - source_branch_addr;
 
   // `b` reaches +/-128MiB, and the trampoline is deliberately allocated far
   // from the code it patches, so both directions have to be checked.
   if (!IsBranchInRange(source_branch_target) ||
       !IsBranchInRange(static_cast<int64_t>(trampoline_addr) -
                        static_cast<int64_t>(bp_load_addr))) {
-    LLDB_LOG(
-        log,
-        "JIT: Trampoline at {0:x} is out of branch range of the site {1:x}",
-        trampoline_addr, bp_load_addr);
-    return false;
+    return llvm::createStringError(llvm::formatv(
+        "the trampoline at {0:x} is out of branch range of the site at {1:x}",
+        trampoline_addr, bp_load_addr));
   }
 
   ss = std::stringstream();
@@ -300,7 +324,8 @@ bool ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
 
   auto branch_instr = EmitAssembly("emit_branch_to_source", ss, exe_ctx);
   if (!branch_instr)
-    return false;
+    return llvm::createStringError(
+        "couldn't assemble the branch back to the user's code");
 
   /// Copy inferior instructions into trampoline.
   std::memcpy(&trampoline_buffer[copied_instr_offset], saved_instrs->GetBytes(),
@@ -308,15 +333,20 @@ bool ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   std::memcpy(&trampoline_buffer[copied_instr_offset + aarch64_instr_size],
               branch_instr->GetBytes(), aarch64_instr_size);
 
+  // The trampoline is only registered as a module once everything below
+  // succeeds, so this is the one chance to see what was built.
+  LogTrampolineDisassembly(trampoline_buffer, trampoline_addr);
+
   size_t written_bytes = process_sp->WriteMemory(
       trampoline_addr, trampoline_buffer.data(), trampoline_size, error);
   if (written_bytes != trampoline_size || error.Fail()) {
-    LLDB_LOG(log, "JIT: Couldn't write trampoline buffer to inferior");
-    return false;
+    return llvm::createStringError(
+        "Couldn't write trampoline buffer to inferior");
   }
 
   /// Patch inferior to branch to trampoline
-  const intptr_t trampoline_branch_target = trampoline_addr - bp_load_addr;
+  const int64_t trampoline_branch_target =
+      static_cast<int64_t>(trampoline_addr) - static_cast<int64_t>(bp_load_addr);
   ss = std::stringstream();
   ss << "__attribute__((naked,noreturn)) void "
         "$__lldb_emit_branch_to_trampoline() {\n"
@@ -328,23 +358,35 @@ bool ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
 
   branch_instr = EmitAssembly("emit_branch_to_trampoline", ss, exe_ctx);
   if (!branch_instr)
-    return false;
+    return llvm::createStringError(
+        "couldn't assemble the branch to the trampoline");
 
   written_bytes = process_sp->WriteMemory(
       bp_load_addr, branch_instr->GetBytes(), aarch64_instr_size, error);
   if (written_bytes != aarch64_instr_size || error.Fail()) {
-    LLDB_LOG(log, "JIT: Couldn't patch inferior with branch to trampoline");
-    return false;
+    return llvm::createStringError(
+        "Couldn't patch inferior with branch to trampoline");
   }
 
-  // The trampoline returns to the instruction after the branch it displaced.
+  // From here on the inferior is modified, so the site owns the job of putting
+  // the original instruction back. Any failure below destroys the site, which
+  // undoes the patch.
+  bp_injected_site->SetDisplacedInstructions(saved_instrs);
+
+  // What the trampoline subtracts from sp before calling the condition checker:
+  // the register_context frame plus the argument structure. The unwinder needs
+  // this to recover the stack pointer of the patched function, which the branch
+  // into the trampoline left untouched.
+  const size_t trampoline_frame_size =
+      aarch64_register_context_size + args_struct_size;
+
   lldb::ModuleSP trampoline_module_sp =
       CreateModuleForFastConditionalBreakpointTrampoline(
-          trampoline_addr, trampoline_size, bp_load_addr + aarch64_instr_size);
+          trampoline_addr, trampoline_size, bp_load_addr,
+          trampoline_frame_size);
 
   if (!trampoline_module_sp) {
-    LLDB_LOG(log, "JIT: Couldn't get trampoline module");
-    return false;
+    return llvm::createStringError("Couldn't get trampoline module");
   }
 
   ModuleList &images = target_sp->GetImages();
@@ -353,11 +395,13 @@ bool ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   images.Append(trampoline_module_sp);
 
   if (images.GetSize() == image_count) {
-    LLDB_LOG(log, "JIT: Couldn't add trampoline module to image list");
-    return false;
+    return llvm::createStringError(
+        "Couldn't add trampoline module to image list");
   }
 
-  return true;
+  bp_injected_site->SetTrampolineModule(trampoline_module_sp);
+
+  return llvm::Error::success();
 }
 
 size_t ABIMacOSX_arm64::GetRedZoneSize() const { return 128; }
@@ -667,25 +711,39 @@ ABIMacOSX_arm64::SetReturnValueObject(lldb::StackFrameSP &frame_sp,
   return error;
 }
 
-lldb::UnwindPlanSP ABIMacOSX_arm64::CreateTrampolineUnwindPlan(addr_t return_address) {
+lldb::UnwindPlanSP
+ABIMacOSX_arm64::CreateTrampolineUnwindPlan(addr_t site_address,
+                                            size_t frame_size) {
   uint32_t pc_reg_num = arm64_dwarf::pc;
   uint32_t sp_reg_num = arm64_dwarf::sp;
 
   UnwindPlan::Row row;
-  row.GetCFAValue().SetIsRegisterPlusOffset(sp_reg_num, 0x100);
+
+  // The trampoline is branched to rather than called, so the stack pointer of
+  // the function it left is exactly frame_size above the current one: nothing
+  // pushed a return address. That value is this frame's CFA.
+  row.GetCFAValue().SetIsRegisterPlusOffset(sp_reg_num, frame_size);
   row.SetOffset(0);
 
-  // The original SP for the caller frame can be recovered as SP + 0x100 + 0x10
-  row.SetRegisterLocationToIsCFAPlusOffset(sp_reg_num, 0x110, true);
+  // The single row is calibrated for the only place execution can stop, inside
+  // the condition checker, where the whole frame has been built. Earlier in the
+  // trampoline the stack pointer is higher and this row does not describe it.
 
-  row.SetRegisterLocationToConstantValue(pc_reg_num, return_address, true);
+  // A frame's CFA is defined to be its caller's stack pointer.
+  row.SetRegisterLocationToIsCFAPlusOffset(sp_reg_num, 0, true);
+
+  // Report the patched address itself rather than where the trampoline will
+  // resume: the displaced instruction has not run yet. The frame is marked as a
+  // trap below so that the unwinder does not back the address up by one the way
+  // it would for a return address.
+  row.SetRegisterLocationToConstantValue(pc_reg_num, site_address, true);
 
   auto plan_sp = std::make_shared<UnwindPlan>(eRegisterKindDWARF);
   plan_sp->AppendRow(row);
   plan_sp->SetSourceName("arm64-apple-darwin trampoline unwind plan");
   plan_sp->SetSourcedFromCompiler(eLazyBoolNo);
   plan_sp->SetUnwindPlanValidAtAllInstructions(eLazyBoolNo);
-  plan_sp->SetUnwindPlanForSignalTrap(eLazyBoolNo);
+  plan_sp->SetUnwindPlanForSignalTrap(eLazyBoolYes);
   return plan_sp;
 }
 

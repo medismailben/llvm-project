@@ -50,6 +50,7 @@ add_lldb_library(lldbCore NO_PLUGIN_DEPENDENCIES
   ModuleChild.cpp
   ModuleList.cpp
   Opcode.cpp
+  PatchSiteAnalysis.cpp
   PluginManager.cpp
   Progress.cpp
   ProtocolServer.cpp

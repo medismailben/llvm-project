@@ -16,6 +16,7 @@
 
 #include "lldb/Breakpoint/BreakpointInjectedSite.h"
 #include "lldb/Core/Module.h"
+#include "lldb/Core/PatchSiteAnalysis.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/Value.h"
 #include "lldb/Symbol/UnwindPlan.h"
@@ -84,14 +85,14 @@ ABISysV_x86_64::GetDebugTrapOpcode() {
   return llvm::ArrayRef(g_x86_64_debug_trap_opcodes);
 }
 
-bool ABISysV_x86_64::SetupFastConditionalBreakpointTrampoline(
+llvm::Error ABISysV_x86_64::SetupFastConditionalBreakpointTrampoline(
     BreakpointInjectedSite *bp_injected_site) {
   Log *log = GetLog(LLDBLog::JITLoader);
 
   ProcessSP process_sp = m_process_wp.lock();
   if (!process_sp) {
-    LLDB_LOG(log, "JIT: No live process to install the trampoline into");
-    return false;
+    return llvm::createStringError(
+        "No live process to install the trampoline into");
   }
 
   const lldb::addr_t jmp_addr = bp_injected_site->GetLoadAddress();
@@ -100,15 +101,24 @@ bool ABISysV_x86_64::SetupFastConditionalBreakpointTrampoline(
   const lldb::addr_t util_func_addr =
       bp_injected_site->GetUtilityFunctionAddress();
 
+  // Everything below assumes the displaced instructions can run from a
+  // different address and that nothing else in the function reaches into the
+  // bytes being overwritten. Refuse rather than corrupt the inferior when that
+  // does not hold; the caller falls back to evaluating the condition out of
+  // process.
+  Address &bp_addr = bp_injected_site->GetRealAddress();
+  if (llvm::Error error =
+          PatchSiteAnalysis::CanPatch(*process_sp, bp_addr, x86_64_jmp_size)) {
+    return error;
+  }
+
   // The instructions displaced by the branch have to run out of the trampoline,
   // so save them before anything patches the site.
-  Address &bp_addr = bp_injected_site->GetRealAddress();
   WritableDataBufferSP saved_instrs = process_sp->SaveInstructions(bp_addr);
 
   if (!saved_instrs) {
-    LLDB_LOG(log,
-             "JIT: Couldn't save the instructions displaced by the branch");
-    return false;
+    return llvm::createStringError(
+        "Couldn't save the instructions displaced by the branch");
   }
 
   const size_t instrs_size = saved_instrs->GetByteSize();
@@ -116,11 +126,10 @@ bool ABISysV_x86_64::SetupFastConditionalBreakpointTrampoline(
   // Fewer bytes than the branch needs means the branch would overwrite an
   // instruction that was never copied out.
   if (instrs_size < x86_64_jmp_size) {
-    LLDB_LOG(
-        log,
-        "JIT: Saved {0} bytes of displaced instructions, need at least {1}",
-        instrs_size, x86_64_jmp_size);
-    return false;
+    return llvm::createStringError(llvm::formatv(
+        "only {0} bytes of instructions could be moved out of line, the branch "
+        "needs {1}",
+        instrs_size, x86_64_jmp_size));
   }
 
   const size_t variable_count = bp_injected_site->GetVariableCount();
@@ -135,10 +144,9 @@ bool ABISysV_x86_64::SetupFastConditionalBreakpointTrampoline(
 
   // The reservation is encoded as the signed imm8 of a single sub/add pair.
   if (args_struct_size > std::numeric_limits<int8_t>::max()) {
-    LLDB_LOG(log,
-             "JIT: Argument structure of {0} bytes is too large to reserve",
-             args_struct_size);
-    return false;
+    return llvm::createStringError(
+        llvm::formatv("Argument structure of {0} bytes is too large to reserve",
+                      args_struct_size));
   }
 
   const size_t context_size =
@@ -177,17 +185,20 @@ bool ABISysV_x86_64::SetupFastConditionalBreakpointTrampoline(
       expected_trampoline_size, permissions, error, expected_trampoline_addr);
 
   if (trampoline_addr == LLDB_INVALID_ADDRESS || error.Fail()) {
-    LLDB_LOG(log, "JIT: Couldn't allocate trampoline buffer: {0}",
-             error.AsCString());
-    return false;
+    return llvm::createStringError(llvm::formatv(
+        "Couldn't allocate trampoline buffer: {0}", error.AsCString()));
   }
 
   if (!process_sp->NewFCBTrampolineAllocation(trampoline_addr,
                                               expected_trampoline_size)) {
-    LLDB_LOG(log, "JIT: Allocated trampoline address {0:x} is already in use",
-             trampoline_addr);
-    return false;
+    return llvm::createStringError(
+        llvm::formatv("Allocated trampoline address {0:x} is already in use",
+                      trampoline_addr));
   }
+
+  // The site owns the reservation from here on, so any failure below releases it
+  // by destroying the site.
+  bp_injected_site->SetTrampolineAllocation(trampoline_addr);
 
   llvm::SmallVector<uint8_t, 128> trampoline;
   trampoline.reserve(expected_trampoline_size);
@@ -287,25 +298,26 @@ bool ABISysV_x86_64::SetupFastConditionalBreakpointTrampoline(
   /// Jump back to user's code, past the branch that was patched in below.
   append_jmp(jmp_addr + instrs_size);
 
-  if (displacement_out_of_range) {
-    LLDB_LOG(log, "JIT: Trampoline is out of reach of the code it patches");
-    return false;
-  }
+  if (displacement_out_of_range)
+    return llvm::createStringError(
+        "the trampoline is out of reach of the code it patches");
 
   if (trampoline.size() != expected_trampoline_size) {
-    LLDB_LOG(
-        log,
-        "JIT: Trampoline size ({0} bytes) is not the one expected ({1} bytes)",
-        trampoline.size(), expected_trampoline_size);
-    return false;
+    return llvm::createStringError(llvm::formatv(
+        "the trampoline came out {0} bytes instead of the expected {1}",
+        trampoline.size(), expected_trampoline_size));
   }
+
+  // The trampoline is only registered as a module once everything below
+  // succeeds, so this is the one chance to see what was built.
+  LogTrampolineDisassembly(trampoline, trampoline_addr);
 
   size_t written_bytes = process_sp->WriteMemory(
       trampoline_addr, trampoline.data(), trampoline.size(), error);
 
   if (written_bytes != trampoline.size() || error.Fail()) {
-    LLDB_LOG(log, "JIT: Couldn't write trampoline buffer to inferior");
-    return false;
+    return llvm::createStringError(
+        "Couldn't write trampoline buffer to inferior");
   }
 
   // Overwrite current instruction with JMP.
@@ -317,10 +329,9 @@ bool ABISysV_x86_64::SetupFastConditionalBreakpointTrampoline(
         static_cast<int64_t>(trampoline_addr) -
         static_cast<int64_t>(jmp_addr + x86_64_jmp_size);
     if (!llvm::isInt<32>(displacement)) {
-      LLDB_LOG(log,
-               "JIT: Trampoline at {0:x} is out of reach of the site {1:x}",
-               trampoline_addr, jmp_addr);
-      return false;
+      return llvm::createStringError(
+          llvm::formatv("Trampoline at {0:x} is out of reach of the site {1:x}",
+                        trampoline_addr, jmp_addr));
     }
     const uint32_t encoded = static_cast<uint32_t>(displacement);
     for (unsigned byte = 0; byte < sizeof(uint32_t); ++byte)
@@ -336,17 +347,28 @@ bool ABISysV_x86_64::SetupFastConditionalBreakpointTrampoline(
       process_sp->WriteMemory(jmp_addr, patch.data(), patch.size(), error);
 
   if (written_bytes != patch.size() || error.Fail()) {
-    LLDB_LOG(log, "JIT: Couldn't override instruction with branching");
-    return false;
+    return llvm::createStringError(
+        "Couldn't override instruction with branching");
   }
+
+  // From here on the inferior is modified, so the site owns the job of putting
+  // the original instructions back. Any failure below destroys the site, which
+  // undoes the patch.
+  bp_injected_site->SetDisplacedInstructions(saved_instrs);
+
+  // What the trampoline subtracts from rsp before calling the condition
+  // checker: one slot per pushed register, plus the argument structure. The
+  // unwinder needs this to recover the stack pointer of the patched function,
+  // which the branch into the trampoline left untouched.
+  const size_t trampoline_frame_size =
+      16 * address_size_in_byte + args_struct_size;
 
   lldb::ModuleSP trampoline_module_sp =
       CreateModuleForFastConditionalBreakpointTrampoline(
-          trampoline_addr, trampoline.size(), jmp_addr + instrs_size);
+          trampoline_addr, trampoline.size(), jmp_addr, trampoline_frame_size);
 
   if (!trampoline_module_sp) {
-    LLDB_LOG(log, "JIT: Couldn't get trampoline module");
-    return false;
+    return llvm::createStringError("Couldn't get trampoline module");
   }
 
   Target &target = process_sp->GetTarget();
@@ -356,11 +378,13 @@ bool ABISysV_x86_64::SetupFastConditionalBreakpointTrampoline(
   images.Append(trampoline_module_sp);
 
   if (images.GetSize() == image_count) {
-    LLDB_LOG(log, "JIT: Couldn't add trampoline module to image list");
-    return false;
+    return llvm::createStringError(
+        "Couldn't add trampoline module to image list");
   }
 
-  return true;
+  bp_injected_site->SetTrampolineModule(trampoline_module_sp);
+
+  return llvm::Error::success();
 }
 
 size_t ABISysV_x86_64::GetRedZoneSize() const { return 128; }
@@ -1200,19 +1224,30 @@ UnwindPlanSP ABISysV_x86_64::CreateDefaultUnwindPlan() {
 // This defines the CFA as rsp+128
 // The saved pc is at value
 
-UnwindPlanSP ABISysV_x86_64::CreateTrampolineUnwindPlan(addr_t return_address) {
+UnwindPlanSP ABISysV_x86_64::CreateTrampolineUnwindPlan(addr_t site_address,
+                                                        size_t frame_size) {
   uint32_t sp_reg_num = dwarf_rsp;
   uint32_t pc_reg_num = dwarf_rip;
 
   UnwindPlan::Row row;
 
-  const int32_t ptr_size = 8;
-  row.GetCFAValue().SetIsRegisterPlusOffset(dwarf_rsp, 16 * ptr_size);
+  // The trampoline is branched to rather than called, so the stack pointer of
+  // the function it left is exactly frame_size above the current one: nothing
+  // pushed a return address. That value is this frame's CFA.
+  row.GetCFAValue().SetIsRegisterPlusOffset(sp_reg_num, frame_size);
   row.SetOffset(0);
 
-  // MARK: The PC is set to return address + 1 because the unwinder will usually
-  // try to decrement the PC to show the current instruction.
-  row.SetRegisterLocationToConstantValue(pc_reg_num, return_address + 1, true);
+  // The single row is calibrated for the only place execution can stop, inside
+  // the condition checker, where the whole frame has been built. Earlier in the
+  // trampoline the stack pointer is higher and this row does not describe it.
+
+  // Report the patched address itself rather than where the trampoline will
+  // resume: the displaced instructions have not run yet. The frame is marked as
+  // a trap below so that the unwinder does not back the address up by one the
+  // way it would for a return address.
+  row.SetRegisterLocationToConstantValue(pc_reg_num, site_address, true);
+
+  // A frame's CFA is defined to be its caller's stack pointer.
   row.SetRegisterLocationToIsCFAPlusOffset(sp_reg_num, 0, true);
 
   auto plan_sp = std::make_shared<UnwindPlan>(eRegisterKindDWARF);
@@ -1220,6 +1255,7 @@ UnwindPlanSP ABISysV_x86_64::CreateTrampolineUnwindPlan(addr_t return_address) {
   plan_sp->SetSourceName("x86_64 trampoline unwind plan");
   plan_sp->SetSourcedFromCompiler(eLazyBoolNo);
   plan_sp->SetUnwindPlanValidAtAllInstructions(eLazyBoolNo);
+  plan_sp->SetUnwindPlanForSignalTrap(eLazyBoolYes);
   return plan_sp;
 }
 

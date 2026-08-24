@@ -17,6 +17,11 @@ class ABIMacOSX_arm64 : public ABIAArch64 {
 public:
   static constexpr const std::size_t aarch64_instr_size = 4;
 
+  /// Stack the trampoline reserves for the `register_context` struct below. The
+  /// generated prologue subtracts this from sp, so the unwind plan has to agree
+  /// with it.
+  static constexpr const std::size_t aarch64_register_context_size = 0x100;
+
   static constexpr const char *register_context = R"(typedef struct {
                                                       intptr_t x0;
                                                       intptr_t x1;
@@ -64,7 +69,8 @@ public:
   bool GetArgumentValues(lldb_private::Thread &thread,
                          lldb_private::ValueList &values) const override;
 
-  lldb::UnwindPlanSP CreateTrampolineUnwindPlan(lldb::addr_t return_address) override;
+  lldb::UnwindPlanSP CreateTrampolineUnwindPlan(lldb::addr_t site_address,
+                                                size_t frame_size) override;
 
   bool RegisterIsVolatile(const lldb_private::RegisterInfo *reg_info) override;
 
@@ -115,7 +121,7 @@ public:
   /// \return
   ///    \b true If building the Trampoline succeeded, \b false otherwise.
   ///
-  bool SetupFastConditionalBreakpointTrampoline(
+  llvm::Error SetupFastConditionalBreakpointTrampoline(
       lldb_private::BreakpointInjectedSite *bp_inject_site) override;
 
   size_t GetJumpSize() override { return aarch64_instr_size; };

@@ -8,13 +8,10 @@
 
 #include "lldb/Breakpoint/BreakpointInjectedSite.h"
 
-#include "Plugins/ExpressionParser/Clang/ClangExpressionVariable.h"
-#include "Plugins/ExpressionParser/Clang/ClangUserExpression.h"
 #include "lldb/Expression/ExpressionVariable.h"
-#include "lldb/Target/Language.h"
-#include "lldb/Target/RegisterContext.h"
-
 #include "lldb/Target/ABI.h"
+#include "lldb/Target/Language.h"
+#include "lldb/Target/Platform.h"
 
 #include "lldb/Utility/DataBufferHeap.h"
 
@@ -31,7 +28,51 @@ BreakpointInjectedSite::BreakpointInjectedSite(
       m_real_addr(owner->GetAddress()), m_trap_addr(LLDB_INVALID_ADDRESS),
       m_args_struct_size(0) {}
 
-BreakpointInjectedSite::~BreakpointInjectedSite() {}
+BreakpointInjectedSite::~BreakpointInjectedSite() {
+  Log *log = GetLog(LLDBLog::JITLoader);
+
+  if (!m_target_sp)
+    return;
+
+  ProcessSP process_sp = m_target_sp->GetProcessSP();
+
+  // Undo the patch first. While the branch is still installed a thread can
+  // enter the trampoline at any moment, so the trampoline has to outlive it.
+  //
+  // Leaving the patch behind would also send the inferior into a trampoline
+  // nothing owns any more, and re-resolving the location would disassemble our
+  // own branch instead of the instruction it displaced. This doubles as the
+  // unwind path for a trampoline builder that fails after patching: dropping
+  // the site restores the inferior.
+  if (process_sp && m_displaced_instructions_sp) {
+    // The raw load address rather than m_real_addr: by the time a site is torn
+    // down the module it belonged to may already be gone, and with it the
+    // section load list an Address needs to resolve. The bytes are still
+    // mapped, so the write itself is fine.
+    const addr_t addr = GetLoadAddress();
+    const size_t size = m_displaced_instructions_sp->GetByteSize();
+
+    Status error;
+    const size_t written = process_sp->WriteMemory(
+        addr, m_displaced_instructions_sp->GetBytes(), size, error);
+
+    if (written != size || error.Fail())
+      LLDB_LOG(log, "FCB: Couldn't restore the {0} bytes displaced at {1:x}: {2}",
+               size, addr, error.AsCString() ? error.AsCString()
+                                             : "unknown error");
+  }
+
+  // Now that nothing can reach the trampoline, stop describing it. Keeping the
+  // module would leave a symbol and an unwind plan pointing at memory that is
+  // about to be handed back.
+  if (m_trampoline_module_sp) {
+    m_target_sp->GetImages().Remove(m_trampoline_module_sp);
+    m_trampoline_module_sp.reset();
+  }
+
+  if (process_sp && m_trampoline_addr != LLDB_INVALID_ADDRESS)
+    process_sp->FreeFCBTrampolineAllocation(m_trampoline_addr);
+}
 
 bool BreakpointInjectedSite::BuildConditionExpression(void) {
   Log *log = GetLog(LLDBLog::JITLoader);
@@ -82,7 +123,7 @@ bool BreakpointInjectedSite::BuildConditionExpression(void) {
 
   condition_text += trap + ";\n    }";
 
-  LLDB_LOGV(log, "Injected Condition:\n{0}\n", condition_text.c_str());
+  LLDB_LOG_VERBOSE(log, "Injected Condition:\n{0}\n", condition_text.c_str());
 
   DiagnosticManager diagnostics;
 
@@ -92,8 +133,8 @@ bool BreakpointInjectedSite::BuildConditionExpression(void) {
   options.SetGenerateDebugInfo(true);
 
   m_condition_expression_sp.reset(m_target_sp->GetUserExpressionForLanguage(
-      condition_text, llvm::StringRef(), language, Expression::eResultTypeAny,
-      options, nullptr, error));
+      condition_text, llvm::StringRef(), SourceLanguage(language),
+      Expression::eResultTypeAny, options, nullptr, error));
 
   if (error.Fail()) {
     if (log)
@@ -114,13 +155,14 @@ bool BreakpointInjectedSite::BuildConditionExpression(void) {
   bool cfa_is_valid = false;
   addr_t pc = LLDB_INVALID_ADDRESS;
   StackFrame::Kind frame_kind = StackFrame::Kind::Regular;
+  bool artificial = false;
   bool zeroth_frame = false;
   SymbolContext sc;
   m_real_addr.CalculateSymbolContext(&sc);
 
   StackFrameSP frame_sp = std::make_shared<StackFrame>(
       thread_sp, frame_idx, concrete_frame_idx, cfa, cfa_is_valid, pc,
-      frame_kind, zeroth_frame, &sc);
+      frame_kind, artificial, zeroth_frame, &sc);
 
   m_owner_exe_ctx = ExecutionContext(frame_sp);
   ExecutionPolicy execution_policy = eExecutionPolicyAlways;
@@ -243,8 +285,8 @@ bool BreakpointInjectedSite::ResolveTrapAddress(void *jit, size_t size) {
           !memcmp(instr_opcode, abi_trap_code.data(), abi_trap_code.size())) {
         addr_t addr =
             instr->GetAddress().GetOpcodeLoadAddress(m_target_sp.get());
-        m_trap_addr = addr;
-        LLDB_LOGV(log, "Injected trap address: {0:X+}", addr);
+        m_trap_addr = Address(addr);
+        LLDB_LOG_VERBOSE(log, "Injected trap address: {0:X+}", addr);
         return true;
       }
     }
@@ -260,10 +302,7 @@ BreakpointInjectedSite::GetLLVMDataExtractor(const DataExtractor &lldb_data) {
   llvm::StringRef data(reinterpret_cast<const char *>(lldb_data.GetDataStart()),
                        lldb_data.GetByteSize());
   bool is_le = (lldb_data.GetByteOrder() == lldb::eByteOrderLittle);
-  uint32_t data_addr_size = lldb_data.GetAddressByteSize();
-  llvm::DataExtractor llvm_data =
-      llvm::DataExtractor(data, is_le, data_addr_size);
-  return llvm_data;
+  return llvm::DataExtractor(data, is_le);
 }
 
 bool BreakpointInjectedSite::GatherArgumentsMetadata() {
@@ -279,60 +318,18 @@ bool BreakpointInjectedSite::GatherArgumentsMetadata() {
     return false;
   }
 
-  ClangUserExpression *clang_expr =
-      llvm::dyn_cast<ClangUserExpression>(m_condition_expression_sp.get());
+  auto captured_or_err = m_condition_expression_sp->GetCapturedVariables();
 
-  ClangExpressionDeclMap *decl_map = clang_expr->DeclMap();
-  if (!decl_map) {
-    LLDB_LOG(log, "FCB: Couldn't find DeclMap for JIT-ed expression");
+  if (!captured_or_err) {
+    LLDB_LOG_ERROR(log, captured_or_err.takeError(),
+                   "FCB: Couldn't gather the captured variables: {0}");
     return false;
   }
 
-  if (!decl_map->DoStructLayout()) {
-    LLDB_LOG(log, "FCB: Couldn't finalize DeclMap Struct Layout");
-    return false;
-  }
-
-  uint32_t num_elements;
-  size_t size;
-  offset_t alignment;
-
-  if (!decl_map->GetStructInfo(num_elements, size, alignment)) {
-    LLDB_LOG(log, "FCB: Couldn't fetch arguments info from DeclMap");
-    return false;
-  }
-
-  ExpressionVariableList &members = decl_map->GetStructMembers();
-
-  for (uint32_t i = 0; i < num_elements; ++i) {
-    const clang::NamedDecl *decl = nullptr;
-    llvm::Value *value = nullptr;
-    lldb::offset_t offset;
-    lldb_private::ConstString name;
-
-    if (!decl_map->GetStructElement(decl, value, offset, name, i)) {
-      LLDB_LOG(log, "FCB: Couldn't fetch element from DeclMap");
-      return false;
-    }
-    if (!value) {
-      LLDB_LOG(log, "FCB: Couldn't find value for element {0}/{1}", i,
-               num_elements);
-      return false;
-    }
-
-    ExpressionVariableSP expr_var = members.GetVariableAtIndex(i);
-
-    if (!expr_var) {
-      LLDB_LOG(
-          log,
-          "FCB: Couldn't find expression variable for element '{}' ({}/{})",
-          name, i, num_elements);
-      return false;
-    }
-
+  for (const ExpressionVariableSP &expr_var : *captured_or_err) {
     ValueObjectSP val_obj_sp = expr_var->GetValueObject();
 
-    if (!val_obj_sp->GetVariable()) {
+    if (!val_obj_sp || !val_obj_sp->GetVariable()) {
       // if Expression Variable does not have ValueObject, skip it
       continue;
     }
@@ -375,7 +372,7 @@ bool BreakpointInjectedSite::GatherArgumentsMetadata() {
     m_metadatas.push_back(metadata);
   }
 
-  clang_expr->ResetDeclMap();
+  m_condition_expression_sp->ResetCapturedVariables();
 
   return true;
 }
@@ -396,24 +393,15 @@ bool BreakpointInjectedSite::CreateArgumentsStructure() {
     return false;
   }
 
-  expr += "extern \"C\"\n"
-          "{\n"
-          "   /*\n"
-          "   * defines\n"
-          "   */\n"
-          "\n"
-          "   void* memcpy (void *dest, const void *src, size_t count);\n"
-          "}\n\n";
-
+  // Deliberately no external declarations: this runs while the breakpoint is
+  // being installed, when the inferior may not have loaded the libraries its
+  // symbols would come from yet, and every store below is pointer sized anyway,
+  // so nothing here needs a call.
   expr += abi_sp->GetRegisterContextAsString();
 
   expr += "\n\n"
           "intptr_t $__lldb_create_args_struct(register_context* regs, "
-          "intptr_t arg_struct) {\n"
-          "   void *src_addr = NULL;\n"
-          "   void *dst_addr = NULL;\n"
-          "   size_t count = sizeof(void*);\n"
-          "\n";
+          "intptr_t arg_struct) {\n";
 
   for (size_t index = 0; index < m_metadatas.size(); index++) {
     expr += ParseDWARFExpression(index, error);
@@ -433,8 +421,9 @@ bool BreakpointInjectedSite::CreateArgumentsStructure() {
       expr, name, eLanguageTypeC, m_owner_exe_ctx);
 
   if (!utility_fn_or_error) {
-    std::string error_str = llvm::toString(utility_fn_or_error.takeError());
-    LLDB_LOG(log, "Error getting utility function: {1}.", error_str);
+    LLDB_LOG_ERROR(log, utility_fn_or_error.takeError(),
+                   "FCB: Couldn't compile the argument structure builder: {0}");
+    LLDB_LOG_VERBOSE(log, "FCB: Argument structure builder source:\n{0}", expr);
     m_create_args_struct_function_sp.reset();
     return false;
   }
@@ -578,12 +567,8 @@ std::string BreakpointInjectedSite::ParseDWARFExpression(size_t expr_idx,
     case llvm::dwarf::DW_OP_const1s:
     case llvm::dwarf::DW_OP_addr: {
       int64_t operand = op.getRawOperand(0);
-      expr += "   src_addr = " + std::to_string(operand) +
-              ";\n"
-              "   dst_addr = (void*) (arg_struct + " +
-              std::to_string(dest_offset) +
-              ");\n"
-              "   memcpy(dst_addr, &src_addr, count);\n";
+      expr += "   *(void **)(arg_struct + " + std::to_string(dest_offset) +
+              ") = (void *)" + std::to_string(operand) + ";\n";
       break;
     }
     case llvm::dwarf::DW_OP_fbreg: {
@@ -596,13 +581,9 @@ std::string BreakpointInjectedSite::ParseDWARFExpression(size_t expr_idx,
       }
 
       int64_t operand = op.getRawOperand(0);
-      expr += "   src_addr = (void*) (regs->" + frame_bases.front() + " + " +
-              std::to_string(operand) +
-              ");\n"
-              "   dst_addr = (void*) (arg_struct + " +
-              std::to_string(dest_offset) +
-              ");\n"
-              "   memcpy(dst_addr, &src_addr, count);\n";
+      expr += "   *(void **)(arg_struct + " + std::to_string(dest_offset) +
+              ") = (void *)(regs->" + frame_bases.front() + " + " +
+              std::to_string(operand) + ");\n";
       break;
     }
     case llvm::dwarf::DW_OP_breg0:
@@ -650,13 +631,9 @@ std::string BreakpointInjectedSite::ParseDWARFExpression(size_t expr_idx,
         return "";
       }
 
-      expr += "   src_addr = (void*) (regs->" + *reg_name_or_err + " + " +
-              std::to_string(reg_offset) +
-              ");\n"
-              "   dst_addr = (void*) (arg_struct + " +
-              std::to_string(dest_offset) +
-              ");\n"
-              "   memcpy(dst_addr, &src_addr, count);\n";
+      expr += "   *(void **)(arg_struct + " + std::to_string(dest_offset) +
+              ") = (void *)(regs->" + *reg_name_or_err + " + " +
+              std::to_string(reg_offset) + ");\n";
     } break;
     default: {
       // Not a location this pass knows how to materialize. Leave the slot out

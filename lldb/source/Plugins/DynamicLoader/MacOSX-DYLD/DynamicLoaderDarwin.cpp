@@ -253,12 +253,24 @@ void DynamicLoaderDarwin::UnloadAllImages() {
 
   ModuleSP dyld_sp(GetDYLDModule());
   for (ModuleSP module_sp : target_modules.Modules()) {
+    if (!module_sp || module_sp == dyld_sp)
+      continue;
+
     // Don't remove dyld - else we'll lose our breakpoint notifying us about
     // libraries being re-loaded...
-    if (module_sp && module_sp != dyld_sp) {
-      UnloadSections(module_sp);
-      unloaded_modules_list.Append(module_sp);
-    }
+    //
+    // JIT modules are exempt for a different reason: they describe memory this
+    // debug session allocated in the live process, not a binary dyld loaded, so
+    // dyld saying its images are gone says nothing about them. Removing them
+    // would strip the symbols and unwind information from code that is still
+    // mapped and still reachable, such as an injected breakpoint condition and
+    // the trampoline that calls it.
+    ObjectFile *object_file = module_sp->GetObjectFile();
+    if (object_file && object_file->GetType() == ObjectFile::eTypeJIT)
+      continue;
+
+    UnloadSections(module_sp);
+    unloaded_modules_list.Append(module_sp);
   }
 
   if (unloaded_modules_list.GetSize() != 0) {

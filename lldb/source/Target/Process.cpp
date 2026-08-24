@@ -1770,9 +1770,24 @@ llvm::Error Process::UpdateBreakpointSites(
 lldb::break_id_t Process::FallbackToRegularBreakpointSite(
     const BreakpointLocationSP &constituent, bool use_hardware, Log *log,
     llvm::Error error) {
-  LLDB_LOG_ERROR(log, std::move(error), "{0}");
-  LLDB_LOG(log, "Disabling JIT-ed condition and falling back to regular "
-                "conditional breakpoint");
+  const std::string reason = llvm::toString(std::move(error));
+
+  LLDB_LOG(log,
+           "FCB: Falling back to an out of process condition for {0}.{1}: {2}",
+           constituent->GetBreakpoint().GetID(), constituent->GetID(), reason);
+
+  // Injecting the condition is an optimization, so failing to do it is not an
+  // error: the breakpoint still works, just more slowly. Say so anyway, because
+  // the whole point of asking for it was the speed, and silently not delivering
+  // it is worse than a line of output.
+  Debugger::ReportWarning(
+      llvm::formatv("breakpoint {0}.{1} cannot evaluate its condition in the "
+                    "process, so it is evaluated by the debugger instead: {2}",
+                    constituent->GetBreakpoint().GetID(), constituent->GetID(),
+                    reason)
+          .str(),
+      GetTarget().GetDebugger().GetID());
+
   // Clearing the flag is what makes the retry below terminate: every caller of
   // this function sits behind a BreakpointLocation::GetInjectCondition() check,
   // so the retry cannot reach a fallback a second time. Keep that invariant if
@@ -1865,9 +1880,10 @@ Process::CreateBreakpointSite(const BreakpointLocationSP &constituent,
     if (!bp_injected_site->BuildConditionExpression())
       return fallback_with_error("Couldn't build the condition expression");
 
-    if (!abi_sp->SetupFastConditionalBreakpointTrampoline(
+    if (llvm::Error error = abi_sp->SetupFastConditionalBreakpointTrampoline(
             bp_injected_site.get()))
-      return fallback_with_error("Couldn't setup trampoline");
+      return FallbackToRegularBreakpointSite(constituent, use_hardware, log,
+                                             std::move(error));
 
     bp_site_sp.reset(bp_injected_site.release());
     bp_site_sp->AddConstituent(constituent);
@@ -1985,11 +2001,11 @@ lldb::WritableDataBufferSP Process::SaveInstructions(Address &address) {
     instructions_size += size;
     instructions_count++;
 
-    LLDB_LOGV(log, "{0:x} <+{1}>: {2} {3}\t\t({4})",
-              instruction->GetAddress().GetLoadAddress(target_sp.get()),
-              instruction->GetAddress().GetOffset(),
-              instruction->GetMnemonic(&exe_ctx),
-              instruction->GetOperands(&exe_ctx), size);
+    LLDB_LOG_VERBOSE(log, "{0:x} <+{1}>: {2} {3}\t\t({4})",
+                     instruction->GetAddress().GetLoadAddress(target_sp.get()),
+                     instruction->GetAddress().GetOffset(),
+                     instruction->GetMnemonic(&exe_ctx),
+                     instruction->GetOperands(&exe_ctx), size);
   }
 
   if (instructions_size < jump_size) {
@@ -1998,7 +2014,7 @@ lldb::WritableDataBufferSP Process::SaveInstructions(Address &address) {
     return nullptr;
   }
 
-  LLDB_LOGV(log, "JIT: Instruction count: {0}", instructions_count);
+  LLDB_LOG_VERBOSE(log, "JIT: Instruction count: {0}", instructions_count);
 
   lldb::WritableDataBufferSP saved_instrs(
       new DataBufferHeap(instructions_size, 0));
@@ -2035,6 +2051,27 @@ lldb::addr_t Process::NextFCBTrampolineAllocation(lldb::addr_t bp_load_addr)
   const size_t num_pages = std::ceil(static_cast<double>(size) / page_size);
 
   return addr + page_size * num_pages + 1;
+}
+
+bool Process::FreeFCBTrampolineAllocation(lldb::addr_t addr) {
+  Log *log = GetLog(LLDBLog::JITLoader);
+
+  auto it = m_fcb_allocations.find(addr);
+  if (it == m_fcb_allocations.end())
+    return false;
+
+  m_fcb_allocations.erase(it);
+
+  // Dropping the reservation without giving the pages back would let the
+  // address space fill up over a session that sets and clears injected
+  // conditions repeatedly.
+  if (Status error = DeallocateMemory(addr); error.Fail()) {
+    LLDB_LOG(log, "FCB: Couldn't deallocate the trampoline at {0:x}: {1}", addr,
+             error.AsCString());
+    return false;
+  }
+
+  return true;
 }
 
 void Process::RemoveConstituentFromBreakpointSite(

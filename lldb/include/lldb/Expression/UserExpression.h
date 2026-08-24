@@ -200,6 +200,23 @@ public:
   /// to cache, as the concrete type substitution may be different in every
   /// expression evaluation.
   virtual bool IsParseCacheable() { return true; }
+
+  /// Finalize the layout of the structure through which the expression reaches
+  /// the variables it captured, and return those variables in layout order.
+  ///
+  /// Injected breakpoint conditions need this to generate code that fills that
+  /// structure in from inside the inferior, with the debugger out of the loop.
+  /// Only languages whose expression parser can report its captures implement
+  /// this.
+  virtual llvm::Expected<std::vector<lldb::ExpressionVariableSP>>
+  GetCapturedVariables() {
+    return llvm::createStringError(
+        "this expression language cannot report its captured variables");
+  }
+
+  /// Release whatever GetCapturedVariables() had to keep alive to answer.
+  virtual void ResetCapturedVariables() {}
+
   /// Return the language that should be used when parsing.  To use the
   /// default, return eLanguageTypeUnknown.
   SourceLanguage Language() const override { return m_language; }

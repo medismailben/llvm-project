@@ -34,12 +34,10 @@ const char *ObjectFileTrampoline::GetPluginDescriptionStatic() {
   return "Jitted Conditional Breakpoint Trampoline code object file";
 }
 
-ObjectFile *ObjectFileTrampoline::CreateInstance(const lldb::ModuleSP &module_sp,
-                                            DataBufferSP data_sp,
-                                            lldb::offset_t data_offset,
-                                            const FileSpec *file,
-                                            lldb::offset_t file_offset,
-                                            lldb::offset_t length) {
+ObjectFile *ObjectFileTrampoline::CreateInstance(
+    const lldb::ModuleSP &module_sp, lldb::DataExtractorSP extractor_sp,
+    lldb::offset_t data_offset, const FileSpec *file,
+    lldb::offset_t file_offset, lldb::offset_t length) {
   return nullptr;
 }
 
@@ -49,23 +47,23 @@ ObjectFile *ObjectFileTrampoline::CreateMemoryInstance(
   return nullptr;
 }
 
-size_t ObjectFileTrampoline::GetModuleSpecifications(
-    const lldb_private::FileSpec &file, lldb::DataBufferSP &data_sp,
-    lldb::offset_t data_offset, lldb::offset_t file_offset,
-    lldb::offset_t length, lldb_private::ModuleSpecList &specs) {
-    // JIT'ed object file can't be read from a file on disk
-    return 0;
+ModuleSpecList ObjectFileTrampoline::GetModuleSpecifications(
+    const lldb_private::FileSpec &file, lldb::DataExtractorSP &extractor_sp,
+    lldb::offset_t file_offset, lldb::offset_t length) {
+  // A trampoline only ever exists in the inferior's memory, never in a file.
+  return {};
 }
 
 ObjectFileTrampoline::ObjectFileTrampoline(const lldb::ModuleSP &module_sp,
                                            lldb::ProcessSP process_sp,
                                            lldb::addr_t address,
                                            std::size_t size)
-    : ObjectFile(module_sp, NULL, 0, 0, DataBufferSP(), 0),
+    : ObjectFile(module_sp, process_sp, address,
+                 std::make_shared<DataExtractor>()),
       m_process_wp(process_sp), m_address(address), m_size(size) {
-  m_data.SetByteOrder(process_sp->GetTarget().GetArchitecture().GetByteOrder());
-  m_data.SetAddressByteSize(
-      process_sp->GetTarget().GetArchitecture().GetAddressByteSize());
+  const ArchSpec &arch = process_sp->GetTarget().GetArchitecture();
+  m_data_nsp->SetByteOrder(arch.GetByteOrder());
+  m_data_nsp->SetAddressByteSize(arch.GetAddressByteSize());
   m_file = lldb_private::FileSpec("$__lldb_jitted_conditional_bp_trampoline");
 }
 
@@ -75,13 +73,13 @@ bool ObjectFileTrampoline::ParseHeader() {
 }
 
 ByteOrder ObjectFileTrampoline::GetByteOrder() const {
-  return m_data.GetByteOrder();
+  return m_data_nsp->GetByteOrder();
 }
 
 bool ObjectFileTrampoline::IsExecutable() const { return true; }
 
 uint32_t ObjectFileTrampoline::GetAddressByteSize() const {
-  return m_data.GetAddressByteSize();
+  return m_data_nsp->GetAddressByteSize();
 }
 
 void ObjectFileTrampoline::ParseSymtab(lldb_private::Symtab &symtab) {

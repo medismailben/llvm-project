@@ -64,6 +64,16 @@ public:
 
   bool GetMCInst(const uint8_t *opcode_data, size_t opcode_data_len,
                  lldb::addr_t pc, llvm::MCInst &mc_inst, uint64_t &size) const;
+  /// Decode without symbolizing the operands.
+  ///
+  /// The disassembler used for display has a symbolizer installed, which is
+  /// what turns a branch target into `<_main+0x1c>`. A symbolized operand is an
+  /// MCExpr rather than an immediate, and the MCInstrAnalysis implementations
+  /// assume immediates, so anything that inspects operands programmatically has
+  /// to start from an unsymbolized instruction.
+  bool GetMCInstForAnalysis(const uint8_t *opcode_data, size_t opcode_data_len,
+                            lldb::addr_t pc, llvm::MCInst &mc_inst,
+                            uint64_t &size) const;
   void PrintMCInst(llvm::MCInst &mc_inst, lldb::addr_t pc,
                    std::string &inst_string, std::string &comments_string);
   void SetStyle(bool use_hex_immed, HexImmediateStyle hex_style);
@@ -75,6 +85,13 @@ public:
   bool IsLoad(llvm::MCInst &mc_inst) const;
   bool IsBarrier(llvm::MCInst &mc_inst) const;
   bool IsAuthenticated(llvm::MCInst &mc_inst) const;
+  bool IsReturn(llvm::MCInst &mc_inst) const;
+  bool IsPCRelative(llvm::MCInst &mc_inst) const;
+  std::optional<lldb::addr_t> GetReferencedAddress(llvm::MCInst &mc_inst,
+                                                   lldb::addr_t pc,
+                                                   uint64_t size) const;
+  lldb_private::Instruction::RegisterAccess
+  GetRegisterAccess(llvm::MCInst &mc_inst, llvm::StringRef reg_name) const;
 
 private:
   MCDisasmInstance(std::unique_ptr<llvm::MCInstrInfo> &&instr_info_up,
@@ -84,6 +101,7 @@ private:
                    std::unique_ptr<llvm::MCAsmInfo> &&asm_info_up,
                    std::unique_ptr<llvm::MCContext> &&context_up,
                    std::unique_ptr<llvm::MCDisassembler> &&disasm_up,
+                   std::unique_ptr<llvm::MCDisassembler> &&analysis_disasm_up,
                    std::unique_ptr<llvm::MCInstPrinter> &&instr_printer_up,
                    std::unique_ptr<llvm::MCInstrAnalysis> &&instr_analysis_up);
 
@@ -94,6 +112,8 @@ private:
   std::unique_ptr<llvm::MCAsmInfo> m_asm_info_up;
   std::unique_ptr<llvm::MCContext> m_context_up;
   std::unique_ptr<llvm::MCDisassembler> m_disasm_up;
+  /// Same disassembler, without a symbolizer, for programmatic inspection.
+  std::unique_ptr<llvm::MCDisassembler> m_analysis_disasm_up;
   std::unique_ptr<llvm::MCInstPrinter> m_instr_printer_up;
   std::unique_ptr<llvm::MCInstrAnalysis> m_instr_analysis_up;
 };
@@ -450,6 +470,66 @@ public:
   bool IsAuthenticated() override {
     VisitInstruction();
     return m_is_authenticated;
+  }
+
+  bool IsPCRelative() override {
+    VisitInstruction();
+    return m_is_pc_relative;
+  }
+
+  std::optional<lldb::addr_t> GetReferencedAddress(lldb::addr_t pc) override {
+    DisassemblerScope disasm(*this);
+    if (!disasm)
+      return std::nullopt;
+
+    DataExtractor data;
+    if (!m_opcode.GetData(data))
+      return std::nullopt;
+
+    bool is_alternate_isa;
+    DisassemblerLLVMC::MCDisasmInstance *mc_disasm_ptr =
+        GetDisasmToUse(is_alternate_isa, disasm);
+    if (!mc_disasm_ptr)
+      return std::nullopt;
+
+    llvm::MCInst inst;
+    uint64_t inst_size = 0;
+    // Decode at the address the caller is asking about, so that the target
+    // comes back in the same address domain rather than the one this
+    // instruction was disassembled at. Unsymbolized, so that the branch target
+    // is an immediate the analysis can read rather than an MCExpr.
+    if (!mc_disasm_ptr->GetMCInstForAnalysis(data.GetDataStart(),
+                                             data.GetByteSize(), pc, inst,
+                                             inst_size))
+      return std::nullopt;
+
+    return mc_disasm_ptr->GetReferencedAddress(inst, pc, inst_size);
+  }
+
+  RegisterAccess GetRegisterAccess(llvm::StringRef reg_name) override {
+    DisassemblerScope disasm(*this);
+    if (!disasm)
+      return RegisterAccess();
+
+    DataExtractor data;
+    if (!m_opcode.GetData(data))
+      return RegisterAccess();
+
+    bool is_alternate_isa;
+    DisassemblerLLVMC::MCDisasmInstance *mc_disasm_ptr =
+        GetDisasmToUse(is_alternate_isa, disasm);
+    if (!mc_disasm_ptr)
+      return RegisterAccess();
+
+    llvm::MCInst inst;
+    uint64_t inst_size = 0;
+    if (!mc_disasm_ptr->GetMCInstForAnalysis(data.GetDataStart(),
+                                             data.GetByteSize(),
+                                             m_address.GetFileAddress(), inst,
+                                             inst_size))
+      return RegisterAccess();
+
+    return mc_disasm_ptr->GetRegisterAccess(inst, reg_name);
   }
 
   DisassemblerLLVMC::MCDisasmInstance *GetDisasmToUse(bool &is_alternate_isa) {
@@ -1177,6 +1257,11 @@ public:
     return m_is_call;
   }
 
+  bool IsReturn() override {
+    VisitInstruction();
+    return m_is_return;
+  }
+
 protected:
   std::weak_ptr<DisassemblerLLVMC> m_disasm_wp;
 
@@ -1190,12 +1275,15 @@ protected:
   //   - Is not a call
   //   - Is not a load
   //   - Is not an authenticated instruction
+  //   - May depend on its own address, so must not be relocated
   bool m_does_branch = true;
   bool m_has_delay_slot = false;
   bool m_is_call = false;
+  bool m_is_return = false;
   bool m_is_load = false;
   bool m_is_authenticated = false;
   bool m_is_barrier = false;
+  bool m_is_pc_relative = true;
 
   void VisitInstruction() {
     if (m_has_visited_instruction)
@@ -1226,9 +1314,11 @@ protected:
     m_does_branch = mc_disasm_ptr->CanBranch(inst);
     m_has_delay_slot = mc_disasm_ptr->HasDelaySlot(inst);
     m_is_call = mc_disasm_ptr->IsCall(inst);
+    m_is_return = mc_disasm_ptr->IsReturn(inst);
     m_is_load = mc_disasm_ptr->IsLoad(inst);
     m_is_authenticated = mc_disasm_ptr->IsAuthenticated(inst);
     m_is_barrier = mc_disasm_ptr->IsBarrier(inst);
+    m_is_pc_relative = mc_disasm_ptr->IsPCRelative(inst);
   }
 
 private:
@@ -1297,6 +1387,13 @@ DisassemblerLLVMC::MCDisasmInstance::Create(const char *triple_name,
   if (!disasm_up)
     return Instance();
 
+  // A second decoder with no symbolizer, so that operand inspection sees
+  // immediates instead of MCExprs. See GetMCInstForAnalysis().
+  std::unique_ptr<llvm::MCDisassembler> analysis_disasm_up(
+      curr_target->createMCDisassembler(*subtarget_info_up, *context_up));
+  if (!analysis_disasm_up)
+    return Instance();
+
   std::unique_ptr<llvm::MCRelocationInfo> rel_info_up(
       curr_target->createMCRelocationInfo(triple, *context_up));
   if (!rel_info_up)
@@ -1327,7 +1424,8 @@ DisassemblerLLVMC::MCDisasmInstance::Create(const char *triple_name,
   return Instance(new MCDisasmInstance(
       std::move(instr_info_up), std::move(reg_info_up),
       std::move(subtarget_info_up), MCOptions, std::move(asm_info_up),
-      std::move(context_up), std::move(disasm_up), std::move(instr_printer_up),
+      std::move(context_up), std::move(disasm_up),
+      std::move(analysis_disasm_up), std::move(instr_printer_up),
       std::move(instr_analysis_up)));
 }
 
@@ -1339,6 +1437,7 @@ DisassemblerLLVMC::MCDisasmInstance::MCDisasmInstance(
     std::unique_ptr<llvm::MCAsmInfo> &&asm_info_up,
     std::unique_ptr<llvm::MCContext> &&context_up,
     std::unique_ptr<llvm::MCDisassembler> &&disasm_up,
+    std::unique_ptr<llvm::MCDisassembler> &&analysis_disasm_up,
     std::unique_ptr<llvm::MCInstPrinter> &&instr_printer_up,
     std::unique_ptr<llvm::MCInstrAnalysis> &&instr_analysis_up)
     : m_instr_info_up(std::move(instr_info_up)),
@@ -1346,6 +1445,7 @@ DisassemblerLLVMC::MCDisasmInstance::MCDisasmInstance(
       m_subtarget_info_up(std::move(subtarget_info_up)),
       m_mc_options(mc_options), m_asm_info_up(std::move(asm_info_up)),
       m_context_up(std::move(context_up)), m_disasm_up(std::move(disasm_up)),
+      m_analysis_disasm_up(std::move(analysis_disasm_up)),
       m_instr_printer_up(std::move(instr_printer_up)),
       m_instr_analysis_up(std::move(instr_analysis_up)) {
   assert(m_instr_info_up && m_reg_info_up && m_subtarget_info_up &&
@@ -1365,6 +1465,15 @@ bool DisassemblerLLVMC::MCDisasmInstance::GetMCInst(const uint8_t *opcode_data,
     return true;
   else
     return false;
+}
+
+bool DisassemblerLLVMC::MCDisasmInstance::GetMCInstForAnalysis(
+    const uint8_t *opcode_data, size_t opcode_data_len, lldb::addr_t pc,
+    llvm::MCInst &mc_inst, uint64_t &size) const {
+  llvm::ArrayRef<uint8_t> data(opcode_data, opcode_data_len);
+  return m_analysis_disasm_up->getInstruction(mc_inst, size, data, pc,
+                                              llvm::nulls()) ==
+         llvm::MCDisassembler::Success;
 }
 
 void DisassemblerLLVMC::MCDisasmInstance::PrintMCInst(
@@ -1454,6 +1563,150 @@ bool DisassemblerLLVMC::MCDisasmInstance::IsAuthenticated(
   }
 
   return InstrDesc.isAuthenticated() || IsBrkC47x;
+}
+
+bool DisassemblerLLVMC::MCDisasmInstance::IsReturn(
+    llvm::MCInst &mc_inst) const {
+  return m_instr_info_up->get(mc_inst.getOpcode()).isReturn();
+}
+
+bool DisassemblerLLVMC::MCDisasmInstance::IsPCRelative(
+    llvm::MCInst &mc_inst) const {
+  const llvm::MCInstrDesc &InstrDesc =
+      m_instr_info_up->get(mc_inst.getOpcode());
+
+  // Targets that reach a label through a dedicated operand mark it as such.
+  // This covers AArch64's b, bl, b.cond, cbz, tbz, adr, adrp and literal
+  // loads, and x86's relative branches and calls.
+  for (const llvm::MCOperandInfo &op_info : InstrDesc.operands())
+    if (op_info.OperandType == llvm::MCOI::OPERAND_PCREL)
+      return true;
+
+  // x86 reaches data relative to the program counter through an ordinary
+  // memory operand whose base register happens to be RIP, so the operand type
+  // says nothing. Neither x86 nor AArch64 tells MCRegisterInfo which register
+  // is the program counter, so the register has to be recognized by name. LLDB
+  // already maps MC register names by hand elsewhere, see MCBasedABI.
+  for (const llvm::MCOperand &op : mc_inst) {
+    if (!op.isReg())
+      continue;
+    llvm::StringRef reg_name = m_reg_info_up->getName(op.getReg());
+    if (reg_name.equals_insensitive("rip") ||
+        reg_name.equals_insensitive("eip"))
+      return true;
+  }
+
+  // Anything that computes where to go from where it is, without naming a
+  // register to go to, is position dependent whatever its operands look like.
+  if (m_instr_analysis_up && InstrDesc.isBranch() &&
+      !m_instr_analysis_up->isIndirectBranch(mc_inst))
+    return true;
+
+  return false;
+}
+
+std::optional<lldb::addr_t>
+DisassemblerLLVMC::MCDisasmInstance::GetReferencedAddress(llvm::MCInst &mc_inst,
+                                                          lldb::addr_t pc,
+                                                          uint64_t size) const {
+  if (!m_instr_analysis_up)
+    return std::nullopt;
+
+  // MCInstrAnalysis::evaluateBranch() cannot be handed an arbitrary
+  // instruction. The AArch64 implementation walks operands up to
+  // MCInst::getNumOperands() while indexing the descriptor's operand info with
+  // the same counter, so a variadic instruction makes it read past that array,
+  // and it then calls getImm() on whatever it found without checking that the
+  // operand is an immediate. Establish both properties here, and only call it
+  // once there is a PC-relative immediate for it to find.
+  const llvm::MCInstrDesc &desc = m_instr_info_up->get(mc_inst.getOpcode());
+  const unsigned num_operands =
+      std::min<unsigned>(desc.getNumOperands(), mc_inst.getNumOperands());
+
+  bool has_pcrel_immediate = false;
+  for (unsigned i = 0; i != num_operands; ++i) {
+    if (desc.operands()[i].OperandType != llvm::MCOI::OPERAND_PCREL)
+      continue;
+    if (!mc_inst.getOperand(i).isImm())
+      return std::nullopt;
+    has_pcrel_immediate = true;
+    break;
+  }
+
+  if (!has_pcrel_immediate)
+    return std::nullopt;
+
+  uint64_t target = LLDB_INVALID_ADDRESS;
+  if (m_instr_analysis_up->evaluateBranch(mc_inst, pc, size, target))
+    return target;
+
+  // Not a branch, or an indirect one whose target only exists at run time.
+  return std::nullopt;
+}
+
+lldb_private::Instruction::RegisterAccess
+DisassemblerLLVMC::MCDisasmInstance::GetRegisterAccess(
+    llvm::MCInst &mc_inst, llvm::StringRef reg_name) const {
+  lldb_private::Instruction::RegisterAccess access;
+
+  // Resolve the name once against this target's register table. There is no
+  // reverse lookup in MCRegisterInfo, so this is a scan, which is acceptable
+  // for the handful of registers a caller asks about.
+  llvm::MCRegister reg;
+  for (unsigned candidate = 1, end = m_reg_info_up->getNumRegs();
+       candidate < end; ++candidate) {
+    if (reg_name.equals_insensitive(m_reg_info_up->getName(candidate))) {
+      reg = llvm::MCRegister(candidate);
+      break;
+    }
+  }
+
+  // An unknown register name cannot be shown to be untouched.
+  if (!reg.isValid())
+    return access;
+
+  const llvm::MCInstrDesc &desc = m_instr_info_up->get(mc_inst.getOpcode());
+
+  auto touches = [&](llvm::MCRegister other) {
+    return other.isValid() && m_reg_info_up->regsOverlap(reg, other);
+  };
+
+  access.reads = false;
+  access.writes = false;
+
+  // The first getNumDefs() operands are the defs, the rest are uses.
+  const unsigned num_defs = desc.getNumDefs();
+  for (unsigned i = 0, e = mc_inst.getNumOperands(); i != e; ++i) {
+    const llvm::MCOperand &op = mc_inst.getOperand(i);
+    if (!op.isReg() || !touches(op.getReg()))
+      continue;
+    if (i < num_defs)
+      access.writes = true;
+    else
+      access.reads = true;
+  }
+
+  for (llvm::MCPhysReg implicit_use : desc.implicit_uses())
+    if (touches(implicit_use))
+      access.reads = true;
+
+  for (llvm::MCPhysReg implicit_def : desc.implicit_defs())
+    if (touches(implicit_def))
+      access.writes = true;
+
+  // A tied operand is read and written by the same operand, so a def that is
+  // tied back to a use is not a kill.
+  if (access.writes) {
+    for (unsigned i = 0; i < num_defs; ++i) {
+      if (desc.getOperandConstraint(i, llvm::MCOI::TIED_TO) == -1)
+        continue;
+      const llvm::MCOperand &op = mc_inst.getOperand(i);
+      if (op.isReg() && touches(op.getReg()))
+        access.reads = true;
+    }
+  }
+
+  return access;
 }
 
 void DisassemblerLLVMC::UpdateSubtargetFeatures(

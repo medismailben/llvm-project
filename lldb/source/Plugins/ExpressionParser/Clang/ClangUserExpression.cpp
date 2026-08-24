@@ -91,6 +91,60 @@ ClangUserExpression::ClangUserExpression(
 
 ClangUserExpression::~ClangUserExpression() = default;
 
+llvm::Expected<std::vector<lldb::ExpressionVariableSP>>
+ClangUserExpression::GetCapturedVariables() {
+  ClangExpressionDeclMap *decl_map = DeclMap();
+
+  if (!decl_map)
+    return llvm::createStringError(
+        "no DeclMap available for the parsed expression");
+
+  if (!decl_map->DoStructLayout())
+    return llvm::createStringError(
+        "couldn't finalize the layout of the captured variables");
+
+  uint32_t num_elements = 0;
+  size_t size = 0;
+  lldb::offset_t alignment = 0;
+
+  if (!decl_map->GetStructInfo(num_elements, size, alignment))
+    return llvm::createStringError(
+        "couldn't fetch the layout of the captured variables");
+
+  ExpressionVariableList &members = decl_map->GetStructMembers();
+  std::vector<lldb::ExpressionVariableSP> captured;
+  captured.reserve(num_elements);
+
+  for (uint32_t i = 0; i < num_elements; ++i) {
+    const clang::NamedDecl *decl = nullptr;
+    llvm::Value *value = nullptr;
+    lldb::offset_t offset = 0;
+    ConstString name;
+
+    if (!decl_map->GetStructElement(decl, value, offset, name, i))
+      return llvm::createStringError(llvm::formatv(
+          "couldn't fetch captured variable {0} of {1}", i, num_elements));
+
+    // A member without a value was never materialized, so nothing can read it
+    // out of the inferior.
+    if (!value)
+      return llvm::createStringError(
+          llvm::formatv("captured variable '{0}' ({1} of {2}) has no value",
+                        name, i, num_elements));
+
+    lldb::ExpressionVariableSP expr_var = members.GetVariableAtIndex(i);
+
+    if (!expr_var)
+      return llvm::createStringError(
+          llvm::formatv("no expression variable for '{0}' ({1} of {2})", name,
+                        i, num_elements));
+
+    captured.push_back(std::move(expr_var));
+  }
+
+  return captured;
+}
+
 void ClangUserExpression::ScanContext(DiagnosticManager &diagnostic_manager,
                                       ExecutionContext &exe_ctx) {
   Log *log = GetLog(LLDBLog::Expressions);

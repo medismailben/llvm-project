@@ -136,12 +136,10 @@ public:
         m_bp_opts.SetIgnoreCount(ignore_count);
     } break;
     case 'I': {
-      if (!m_bp_opts.IsOptionSet(BreakpointOptions::eCondition))
-        error =
-            Status::FromErrorString("inject-condition option only available "
-                                    "for conditional breakpoints");
-      else
-        m_bp_opts.SetInjectCondition(true);
+      // Whether a condition was supplied cannot be known until every option has
+      // been parsed, since they are processed in command line order. Validated
+      // in OptionParsingFinished() instead.
+      m_inject_condition = true;
     } break;
     case 'o': {
       bool value, success;
@@ -219,6 +217,7 @@ public:
   void OptionParsingStarting(ExecutionContext *execution_context) override {
     m_bp_opts.Clear();
     m_commands.clear();
+    m_inject_condition = false;
   }
 
   Status OptionParsingFinished(ExecutionContext *execution_context) override {
@@ -231,6 +230,16 @@ public:
       cmd_data->stop_on_error = true;
       m_bp_opts.SetCommandDataCallback(cmd_data);
     }
+
+    if (m_inject_condition) {
+      // Checked here rather than while parsing because options are processed in
+      // command line order, so -c may not have been seen yet when -I was.
+      if (!m_bp_opts.IsOptionSet(BreakpointOptions::eCondition))
+        return Status::FromErrorString("inject-condition option only available "
+                                       "for conditional breakpoints");
+      m_bp_opts.SetInjectCondition(true);
+    }
+
     return Status();
   }
 
@@ -238,6 +247,7 @@ public:
 
   std::vector<std::string> m_commands;
   BreakpointOptions m_bp_opts;
+  bool m_inject_condition = false;
 };
 
 // This is the Breakpoint Names option group - used to add Names to breakpoints

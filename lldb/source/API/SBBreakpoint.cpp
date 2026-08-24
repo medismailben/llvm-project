@@ -328,8 +328,8 @@ void SBBreakpoint::SetInjectCondition(bool inject_condition) {
   if (!bkpt_sp)
     return;
 
-  std::lock_guard<std::recursive_mutex> guard(
-      bkpt_sp->GetTarget().GetAPIMutex());
+  TargetAPIMutex api_lock = bkpt_sp->GetTarget().GetAPIMutex();
+  std::lock_guard<TargetAPIMutex> guard(api_lock);
   bkpt_sp->SetInjectCondition(inject_condition);
 }
 
@@ -340,8 +340,8 @@ bool SBBreakpoint::GetInjectCondition() {
   if (!bkpt_sp)
     return false;
 
-  std::lock_guard<std::recursive_mutex> guard(
-      bkpt_sp->GetTarget().GetAPIMutex());
+  TargetAPIMutex api_lock = bkpt_sp->GetTarget().GetAPIMutex();
+  std::lock_guard<TargetAPIMutex> guard(api_lock);
   return bkpt_sp->GetInjectCondition();
 }
 

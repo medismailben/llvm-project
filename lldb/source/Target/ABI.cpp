@@ -122,8 +122,46 @@ lldb::WritableDataBufferSP ABI::EmitAssembly(llvm::StringRef name,
   return buffer;
 }
 
+void ABI::LogTrampolineDisassembly(llvm::ArrayRef<uint8_t> trampoline,
+                                   lldb::addr_t address) {
+  Log *log = GetLog(LLDBLog::JITLoader);
+  if (!log)
+    return;
+
+  ProcessSP process_sp = GetProcessSP();
+  if (!process_sp)
+    return;
+
+  Target &target = process_sp->GetTarget();
+  const ArchSpec &arch = target.GetArchitecture();
+  Address start(address);
+
+  DisassemblerSP disassembler_sp = Disassembler::DisassembleBytes(
+      arch, /*plugin_name=*/nullptr, /*flavor=*/nullptr, /*cpu=*/nullptr,
+      /*features=*/nullptr, start, trampoline.data(), trampoline.size(),
+      /*max_num_instructions=*/UINT32_MAX, /*data_from_file=*/true);
+
+  if (!disassembler_sp) {
+    LLDB_LOG(log, "JIT: Couldn't disassemble the trampoline at {0:x}", address);
+    return;
+  }
+
+  StreamString s;
+  ExecutionContext exe_ctx(process_sp);
+  // No source interleaving: the trampoline has no source, and the address it
+  // will live at is not mapped yet.
+  disassembler_sp->PrintInstructions(target.GetDebugger(), arch, exe_ctx,
+                                     /*mixed_source_and_assembly=*/false,
+                                     /*num_mixed_context_lines=*/0,
+                                     Disassembler::eOptionShowBytes, s);
+
+  LLDB_LOG(log, "JIT: Trampoline at {0:x}, {1} bytes:\n{2}", address,
+           trampoline.size(), s.GetString());
+}
+
 lldb::ModuleSP ABI::CreateModuleForFastConditionalBreakpointTrampoline(
-    lldb::addr_t address, std::size_t size, lldb::addr_t return_address) {
+    lldb::addr_t address, std::size_t size, lldb::addr_t site_address,
+    size_t frame_size) {
   Log *log = GetLog(LLDBLog::JITLoader);
 
   if (!SupportsFCB()) {
@@ -165,16 +203,16 @@ lldb::ModuleSP ABI::CreateModuleForFastConditionalBreakpointTrampoline(
                    symbol);
   UnwindTable &unwind_table = trampoline_module_sp->GetUnwindTable();
   FuncUnwindersSP func_unwinders_sp =
-      unwind_table.GetFuncUnwindersContainingAddress(address, sc);
+      unwind_table.GetFuncUnwindersContainingAddress(symbol->GetAddress(), sc);
 
   if (!func_unwinders_sp) {
-    LLDB_LOG(log, "JIT: Couldn't find any function unwinder for {0} ({1})",
-             symbol->GetName().AsCString(), address);
+    LLDB_LOG(log, "JIT: Couldn't find any function unwinder for {0} ({1:x})",
+             symbol->GetName(), address);
     return nullptr;
   }
 
   if (UnwindPlanSP trampoline_unwind_plan_sp =
-          CreateTrampolineUnwindPlan(return_address)) {
+          CreateTrampolineUnwindPlan(site_address, frame_size)) {
     func_unwinders_sp->SetTrampolineUnwindPlan(trampoline_unwind_plan_sp);
     return trampoline_module_sp;
   }
