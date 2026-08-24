@@ -752,6 +752,51 @@ private:
 
 // StopInfoWatchpoint
 
+// A fast conditional breakpoint evaluates its condition in the inferior and
+// traps on an instruction clang compiled into the JIT-ed expression. That trap is
+// permanent: unlike a software breakpoint there is nothing to remove and
+// reinstate, so the thread cannot be stepped over it in the usual way and the pc
+// has to be moved past it by hand.
+//
+// The move happens on resume rather than at the stop, so that while stopped the
+// pc still points at the trap and the stop reports the line of the user's
+// condition rather than whatever follows it. Advancing is all that is needed,
+// because the rest of the expression returns into the trampoline, which restores
+// the registers, runs the instruction the patch displaced and branches back to
+// the user's code.
+class StopInfoInjectedBreakpoint : public StopInfoBreakpoint {
+public:
+  StopInfoInjectedBreakpoint(Thread &thread, break_id_t break_id,
+                             lldb::addr_t trap_addr, size_t trap_size)
+      : StopInfoBreakpoint(thread, break_id), m_trap_addr(trap_addr),
+        m_trap_size(trap_size) {}
+
+  ~StopInfoInjectedBreakpoint() override = default;
+
+  void WillResume(lldb::StateType resume_state) override {
+    if (resume_state == eStateSuspended)
+      return;
+
+    ThreadSP thread_sp(m_thread_wp.lock());
+    if (!thread_sp)
+      return;
+
+    RegisterContextSP reg_ctx_sp(thread_sp->GetRegisterContext());
+    if (!reg_ctx_sp || !m_trap_size)
+      return;
+
+    // Only when the thread is still sitting on the trap. Anything that moved the
+    // pc in the meantime, a jump or a register write, meant to go where it
+    // points.
+    if (reg_ctx_sp->GetPC() == m_trap_addr)
+      reg_ctx_sp->SetPC(m_trap_addr + m_trap_size);
+  }
+
+private:
+  lldb::addr_t m_trap_addr;
+  size_t m_trap_size;
+};
+
 class StopInfoWatchpoint : public StopInfo {
 public:
   // Make sure watchpoint is properly disabled and subsequently enabled while
@@ -1688,6 +1733,16 @@ protected:
 };
 
 } // namespace lldb_private
+
+StopInfoSP StopInfo::CreateStopReasonWithInjectedBreakpointSiteID(
+    Thread &thread, break_id_t break_id, lldb::addr_t trap_addr,
+    size_t trap_size) {
+  // Deliberately not SetThreadHitBreakpointSite(): that exists to make the
+  // thread step over a site at its pc on resume, and no site is registered at
+  // the trap address. WillResume() moves the pc instead.
+  return StopInfoSP(
+      new StopInfoInjectedBreakpoint(thread, break_id, trap_addr, trap_size));
+}
 
 StopInfoSP StopInfo::CreateStopReasonWithBreakpointSiteID(Thread &thread,
                                                           break_id_t break_id) {

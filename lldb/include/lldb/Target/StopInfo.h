@@ -143,6 +143,24 @@ public:
 
   // This creates a StopInfo for the thread where the should_stop is already
   // set, and won't be recalculated.
+  /// A stop on the trap an injected breakpoint condition compiled into its
+  /// JIT-ed expression.
+  ///
+  /// The trap is a permanent instruction rather than one lldb installed, so it
+  /// cannot be lifted and put back the way a software breakpoint is, and the
+  /// only way to resume is to step over it. The pc is left on the trap while
+  /// stopped, so that the stop reports the line of the condition rather than
+  /// whatever follows the trap, and moved past it when the thread resumes.
+  ///
+  /// \param[in] trap_addr
+  ///     The address of the trap instruction.
+  ///
+  /// \param[in] trap_size
+  ///     Its size in bytes.
+  static lldb::StopInfoSP CreateStopReasonWithInjectedBreakpointSiteID(
+      Thread &thread, lldb::break_id_t break_id, lldb::addr_t trap_addr,
+      size_t trap_size);
+
   static lldb::StopInfoSP CreateStopReasonWithBreakpointSiteID(
       Thread &thread, lldb::break_id_t break_id, bool should_stop);
 

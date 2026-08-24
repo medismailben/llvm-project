@@ -796,24 +796,14 @@ StopInfoSP StopInfoMachException::CreateStopReasonWithMachException(
           if (pc_decrement > 0 && adjust_pc_if_needed && reg_ctx_sp)
             reg_ctx_sp->SetPC(pc);
 
-          // Step past an injected trap here rather than on resume. It is a
-          // permanent instruction in JIT-ed code, so the step-over-breakpoint
-          // machinery cannot help: there is no trap to lift and put back, and it
-          // looks for a site at the pc, where an injected site is not
-          // registered. Leaving the pc on it means resuming re-executes it
-          // forever.
-          //
-          // Advancing is all that is required. The rest of the condition
-          // expression returns into the trampoline, which restores the
-          // registers, runs the instruction the patch displaced and branches
-          // back to the user's code.
-          //
-          // Guarded on the pc still being on the trap, so that a target whose
-          // pc has already moved past it is left alone.
-          if (injected_trap_addr != LLDB_INVALID_ADDRESS && reg_ctx_sp &&
-              bp_site_sp->GetByteSize() &&
-              reg_ctx_sp->GetPC() == injected_trap_addr)
-            reg_ctx_sp->SetPC(injected_trap_addr + bp_site_sp->GetByteSize());
+          // An injected trap needs a stop that knows how to step over it: it
+          // is a permanent instruction in JIT-ed code, so there is nothing to
+          // lift and put back, and the step-over-breakpoint machinery looks for
+          // a site at the pc, where an injected site is not registered.
+          if (injected_trap_addr != LLDB_INVALID_ADDRESS)
+            return StopInfo::CreateStopReasonWithInjectedBreakpointSiteID(
+                thread, bp_site_sp->GetID(), injected_trap_addr,
+                bp_site_sp->GetByteSize());
 
           return StopInfo::CreateStopReasonWithBreakpointSiteID(
               thread, bp_site_sp->GetID());
