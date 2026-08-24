@@ -338,12 +338,26 @@ bool BreakpointInjectedSite::GatherArgumentsMetadata() {
     return false;
   }
 
-  for (const ExpressionVariableSP &expr_var : *captured_or_err) {
+  // The layout is authoritative, including its padding. Accumulating a size
+  // from the variables this pass happens to understand would disagree with what
+  // the condition expression was compiled to read.
+  m_args_struct_size = captured_or_err->struct_size;
+
+  for (const UserExpression::CapturedVariable &captured :
+       captured_or_err->variables) {
+    const ExpressionVariableSP &expr_var = captured.variable;
     ValueObjectSP val_obj_sp = expr_var->GetValueObject();
 
+    // Every captured variable occupies its slot whether or not this pass can
+    // describe it, so one that cannot be described has to fail the whole
+    // install. Skipping it would leave its slot holding whatever was on the
+    // trampoline's stack and the condition would read that.
     if (!val_obj_sp || !val_obj_sp->GetVariable()) {
-      // if Expression Variable does not have ValueObject, skip it
-      continue;
+      LLDB_LOG(log,
+               "FCB: captured variable {0} has no variable to locate, so the "
+               "condition cannot be evaluated in the inferior",
+               expr_var->GetName());
+      return false;
     }
 
     VariableSP var_sp = val_obj_sp->GetVariable();
@@ -370,16 +384,19 @@ bool BreakpointInjectedSite::GatherArgumentsMetadata() {
     Function *func = nullptr;
     if (!owner_scope ||
         !(func = owner_scope->CalculateSymbolContextFunction())) {
-      // if Variable does not have SymbolContextScope or function, skip it
-      continue;
+      LLDB_LOG(log,
+               "FCB: variable {0} has no enclosing function, so its frame base "
+               "cannot be resolved",
+               var_sp->GetName());
+      return false;
     }
 
     // FIXME: const ref ?
     DWARFExpressionList frame_base_expr = func->GetFrameBaseExpression();
 
     VariableMetadata metadata(expr_var->GetName().GetCString(), *size,
-                              llvm_data, addr_size, lldb_dwarf_exprs,
-                              frame_base_expr);
+                              captured.offset, llvm_data, addr_size,
+                              lldb_dwarf_exprs, frame_base_expr);
 
     m_metadatas.push_back(metadata);
   }
@@ -455,8 +472,6 @@ std::string BreakpointInjectedSite::ParseDWARFExpression(size_t expr_idx,
     error = Status::FromErrorString("Couldn't get the target's ABI");
     return "";
   }
-
-  size_t num_processed_vars = 0;
 
   auto resolve_frame_base =
       [&](llvm::DWARFExpression::Operation &op) -> llvm::Expected<std::string> {
@@ -572,15 +587,56 @@ std::string BreakpointInjectedSite::ParseDWARFExpression(size_t expr_idx,
     }
   }
 
-  for (auto op : var_metadata.dwarf) {
-    off_t dest_offset = (expr_idx + num_processed_vars++) * sizeof(void *);
+  // A variable has one location, so exactly one operation may produce it. A
+  // multi-operation expression is a stack program this pass cannot evaluate, and
+  // running the loop over each operation in turn would emit a store per
+  // operation and leave the slot holding whichever came last.
+  const llvm::DWARFExpression &ops = var_metadata.dwarf;
+  if (ops.begin() == ops.end()) {
+    error = Status::FromErrorStringWithFormat(
+        "variable '%s' has an empty location expression",
+        var_metadata.name.c_str());
+    return "";
+  }
+  if (std::next(ops.begin()) != ops.end()) {
+    error = Status::FromErrorStringWithFormat(
+        "the location of variable '%s' is computed by more than one DWARF "
+        "operation, which cannot yet be evaluated in the inferior",
+        var_metadata.name.c_str());
+    return "";
+  }
+
+  const lldb::offset_t dest_offset = var_metadata.offset;
+  for (auto op : ops) {
     switch (op.getCode()) {
     case llvm::dwarf::DW_OP_const1u:
-    case llvm::dwarf::DW_OP_const1s:
-    case llvm::dwarf::DW_OP_addr: {
+    case llvm::dwarf::DW_OP_const1s: {
       int64_t operand = op.getRawOperand(0);
       expr += "   *(void **)(arg_struct + " + std::to_string(dest_offset) +
               ") = (void *)" + std::to_string(operand) + ";\n";
+      break;
+    }
+    case llvm::dwarf::DW_OP_addr: {
+      // The operand is a link-time file address. Emitting it as written would
+      // have the inferior dereference an address that is only correct for a
+      // module loaded with no slide.
+      Address file_addr;
+      const lldb::addr_t raw = op.getRawOperand(0);
+      if (!m_target_sp->ResolveFileAddress(raw, file_addr)) {
+        error = Status::FromErrorStringWithFormat(
+            "couldn't find the section holding the address of variable '%s'",
+            var_metadata.name.c_str());
+        return "";
+      }
+      const lldb::addr_t load_addr = file_addr.GetLoadAddress(m_target_sp.get());
+      if (load_addr == LLDB_INVALID_ADDRESS) {
+        error = Status::FromErrorStringWithFormat(
+            "variable '%s' lives in a section that is not loaded",
+            var_metadata.name.c_str());
+        return "";
+      }
+      expr += "   *(void **)(arg_struct + " + std::to_string(dest_offset) +
+              ") = (void *)" + std::to_string(load_addr) + "ULL;\n";
       break;
     }
     case llvm::dwarf::DW_OP_fbreg: {
@@ -631,7 +687,9 @@ std::string BreakpointInjectedSite::ParseDWARFExpression(size_t expr_idx,
     case llvm::dwarf::DW_OP_breg30:
     case llvm::dwarf::DW_OP_breg31: {
       uint8_t reg_num = op.getCode() - llvm::dwarf::DW_OP_breg0;
-      uint64_t reg_offset = op.getRawOperand(0);
+      // Signed: the operand is a SLEB128, so reading it unsigned turns a stack
+      // offset of -24 into 18446744073709551592.
+      int64_t reg_offset = static_cast<int64_t>(op.getRawOperand(0));
 
       // The operand is a DWARF register number, so it has to be resolved
       // through the ABI like the frame base above. Going through the
@@ -647,16 +705,19 @@ std::string BreakpointInjectedSite::ParseDWARFExpression(size_t expr_idx,
               ") = (void *)(regs->" + *reg_name_or_err + " + " +
               std::to_string(reg_offset) + ");\n";
     } break;
-    default: {
-      // Not a location this pass knows how to materialize. Leave the slot out
-      // of the structure rather than emitting something wrong.
-      num_processed_vars--;
-      break;
-    }
+    default:
+      // Refuse rather than leave the slot unwritten. The condition expression
+      // reads every slot at the offset its own layout assigned, so an unwritten
+      // one is read as whatever the trampoline's stack happened to hold, and the
+      // condition answers on garbage instead of falling back to the debugger.
+      error = Status::FromErrorStringWithFormat(
+          "the location of variable '%s' uses %s, which cannot yet be evaluated "
+          "in the inferior",
+          var_metadata.name.c_str(),
+          llvm::dwarf::OperationEncodingString(op.getCode()).str().c_str());
+      return "";
     }
   }
-
-  m_args_struct_size += sizeof(void *) * num_processed_vars;
 
   return expr;
 }

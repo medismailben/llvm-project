@@ -91,7 +91,7 @@ ClangUserExpression::ClangUserExpression(
 
 ClangUserExpression::~ClangUserExpression() = default;
 
-llvm::Expected<std::vector<lldb::ExpressionVariableSP>>
+llvm::Expected<UserExpression::CapturedVariables>
 ClangUserExpression::GetCapturedVariables() {
   ClangExpressionDeclMap *decl_map = DeclMap();
 
@@ -112,8 +112,9 @@ ClangUserExpression::GetCapturedVariables() {
         "couldn't fetch the layout of the captured variables");
 
   ExpressionVariableList &members = decl_map->GetStructMembers();
-  std::vector<lldb::ExpressionVariableSP> captured;
-  captured.reserve(num_elements);
+  CapturedVariables captured;
+  captured.struct_size = size;
+  captured.variables.reserve(num_elements);
 
   for (uint32_t i = 0; i < num_elements; ++i) {
     const clang::NamedDecl *decl = nullptr;
@@ -139,7 +140,7 @@ ClangUserExpression::GetCapturedVariables() {
           llvm::formatv("no expression variable for '{0}' ({1} of {2})", name,
                         i, num_elements));
 
-    captured.push_back(std::move(expr_var));
+    captured.variables.push_back({std::move(expr_var), offset});
   }
 
   return captured;

@@ -108,16 +108,21 @@ public:
     /// \param[in] frame_base_expr
     ///    The DWARF expression list for the frame base register.
     ///
-    VariableMetadata(std::string name, size_t size, llvm::DataExtractor data,
-                     uint8_t address_size, DWARFExpressionList expr,
+    VariableMetadata(std::string name, size_t size, lldb::offset_t offset,
+                     llvm::DataExtractor data, uint8_t address_size,
+                     DWARFExpressionList expr,
                      DWARFExpressionList &frame_base_expr)
-        : name(std::move(name)), size(size), dwarf(data, address_size),
-          expr_list(expr), frame_base_expr_list(frame_base_expr) {}
+        : name(std::move(name)), size(size), offset(offset),
+          dwarf(data, address_size), expr_list(expr),
+          frame_base_expr_list(frame_base_expr) {}
 
     /// The variable name.
     std::string name;
     /// The variable size.
     size_t size;
+    /// Its byte offset in the argument structure, as the condition expression's
+    /// own layout assigned it. Not derivable from the position in this vector.
+    lldb::offset_t offset;
     /// The variable DWARF Expression.
     llvm::DWARFExpression dwarf;
     /// The LLDB DWARF variable expression list.

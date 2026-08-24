@@ -201,6 +201,27 @@ public:
   /// expression evaluation.
   virtual bool IsParseCacheable() { return true; }
 
+  /// A variable the parsed expression reads out of its argument structure.
+  struct CapturedVariable {
+    lldb::ExpressionVariableSP variable;
+    /// Its byte offset within that structure.
+    ///
+    /// Whoever fills the structure has to use this rather than assume a layout.
+    /// The offsets come from the expression's own layout, which pads and orders
+    /// as it sees fit, and a variable the filler cannot describe still occupies
+    /// its slot: quietly leaving one out shifts every later variable and the
+    /// expression then reads the wrong bytes.
+    lldb::offset_t offset = 0;
+  };
+
+  /// The variables an expression captured, and the structure they live in.
+  struct CapturedVariables {
+    /// The size of that structure, padding included, as the expression's own
+    /// layout computed it. Not the sum of the variables' sizes.
+    size_t struct_size = 0;
+    std::vector<CapturedVariable> variables;
+  };
+
   /// Finalize the layout of the structure through which the expression reaches
   /// the variables it captured, and return those variables in layout order.
   ///
@@ -208,8 +229,7 @@ public:
   /// structure in from inside the inferior, with the debugger out of the loop.
   /// Only languages whose expression parser can report its captures implement
   /// this.
-  virtual llvm::Expected<std::vector<lldb::ExpressionVariableSP>>
-  GetCapturedVariables() {
+  virtual llvm::Expected<CapturedVariables> GetCapturedVariables() {
     return llvm::createStringError(
         "this expression language cannot report its captured variables");
   }
