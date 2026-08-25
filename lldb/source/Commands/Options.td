@@ -630,6 +630,58 @@ let Command = "breakpoint command delete" in {
              "before a file is provided, which prime new targets.">;
 }
 
+let Command = "instruction info" in {
+  def instruction_info_count : Option<"count", "c">, Arg<"NumLines">,
+    Desc<"Number of instructions to describe.">;
+}
+
+let Command = "instruction relocate" in {
+  def instruction_relocate_to
+      : Option<"to", "t">,
+        Group<1>,
+        Arg<"AddressOrExpression">,
+        Desc<"The address the instruction would be moved ${t}o.">;
+  def instruction_relocate_offset
+      : Option<"offset", "o">,
+        Group<2>,
+        Arg<"Offset">,
+        Desc<"How far the instruction would be moved, as a signed byte "
+             "${o}ffset from where it is now. Usually the question is whether "
+             "a copy this far away still reaches, rather than whether one at a "
+             "particular address does.">;
+}
+
+let Command = "instruction reach" in {
+  def instruction_reach_kind
+      : Option<"kind", "k">,
+        EnumArg<"BranchKind">,
+        Desc<"The branch form whose reach to report. Reach is a property of "
+             "the immediate field a form encodes, so it differs between forms "
+             "on the same architecture. Defaults to the unconditional branch, "
+             "which is what a patched site uses.">;
+  def instruction_reach_target
+      : Option<"target", "t">,
+        Arg<"AddressOrExpression">,
+        Desc<"Ask whether this address in particular is reachable, and by how "
+             "much it misses if it is not.">;
+}
+
+// "patch site", not "patch-site": the emitter turns spaces into underscores and// leaves everything else alone, so a hyphen here would name an array that is not
+// a C identifier. Same workaround as "target modules show unwind" below.
+let Command = "instruction patch site" in {
+  def instruction_patch_site_size
+      : Option<"size", "s">,
+        Arg<"ByteSize">,
+        Desc<"How many bytes the branch occupies. Defaults to the width of the "
+             "branch this process' ABI patches with.">;
+  def instruction_patch_site_register
+      : Option<"register", "r">,
+        Arg<"RegisterName">,
+        Desc<"A register the patch sequence overwrites before control reaches "
+             "the trampoline, and which therefore has to be dead at the site. "
+             "May be repeated.">;
+}
+
 let Command = "disassemble" in {
   def disassemble_options_bytes
       : Option<"bytes", "b">,

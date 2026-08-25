@@ -24,6 +24,7 @@
 #include "Commands/CommandObjectFrame.h"
 #include "Commands/CommandObjectGUI.h"
 #include "Commands/CommandObjectHelp.h"
+#include "Commands/CommandObjectInstruction.h"
 #include "Commands/CommandObjectLanguage.h"
 #include "Commands/CommandObjectLog.h"
 #include "Commands/CommandObjectMemory.h"
@@ -405,13 +406,15 @@ void CommandInterpreter::Initialize() {
   if (cmd_obj_sp)
     AddAlias("display", cmd_obj_sp)->SetSyntax(cmd_obj_sp->GetSyntax());
 
-  cmd_obj_sp = GetCommandSPExact("disassemble");
-  if (cmd_obj_sp)
+  // Disassembly moved under the instruction family, which is where the rest of
+  // the questions about a program's instructions live. Keep the old spelling
+  // and its short forms working: it is one of the most typed commands in lldb.
+  cmd_obj_sp = GetCommandSPExact("instruction disassemble");
+  if (cmd_obj_sp) {
+    AddAlias("disassemble", cmd_obj_sp)->SetSyntax(cmd_obj_sp->GetSyntax());
     AddAlias("dis", cmd_obj_sp);
-
-  cmd_obj_sp = GetCommandSPExact("disassemble");
-  if (cmd_obj_sp)
     AddAlias("di", cmd_obj_sp);
+  }
 
   cmd_obj_sp = GetCommandSPExact("_regexp-undisplay");
   if (cmd_obj_sp)
@@ -579,7 +582,7 @@ void CommandInterpreter::LoadCommandDictionary() {
   REGISTER_COMMAND_OBJECT("breakpoint", CommandObjectMultiwordBreakpoint);
   REGISTER_COMMAND_OBJECT("command", CommandObjectMultiwordCommands);
   REGISTER_COMMAND_OBJECT("diagnostics", CommandObjectDiagnostics);
-  REGISTER_COMMAND_OBJECT("disassemble", CommandObjectDisassemble);
+  REGISTER_COMMAND_OBJECT("instruction", CommandObjectMultiwordInstruction);
   REGISTER_COMMAND_OBJECT("dwim-print", CommandObjectDWIMPrint);
   REGISTER_COMMAND_OBJECT("expression", CommandObjectExpression);
   REGISTER_COMMAND_OBJECT("frame", CommandObjectMultiwordFrame);

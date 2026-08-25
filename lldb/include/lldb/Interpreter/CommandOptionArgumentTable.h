@@ -34,6 +34,26 @@ static constexpr OptionEnumValueElement g_description_verbosity_type[] = {
     },
 };
 
+static constexpr OptionEnumValueElement g_branch_kind_values[] = {
+    {eBranchKindBranch, "branch",
+     "An unconditional direct branch: AArch64 b and bl, x86-64 jmp rel32 and "
+     "call rel32."},
+    {eBranchKindConditional, "conditional",
+     "A conditional direct branch: AArch64 b.cond, cbz and cbnz, x86-64 jcc "
+     "rel32."},
+    {eBranchKindTestBranch, "test-branch",
+     "A branch on the value of one bit: AArch64 tbz and tbnz."},
+    {eBranchKindLiteral, "literal",
+     "A load of a constant placed near the instruction: AArch64 ldr "
+     "(literal)."},
+    {eBranchKindAddress, "address",
+     "A pc-relative address computation: AArch64 adr."},
+    {eBranchKindPage, "page",
+     "A pc-relative page address computation: AArch64 adrp."},
+    {eBranchKindShort, "short",
+     "A short relative branch: x86-64 jmp rel8 and jcc rel8."},
+};
+
 static constexpr OptionEnumValueElement g_sort_option_enumeration[] = {
     {
         eSortOrderNone,
@@ -365,6 +385,7 @@ static constexpr CommandObject::ArgumentTableEntry g_argument_table[] = {
     { lldb::eArgTypePluginDomain, "plugin-domain", lldb::CompletionType::eNoCompletion, g_plugin_domain_values, { nullptr, false }, "The domain to apply the plugin operation to." },
     { lldb::eArgTypeBreakpointResolverMask, "resolver-mask", lldb::CompletionType::eNoCompletion, g_resolver_mask_values, { nullptr, false }, "Specify the breakpoint resolver type your override will handle. Can be specified more than once to specify a mask of resolver types." },
     { lldb::eArgTypeScriptedExtension, "scripting-extension", lldb::CompletionType::eScriptedExtensionCompletion, {}, { nullptr, false }, "The name of a scripting extension." },
+    { lldb::eArgTypeBranchKind, "branch-kind", lldb::CompletionType::eNoCompletion, g_branch_kind_values, { nullptr, false }, "A pc-relative instruction form, identified by the immediate field it encodes." },
     // clang-format on
 };
 

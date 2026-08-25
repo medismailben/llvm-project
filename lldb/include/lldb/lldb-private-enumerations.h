@@ -110,6 +110,21 @@ enum ArgumentRepetitionType {
                               // optional
 };
 
+/// The pc-relative instruction forms whose reach `instruction reach` reports.
+///
+/// Named after the role the encoding plays rather than after one architecture's
+/// mnemonics, because both AArch64 and x86-64 have most of these and the
+/// question asked of them is the same.
+enum BranchKind {
+  eBranchKindBranch,
+  eBranchKindConditional,
+  eBranchKindTestBranch,
+  eBranchKindLiteral,
+  eBranchKindAddress,
+  eBranchKindPage,
+  eBranchKindShort,
+};
+
 enum SortOrder {
   eSortOrderNone,
   eSortOrderByAddress,

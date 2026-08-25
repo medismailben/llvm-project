@@ -15,6 +15,7 @@ add_lldb_library(lldbCommands NO_PLUGIN_DEPENDENCIES
   CommandObjectFrame.cpp
   CommandObjectGUI.cpp
   CommandObjectHelp.cpp
+  CommandObjectInstruction.cpp
   CommandObjectLanguage.cpp
   CommandObjectLog.cpp
   CommandObjectMemory.cpp
