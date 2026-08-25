@@ -55,6 +55,76 @@ public:
 
   bool CanSetBreakpoint();
 
+  /// The bytes of code a copy of this instruction needs to behave the same way
+  /// from a different address.
+  ///
+  /// The answer does not depend on where the copy ends up, so a caller can
+  /// reserve room before it has chosen a destination. It is at least
+  /// GetByteSize(), and larger when behaving the same somewhere else takes a
+  /// sequence rather than a single instruction.
+  ///
+  /// \param[out] error
+  ///     Why no relocated form exists, when the result is zero. The reason is
+  ///     phrased for a user, so it can be shown as-is.
+  ///
+  /// \return
+  ///     The bytes of code to reserve, or zero when this instruction cannot be
+  ///     moved out of line at any address.
+  size_t GetRelocatedCodeSize(lldb::SBError &error);
+
+  /// The bytes of constant data a copy of this instruction needs.
+  ///
+  /// Placed after the relocated code and never executed. Zero when the
+  /// relocated form needs none, which is also what a refusal reports, so check
+  /// \a error rather than the result to tell the two apart.
+  size_t GetRelocatedDataSize(lldb::SBError &error);
+
+  /// The address this instruction refers to through a PC-relative operand.
+  ///
+  /// This is what Relocate() has to be told to preserve. It is separate from
+  /// Relocate() because a caller moving a whole range has to redirect a
+  /// reference that lands inside that range to wherever that instruction's copy
+  /// went, which only the caller knows.
+  ///
+  /// \param[in] pc
+  ///     The address to interpret this instruction at. The result is in the
+  ///     same address domain as this argument.
+  ///
+  /// \return
+  ///     The referenced address, or LLDB_INVALID_ADDRESS when this instruction
+  ///     is not PC-relative or its target cannot be known without running the
+  ///     program, as is the case for an indirect branch.
+  lldb::addr_t GetReferencedAddress(lldb::addr_t pc);
+
+  /// Bytes that behave at \a to as this instruction does at \a from.
+  ///
+  /// \param[in] target
+  ///     The target these bytes are destined for. Supplies the byte order and
+  ///     address size the result is described with.
+  ///
+  /// \param[in] from
+  ///     The address this instruction executes at now.
+  ///
+  /// \param[in] to
+  ///     The address the copy will execute at.
+  ///
+  /// \param[in] referenced_address
+  ///     The address the copy has to keep referring to, normally
+  ///     GetReferencedAddress(from). Ignored when this instruction refers to
+  ///     nothing, so LLDB_INVALID_ADDRESS is fine in that case.
+  ///
+  /// \param[out] error
+  ///     Why the copy cannot reach \a referenced_address from \a to. This can
+  ///     fail for an instruction GetRelocatedCodeSize() accepted, because how
+  ///     far the copy moves is not known until a destination is chosen.
+  ///
+  /// \return
+  ///     The relocated instructions, exactly GetRelocatedCodeSize() bytes of
+  ///     them, or invalid data on failure.
+  lldb::SBData Relocate(lldb::SBTarget target, lldb::addr_t from,
+                        lldb::addr_t to, lldb::addr_t referenced_address,
+                        lldb::SBError &error);
+
 #ifndef SWIG
   void Print(FILE *out);
 #endif

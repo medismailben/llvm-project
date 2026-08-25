@@ -10,6 +10,7 @@
 #include "lldb/Utility/Instrumentation.h"
 
 #include "lldb/API/SBAddress.h"
+#include "lldb/API/SBError.h"
 #include "lldb/API/SBFile.h"
 #include "lldb/API/SBFrame.h"
 
@@ -27,9 +28,13 @@
 #include "lldb/Utility/ArchSpec.h"
 #include "lldb/Utility/DataBufferHeap.h"
 #include "lldb/Utility/DataExtractor.h"
+#include "lldb/Utility/Endian.h"
 #include "lldb/Utility/StructuredData.h"
 
 #include <memory>
+
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Error.h"
 
 // We recently fixed a leak in one of the Instruction subclasses where the
 // instruction will only hold a weak reference to the disassembler to avoid a
@@ -241,6 +246,105 @@ bool SBInstruction::CanSetBreakpoint() {
   if (inst_sp)
     return inst_sp->CanSetBreakpoint();
   return false;
+}
+
+size_t SBInstruction::GetRelocatedCodeSize(lldb::SBError &error) {
+  LLDB_INSTRUMENT_VA(this, error);
+
+  lldb::InstructionSP inst_sp(GetOpaque());
+  if (!inst_sp) {
+    error.SetErrorString("invalid instruction");
+    return 0;
+  }
+
+  llvm::Expected<Instruction::RelocationSize> room =
+      inst_sp->GetRelocationSize();
+  if (!room) {
+    // The reason is written as an explanation for a user, so it is passed
+    // through rather than replaced with something this layer invents.
+    error.SetErrorString(llvm::toString(room.takeError()).c_str());
+    return 0;
+  }
+
+  error.Clear();
+  return room->code;
+}
+
+size_t SBInstruction::GetRelocatedDataSize(lldb::SBError &error) {
+  LLDB_INSTRUMENT_VA(this, error);
+
+  lldb::InstructionSP inst_sp(GetOpaque());
+  if (!inst_sp) {
+    error.SetErrorString("invalid instruction");
+    return 0;
+  }
+
+  llvm::Expected<Instruction::RelocationSize> room =
+      inst_sp->GetRelocationSize();
+  if (!room) {
+    error.SetErrorString(llvm::toString(room.takeError()).c_str());
+    return 0;
+  }
+
+  error.Clear();
+  return room->data;
+}
+
+lldb::addr_t SBInstruction::GetReferencedAddress(lldb::addr_t pc) {
+  LLDB_INSTRUMENT_VA(this, pc);
+
+  lldb::InstructionSP inst_sp(GetOpaque());
+  if (!inst_sp)
+    return LLDB_INVALID_ADDRESS;
+
+  // Referring to nothing and referring somewhere only the running program can
+  // resolve are the same answer to a caller about to relocate: no address to
+  // preserve. Relocate() ignores an invalid one.
+  return inst_sp->GetReferencedAddress(pc).value_or(LLDB_INVALID_ADDRESS);
+}
+
+lldb::SBData SBInstruction::Relocate(lldb::SBTarget target, lldb::addr_t from,
+                                     lldb::addr_t to,
+                                     lldb::addr_t referenced_address,
+                                     lldb::SBError &error) {
+  LLDB_INSTRUMENT_VA(this, target, from, to, referenced_address, error);
+
+  lldb::SBData sb_data;
+  lldb::InstructionSP inst_sp(GetOpaque());
+  if (!inst_sp) {
+    error.SetErrorString("invalid instruction");
+    return sb_data;
+  }
+
+  llvm::SmallVector<uint8_t, 16> code;
+  if (llvm::Error relocation_error =
+          inst_sp->Relocate(from, to, referenced_address, code)) {
+    error.SetErrorString(llvm::toString(std::move(relocation_error)).c_str());
+    return sb_data;
+  }
+
+  // Described with the target's byte order, because a caller checking the
+  // result reads it back as an instruction rather than as loose bytes. Without
+  // a target there is nothing to describe it with, so fall back to the host,
+  // which is what the disassembler assumes for a decoded fixed-width opcode.
+  TargetSP target_sp(target.GetSP());
+  const ByteOrder byte_order = target_sp
+                                   ? target_sp->GetArchitecture().GetByteOrder()
+                                   : endian::InlHostByteOrder();
+  const uint32_t addr_byte_size =
+      target_sp ? target_sp->GetArchitecture().GetAddressByteSize()
+                : static_cast<uint32_t>(sizeof(void *));
+
+  // Copied out: the SmallVector above dies with this call, and SBData has to
+  // outlive it.
+  DataBufferSP buffer_sp =
+      std::make_shared<DataBufferHeap>(code.data(), code.size());
+  DataExtractorSP data_extractor_sp =
+      std::make_shared<DataExtractor>(buffer_sp, byte_order, addr_byte_size);
+  sb_data.SetOpaque(data_extractor_sp);
+
+  error.Clear();
+  return sb_data;
 }
 
 lldb::InstructionSP SBInstruction::GetOpaque() {
