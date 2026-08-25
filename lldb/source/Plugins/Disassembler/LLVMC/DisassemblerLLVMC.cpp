@@ -794,11 +794,20 @@ public:
         InstructionLLVMC &i,
         const lldb_private::ExecutionContext *exe_ctx = nullptr)
         : m_disasm(i.m_disasm_wp.lock()) {
+      // The disassembler that decoded this instruction can be gone by the time
+      // something asks the instruction about itself, and every user of this
+      // scope already tests it for that. Locking unconditionally would crash
+      // before any of them got the chance.
+      if (!m_disasm)
+        return;
       m_disasm->m_mutex.lock();
       m_disasm->m_inst = &i;
       m_disasm->m_exe_ctx = exe_ctx;
     }
-    ~DisassemblerScope() { m_disasm->m_mutex.unlock(); }
+    ~DisassemblerScope() {
+      if (m_disasm)
+        m_disasm->m_mutex.unlock();
+    }
 
     /// Evaluates to true if this scope contains a valid disassembler.
     operator bool() const { return static_cast<bool>(m_disasm); }
