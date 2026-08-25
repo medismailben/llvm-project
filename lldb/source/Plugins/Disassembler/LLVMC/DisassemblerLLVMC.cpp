@@ -436,6 +436,96 @@ lldb::InstructionControlFlowKind GetControlFlowKind(bool is_exec_mode_64b,
 
 } // namespace x86
 
+namespace {
+
+/// AArch64 `b` and `bl` hold a signed 26 bit displacement scaled by the
+/// instruction size, giving a reach of +/-128MiB.
+///
+/// These two are picked out by their top six bits rather than by mnemonic or by
+/// an MC opcode enum: the enum headers are private to the target, and the
+/// printed mnemonic is the assembly printer's spelling, which aliases and
+/// flavours can change. The encoding cannot.
+constexpr uint32_t g_aarch64_branch_mask = 0xfc000000;
+constexpr uint32_t g_aarch64_b = 0x14000000;
+constexpr uint32_t g_aarch64_bl = 0x94000000;
+constexpr uint32_t g_aarch64_imm26_mask = 0x03ffffff;
+
+bool IsAArch64ImmediateBranch(uint32_t instruction) {
+  const uint32_t opc = instruction & g_aarch64_branch_mask;
+  return opc == g_aarch64_b || opc == g_aarch64_bl;
+}
+
+std::optional<uint32_t> AArch64Word(const lldb_private::Opcode &opcode) {
+  if (opcode.GetByteSize() != sizeof(uint32_t))
+    return std::nullopt;
+  // Not GetOpcodeBytes(), which is null unless the opcode happens to be stored
+  // as a byte buffer. A fixed width instruction is normally stored as an
+  // integer, so reading the bytes would dereference null.
+  const uint32_t word = opcode.GetOpcode32(UINT32_MAX);
+  if (word == UINT32_MAX)
+    return std::nullopt;
+  return word;
+}
+
+llvm::Expected<lldb_private::Instruction::RelocationSize>
+AArch64RelocationSize(const lldb_private::Opcode &opcode) {
+  std::optional<uint32_t> word = AArch64Word(opcode);
+  if (!word)
+    return llvm::createStringError(
+        "a position dependent instruction that is not four bytes cannot be "
+        "moved out of line");
+
+  // Only the unconditional immediate branches for now. Everything else that
+  // reads the pc, the conditional branches with their shorter reach, the
+  // literal loads and the address computations, needs either a longer sequence
+  // or a constant placed nearby, so it is refused until the trampoline can hold
+  // those.
+  if (!IsAArch64ImmediateBranch(*word))
+    return llvm::createStringError(
+        "moving this position dependent instruction out of line is not "
+        "implemented yet");
+
+  return lldb_private::Instruction::RelocationSize{sizeof(uint32_t), 0};
+}
+
+llvm::Error RelocateAArch64(const lldb_private::Opcode &opcode,
+                            lldb::addr_t from, lldb::addr_t to,
+                            lldb::addr_t referenced_address,
+                            llvm::SmallVectorImpl<uint8_t> &code) {
+  std::optional<uint32_t> word = AArch64Word(opcode);
+  if (!word || !IsAArch64ImmediateBranch(*word))
+    return llvm::createStringError(
+        "moving this position dependent instruction out of line is not "
+        "implemented yet");
+
+  const int64_t displacement =
+      static_cast<int64_t>(referenced_address) - static_cast<int64_t>(to);
+
+  if (displacement % static_cast<int64_t>(sizeof(uint32_t)))
+    return llvm::createStringError(
+        llvm::formatv("a branch to {0:x} from {1:x} is not instruction aligned",
+                      referenced_address, to));
+
+  const int64_t scaled = displacement / static_cast<int64_t>(sizeof(uint32_t));
+  if (!llvm::isInt<26>(scaled))
+    return llvm::createStringError(llvm::formatv(
+        "a branch reaches +/-128MiB and the copy at {0:x} is {1:x} bytes from "
+        "its target {2:x}",
+        to, displacement < 0 ? -displacement : displacement,
+        referenced_address));
+
+  const uint32_t relocated =
+      (*word & ~g_aarch64_imm26_mask) |
+      (static_cast<uint32_t>(scaled) & g_aarch64_imm26_mask);
+
+  for (unsigned byte = 0; byte < sizeof(relocated); ++byte)
+    code.push_back((relocated >> (8 * byte)) & 0xff);
+
+  return llvm::Error::success();
+}
+
+} // namespace
+
 class InstructionLLVMC : public lldb_private::Instruction {
 public:
   InstructionLLVMC(DisassemblerLLVMC &disasm,
@@ -475,6 +565,59 @@ public:
   bool IsPCRelative() override {
     VisitInstruction();
     return m_is_pc_relative;
+  }
+
+  llvm::Expected<RelocationSize> GetRelocationSize() override {
+    // m_is_pc_relative starts out true and only becomes accurate once the
+    // instruction has been decoded, so this has to visit before reading it or
+    // it refuses everything it is asked about first.
+    VisitInstruction();
+
+    // Position independent already, so a copy of the same bytes behaves the
+    // same anywhere.
+    if (!m_is_pc_relative)
+      return RelocationSize{GetOpcode().GetByteSize(), 0};
+
+    DisassemblerScope disasm(*this);
+    if (!disasm)
+      return llvm::createStringError(
+          "the disassembler that decoded this instruction is gone");
+
+    switch (disasm->GetArchitecture().GetMachine()) {
+    case llvm::Triple::aarch64:
+    case llvm::Triple::aarch64_be:
+    case llvm::Triple::aarch64_32:
+      return AArch64RelocationSize(GetOpcode());
+    default:
+      return llvm::createStringError(
+          "moving a position dependent instruction out of line is not "
+          "implemented for this architecture");
+    }
+  }
+
+  llvm::Error Relocate(lldb::addr_t from, lldb::addr_t to,
+                       lldb::addr_t referenced_address,
+                       llvm::SmallVectorImpl<uint8_t> &code) override {
+    // Refuse before emitting anything, so a caller that ignored
+    // GetRelocationSize() still cannot get a wrong instruction. This also
+    // decodes the instruction, which m_is_pc_relative below depends on.
+    llvm::Expected<RelocationSize> room = GetRelocationSize();
+    if (!room)
+      return room.takeError();
+
+    if (!m_is_pc_relative) {
+      // Copied through GetData() rather than GetOpcodeBytes(), which is null
+      // unless the opcode is stored as a byte buffer: a fixed width instruction
+      // is normally stored as an integer.
+      DataExtractor data;
+      if (!GetOpcode().GetData(data))
+        return llvm::createStringError(
+            "couldn't read the bytes of a position independent instruction");
+      code.append(data.GetDataStart(), data.GetDataEnd());
+      return llvm::Error::success();
+    }
+
+    return RelocateAArch64(GetOpcode(), from, to, referenced_address, code);
   }
 
   std::optional<lldb::addr_t> GetReferencedAddress(lldb::addr_t pc) override {

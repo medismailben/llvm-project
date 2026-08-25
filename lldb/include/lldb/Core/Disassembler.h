@@ -26,6 +26,8 @@
 #include "lldb/lldb-forward.h"
 #include "lldb/lldb-private-enumerations.h"
 #include "lldb/lldb-types.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Error.h"
 
 #include "llvm/ADT/StringRef.h"
 
@@ -205,6 +207,66 @@ public:
   virtual std::optional<lldb::addr_t> GetReferencedAddress(lldb::addr_t pc) {
     return std::nullopt;
   }
+
+  /// How much room a copy of this instruction needs to behave the same way from
+  /// a different address.
+  struct RelocationSize {
+    /// Bytes of code. At least this instruction's size, more when behaving the
+    /// same somewhere else takes a sequence rather than one instruction.
+    size_t code = 0;
+    /// Bytes of constant data that code addresses, placed after it and never
+    /// executed. Zero when the relocated form needs none.
+    size_t data = 0;
+  };
+
+  /// Whether this instruction can execute from a different address, and how
+  /// much room a copy that does needs.
+  ///
+  /// The answer does not depend on where the copy ends up, so a caller can
+  /// reserve room before it has an address to relocate to, and Relocate() then
+  /// produces exactly this much. The relocated form is chosen by the
+  /// instruction alone and never by how far it moves, so reserving and emitting
+  /// cannot disagree.
+  ///
+  /// Unlike IsPCRelative(), this is not biased towards saying yes: it reports
+  /// an error whenever it cannot prove a relocated form exists. That is what
+  /// lets a caller decline to move an instruction rather than move it wrongly.
+  ///
+  /// \return
+  ///     The room a relocated copy needs, or the reason no relocated form
+  ///     exists. That reason reaches the user as the explanation for why a
+  ///     faster implementation was unavailable, so it should read as a
+  ///     sentence.
+  virtual llvm::Expected<RelocationSize> GetRelocationSize();
+
+  /// Bytes that behave at \a to as this instruction does at \a from.
+  ///
+  /// \param[in] from
+  ///     The address this instruction executes at now.
+  ///
+  /// \param[in] to
+  ///     The address the copy will execute at.
+  ///
+  /// \param[in] referenced_address
+  ///     The address the copy has to keep referring to. Normally
+  ///     GetReferencedAddress(from), but a caller relocating a whole range has
+  ///     to redirect a reference that lands inside that range to wherever the
+  ///     copy of that instruction went. Ignored when this instruction refers to
+  ///     nothing.
+  ///
+  /// \param[out] code
+  ///     Appended with the relocated instructions, exactly the code size
+  ///     GetRelocationSize() reported.
+  ///
+  /// \return
+  ///     Success, or the reason the copy cannot reach \a referenced_address
+  ///     from
+  ///     \a to. A displacement that no longer fits is the usual reason, so this
+  ///     can fail for an instruction GetRelocationSize() accepted: how far the
+  ///     copy moves is not known until the trampoline has been allocated.
+  virtual llvm::Error Relocate(lldb::addr_t from, lldb::addr_t to,
+                               lldb::addr_t referenced_address,
+                               llvm::SmallVectorImpl<uint8_t> &code);
 
   /// How this instruction touches a register.
   ///

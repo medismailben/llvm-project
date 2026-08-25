@@ -786,6 +786,19 @@ bool Disassembler::Disassemble(Debugger &debugger, const ArchSpec &arch,
                      num_mixed_context_lines, options, strm);
 }
 
+llvm::Expected<Instruction::RelocationSize> Instruction::GetRelocationSize() {
+  return llvm::createStringError(
+      "this disassembler cannot say whether an instruction can be moved out of "
+      "line");
+}
+
+llvm::Error Instruction::Relocate(lldb::addr_t from, lldb::addr_t to,
+                                  lldb::addr_t referenced_address,
+                                  llvm::SmallVectorImpl<uint8_t> &code) {
+  return llvm::createStringError(
+      "this disassembler cannot move an instruction out of line");
+}
+
 Instruction::Instruction(const Address &address, AddressClass addr_class)
     : m_address(address), m_address_class(addr_class), m_opcode(),
       m_calculated_strings(false) {}
