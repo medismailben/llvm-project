@@ -15,6 +15,7 @@
 #include "llvm/Support/Error.h"
 
 #include <cstddef>
+#include <vector>
 
 namespace lldb_private {
 
@@ -36,6 +37,28 @@ class Process;
 /// debugged.
 class PatchSiteAnalysis {
 public:
+  /// What it takes to run the instructions a patch displaces from somewhere
+  /// else.
+  struct PatchPlan {
+    /// The bytes the patch overwrites: \a patch_size rounded up to an
+    /// instruction boundary.
+    size_t displaced_size = 0;
+    /// Those instructions, in the order they execute.
+    std::vector<lldb::InstructionSP> displaced_instructions;
+    /// Bytes of code needed to run them from somewhere else. Equal to
+    /// \a displaced_size when none of them is position dependent, larger when
+    /// one has to be rewritten as a sequence.
+    size_t relocated_code_size = 0;
+    /// Keeps the instructions above usable.
+    ///
+    /// An Instruction holds a weak reference back to the disassembler that
+    /// decoded it and needs it alive to answer anything that has to consult the
+    /// decoded form, which is most of what a caller relocating one will ask.
+    /// Nothing else here owns it, so without this the instructions are dangling
+    /// by the time CanPatch() returns.
+    lldb::DisassemblerSP disassembler;
+  };
+
   /// Whether \a patch_size bytes at \a site can be replaced with a branch.
   ///
   /// \param[in] process
@@ -56,19 +79,31 @@ public:
   ///     dead at the site.
   ///
   /// \return
-  ///     Success when patching is safe, otherwise an error describing which
-  ///     condition failed, suitable for showing to the user as the reason a
-  ///     faster implementation was not available.
-  static llvm::Error
+  ///     What the caller has to reserve to run the displaced instructions out
+  ///     of line, otherwise an error describing which condition failed,
+  ///     suitable for showing to the user as the reason a faster implementation
+  ///     was not available.
+  static llvm::Expected<PatchPlan>
   CanPatch(Process &process, const Address &site, size_t patch_size,
            llvm::ArrayRef<llvm::StringRef> clobbered_registers = {});
 
-private:
+  /// The individual conditions CanPatch() requires, in the order it applies
+  /// them.
+  ///
+  /// CanPatch() stops at the first condition that fails, which is what a caller
+  /// about to patch wants and what someone asking why a site was refused does
+  /// not: an explanation has to name every condition, including the ones that
+  /// hold. Anything deciding whether to patch should call CanPatch() rather
+  /// than assemble the conjunction itself, so that the order and the set of
+  /// conditions stay in one place.
+  /// @{
+
   /// The instructions the branch would displace must be whole instructions, and
   /// they must all be safe to execute from a different address.
   static llvm::Error CheckDisplacedInstructions(Process &process,
                                                 const Address &site,
-                                                size_t patch_size);
+                                                size_t patch_size,
+                                                PatchPlan &plan);
 
   /// Nothing already in the function may jump into the middle of the branch we
   /// are about to write.
@@ -90,6 +125,8 @@ private:
   /// cannot be determined leaves the register assumed live.
   static llvm::Error CheckRegisterIsDead(Process &process, const Address &site,
                                          llvm::StringRef reg_name);
+
+  /// @}
 };
 
 } // namespace lldb_private

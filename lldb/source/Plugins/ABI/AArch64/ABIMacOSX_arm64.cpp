@@ -150,11 +150,21 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   // bytes being overwritten. Refuse rather than corrupt the inferior when that
   // does not hold; the caller falls back to evaluating the condition out of
   // process.
-  if (llvm::Error error = PatchSiteAnalysis::CanPatch(
-          *process_sp, bp_injected_site->GetRealAddress(),
-          aarch64_instr_size)) {
-    return error;
-  }
+  llvm::Expected<PatchSiteAnalysis::PatchPlan> plan =
+      PatchSiteAnalysis::CanPatch(
+          *process_sp, bp_injected_site->GetRealAddress(), aarch64_instr_size);
+  if (!plan)
+    return plan.takeError();
+
+  // Only the two reserved slots are available, one for the displaced
+  // instruction and one for the branch back, so a displaced instruction whose
+  // relocated form is a sequence has nowhere to go yet.
+  if (plan->relocated_code_size != aarch64_instr_size)
+    return llvm::createStringError(llvm::formatv(
+        "the instruction displaced at {0:x} needs {1} bytes to run out of line "
+        "and the trampoline reserves {2}",
+        bp_injected_site->GetLoadAddress(), plan->relocated_code_size,
+        aarch64_instr_size));
 
   std::stringstream ss;
 
@@ -340,10 +350,36 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
         trampoline_addr, bp_load_addr));
   }
 
-  /// Copy inferior instructions into trampoline, then the branch back to the
-  /// instruction after the one they came from.
-  std::memcpy(&trampoline_buffer[copied_instr_offset], saved_instrs->GetBytes(),
-              saved_instrs->GetByteSize());
+  /// Put the displaced instruction in the first reserved slot, then the branch
+  /// back to the instruction after the one it came from.
+  ///
+  /// Relocate() rather than a copy: an instruction that refers to its own
+  /// address, a branch for instance, means something different from the
+  /// trampoline and has to be rewritten to keep referring to what it did. For
+  /// anything position independent this hands back the original bytes.
+  const lldb::addr_t slot_addr = trampoline_addr + copied_instr_offset;
+  llvm::SmallVector<uint8_t, 8> relocated;
+  {
+    assert(plan->displaced_instructions.size() == 1 &&
+           "a single b displaces exactly one instruction");
+    InstructionSP displaced = plan->displaced_instructions.front();
+    const lldb::addr_t referenced =
+        displaced->GetReferencedAddress(bp_load_addr)
+            .value_or(LLDB_INVALID_ADDRESS);
+
+    if (llvm::Error error =
+            displaced->Relocate(bp_load_addr, slot_addr, referenced, relocated))
+      return error;
+
+    if (relocated.size() != aarch64_instr_size)
+      return llvm::createStringError(llvm::formatv(
+          "relocating the instruction displaced at {0:x} produced {1} bytes "
+          "instead of {2}",
+          bp_load_addr, relocated.size(), aarch64_instr_size));
+  }
+
+  std::memcpy(&trampoline_buffer[copied_instr_offset], relocated.data(),
+              relocated.size());
   EncodeAArch64Branch(source_branch_target,
                       &trampoline_buffer[copied_instr_offset +
                                          aarch64_instr_size]);

@@ -52,14 +52,16 @@ static DisassemblerSP DisassembleToEndOfRange(Target &target, Function &function
       /*force_live_memory=*/true);
 }
 
-llvm::Error
-PatchSiteAnalysis::CanPatch(Process &process, const Address &site,
-                            size_t patch_size,
-                            llvm::ArrayRef<llvm::StringRef> clobbered_registers) {
+llvm::Expected<PatchSiteAnalysis::PatchPlan> PatchSiteAnalysis::CanPatch(
+    Process &process, const Address &site, size_t patch_size,
+    llvm::ArrayRef<llvm::StringRef> clobbered_registers) {
   if (!patch_size)
     return llvm::createStringError("a patch cannot be zero bytes wide");
 
-  if (llvm::Error error = CheckDisplacedInstructions(process, site, patch_size))
+  PatchPlan plan;
+
+  if (llvm::Error error =
+          CheckDisplacedInstructions(process, site, patch_size, plan))
     return error;
 
   if (llvm::Error error = CheckNoBranchIntoPatch(process, site, patch_size))
@@ -69,12 +71,16 @@ PatchSiteAnalysis::CanPatch(Process &process, const Address &site,
     if (llvm::Error error = CheckRegisterIsDead(process, site, reg_name))
       return error;
 
-  return CheckNoThreadInPatch(process, site, patch_size);
+  if (llvm::Error error = CheckNoThreadInPatch(process, site, patch_size))
+    return error;
+
+  return plan;
 }
 
 llvm::Error PatchSiteAnalysis::CheckDisplacedInstructions(Process &process,
                                                           const Address &site,
-                                                          size_t patch_size) {
+                                                          size_t patch_size,
+                                                          PatchPlan &plan) {
   Target &target = process.GetTarget();
   const addr_t site_addr = site.GetCallableLoadAddress(&target);
 
@@ -96,6 +102,11 @@ llvm::Error PatchSiteAnalysis::CheckDisplacedInstructions(Process &process,
 
   InstructionList &instructions = disassembler_sp->GetInstructionList();
 
+  // The instructions handed back below only keep a weak reference to the
+  // disassembler that decoded them, and need it alive to answer anything about
+  // their decoded form. Nothing else owns it once this returns.
+  plan.disassembler = disassembler_sp;
+
   // Walk whole instructions until the branch is covered. A branch that ends
   // part way through an instruction would leave the tail of that instruction
   // behind to be executed as though it were a new one.
@@ -111,17 +122,24 @@ llvm::Error PatchSiteAnalysis::CheckDisplacedInstructions(Process &process,
                         "{0:x}",
                         site_addr + displaced_size));
 
-    // Relocating an instruction that refers to its own address would change
-    // what it refers to. Adjusting the operand is possible for some forms, but
-    // until that exists these have to be refused.
-    if (instruction->IsPCRelative())
+    // An instruction that refers to its own address means something different
+    // somewhere else, so it has to be rewritten rather than copied. Ask whether
+    // a rewritten form exists before anything is patched, and how much room it
+    // needs, so the trampoline can be sized before it has an address.
+    llvm::Expected<Instruction::RelocationSize> room =
+        instruction->GetRelocationSize();
+    if (!room)
       return llvm::createStringError(llvm::formatv(
-          "the instruction at {0:x} is position dependent, so it cannot be "
-          "moved out of line",
-          site_addr + displaced_size));
+          "the instruction at {0:x} cannot be moved out of line: "
+          "{1}",
+          site_addr + displaced_size, llvm::toString(room.takeError())));
 
+    plan.displaced_instructions.push_back(instruction);
+    plan.relocated_code_size += room->code;
     displaced_size += size;
   }
+
+  plan.displaced_size = displaced_size;
 
   if (displaced_size < patch_size)
     return llvm::createStringError(llvm::formatv(

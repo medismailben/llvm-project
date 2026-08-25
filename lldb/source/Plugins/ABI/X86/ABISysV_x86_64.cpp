@@ -107,10 +107,10 @@ llvm::Error ABISysV_x86_64::SetupFastConditionalBreakpointTrampoline(
   // does not hold; the caller falls back to evaluating the condition out of
   // process.
   Address &bp_addr = bp_injected_site->GetRealAddress();
-  if (llvm::Error error =
-          PatchSiteAnalysis::CanPatch(*process_sp, bp_addr, x86_64_jmp_size)) {
-    return error;
-  }
+  llvm::Expected<PatchSiteAnalysis::PatchPlan> plan =
+      PatchSiteAnalysis::CanPatch(*process_sp, bp_addr, x86_64_jmp_size);
+  if (!plan)
+    return plan.takeError();
 
   // The instructions displaced by the branch have to run out of the trampoline,
   // so save them before anything patches the site.
