@@ -211,6 +211,71 @@ class FastConditionalBreakpointPatchTestCase(TestBase):
         )
 
     @skipUnlessDarwin
+    @skipIf(archs=no_match(["arm64", "arm64e"]))
+    @add_test_categories(["pyapi"])
+    def test_call_site_can_be_patched(self):
+        """A breakpoint whose displaced instruction is a call still works.
+
+        A branch means something different from the trampoline than it did where
+        it was, so copying it there verbatim would send the inferior to the wrong
+        place. It has to be rewritten to keep referring to what it did, and this
+        is the case that proves the rewrite rather than asserting it: if the
+        relocated call is wrong the inferior never finishes its loop.
+        """
+        self.build()
+        target = self.dbg.CreateTarget(self.getBuildArtifact("a.out"))
+        self.assertTrue(target, VALID_TARGET)
+
+        # Find a call rather than assuming where one is: which line holds it and
+        # what the compiler emits around it are both free to change.
+        main = target.FindFunctions("main").GetContextAtIndex(0).GetFunction()
+        self.assertTrue(main, "no main to disassemble")
+
+        call = None
+        for instruction in main.GetInstructions(target):
+            if instruction.DoesBranch() and instruction.GetMnemonic(target) == "bl":
+                call = instruction
+                break
+        self.assertTrue(call, "no call instruction in main to patch")
+
+        # By SBAddress rather than by a raw address: an address on a target
+        # with no process carries the section it belongs to, and a breakpoint
+        # created from the bare integer stays unresolved once the module loads,
+        # so no site is ever built and nothing is patched.
+        breakpoint = target.BreakpointCreateBySBAddress(call.GetAddress())
+        self.assertEqual(breakpoint.GetNumLocations(), 1, VALID_BREAKPOINT)
+
+        location = breakpoint.GetLocationAtIndex(0)
+        location.SetCondition("counter == 9")
+        location.SetInjectCondition(True)
+
+        marker = self.getBuildArtifact("finished.txt")
+        if os.path.exists(marker):
+            os.unlink(marker)
+
+        process = target.LaunchSimple(
+            [marker], None, self.get_process_working_directory())
+        self.assertTrue(process, PROCESS_IS_VALID)
+        self.assertState(process.GetState(), lldb.eStateStopped)
+
+        self.assertTrue(
+            location.GetInjectCondition(),
+            "the call site was refused, so the relocation path was not "
+            "exercised",
+        )
+
+        # The remaining iterations all run through the trampoline, where the
+        # relocated call has to reach the same function it did before.
+        process.Continue()
+        self.assertState(process.GetState(), lldb.eStateExited)
+        self.assertEqual(process.GetExitStatus(), 0)
+        self.assertTrue(
+            os.path.exists(marker),
+            "the inferior did not finish, so the relocated call went somewhere "
+            "other than where the original did",
+        )
+
+    @skipUnlessDarwin
     @skipIf(archs=no_match(["arm64", "arm64e", "x86_64"]))
     @add_test_categories(["pyapi"])
     def test_stop_is_attributed_to_the_breakpoint(self):

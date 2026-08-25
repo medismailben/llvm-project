@@ -8,6 +8,7 @@
 
 #include "lldb/Breakpoint/BreakpointLocation.h"
 #include "lldb/Breakpoint/BreakpointID.h"
+#include "lldb/Breakpoint/BreakpointInjectedSite.h"
 #include "lldb/Breakpoint/BreakpointResolver.h"
 #include "lldb/Breakpoint/BreakpointResolverScripted.h"
 #include "lldb/Breakpoint/StoppointCallbackContext.h"
@@ -227,6 +228,25 @@ bool BreakpointLocation::GetInjectCondition() const {
 void BreakpointLocation::SetInjectCondition(bool inject_condition) {
   m_owner.SetInjectCondition(inject_condition);
   GetLocationOptions().SetInjectCondition(inject_condition);
+
+  // Whether a condition is injected is decided when the site is built, so a
+  // location that already has one keeps whatever it was given until the site is
+  // built again. Without this, asking for injection on a breakpoint that has
+  // already resolved, which is every breakpoint set on a running process,
+  // silently leaves the condition to the debugger.
+  if (m_bp_site_sp) {
+    const bool is_injected =
+        llvm::isa<BreakpointInjectedSite>(m_bp_site_sp.get());
+    if (is_injected != inject_condition) {
+      if (llvm::Error error = ClearBreakpointSite())
+        LLDB_LOG_ERROR(GetLog(LLDBLog::Breakpoints), std::move(error),
+                       "couldn't take down the site to rebuild it: {0}");
+      else if (llvm::Error error = ResolveBreakpointSite())
+        LLDB_LOG_ERROR(GetLog(LLDBLog::Breakpoints), std::move(error),
+                       "couldn't rebuild the site: {0}");
+    }
+  }
+
   SendBreakpointLocationChangedEvent(eBreakpointEventTypeInjectedCondition);
 }
 
