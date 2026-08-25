@@ -1954,9 +1954,17 @@ void Target::ModulesDidLoad(ModuleList &module_list) {
       LoadTypeSummariesForModule(module_sp);
       LoadFormattersForModule(module_sp);
     }
+    // Resolving a breakpoint can build an injected condition, which compiles
+    // code into the inferior and registers a module for it, arriving back here
+    // while this resolution is still recording its new locations. Tell the
+    // process so that it postpones the injection to the end of this call
+    // instead of starting a second recording over the top of this one.
+    if (m_process_sp)
+      m_process_sp->SetResolvingBreakpoints(true);
     m_breakpoint_list.UpdateBreakpoints(module_list, true, false);
     m_internal_breakpoint_list.UpdateBreakpoints(module_list, true, false);
     if (m_process_sp) {
+      m_process_sp->SetResolvingBreakpoints(false);
       m_process_sp->ModulesDidLoad(module_list);
     }
     RunModuleHooks(/*is_load=*/true);

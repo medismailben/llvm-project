@@ -1952,20 +1952,29 @@ Process::CreateBreakpointSite(const BreakpointLocationSP &constituent,
         constituent, use_hardware, log, llvm::createStringError(error_msg));
   };
 
-  // Injecting a condition compiles code into the inferior and registers a module
-  // for the trampoline, none of which survives the dynamic loader discarding
-  // every module. Doing it now would mean doing it twice, and the discarded
-  // attempt leaves a second trampoline module claiming the same address as the
-  // one that replaces it, which makes finding its unwind plan a coin flip.
+  // Injecting a condition compiles code into the inferior and registers a
+  // module for the trampoline, none of which survives the dynamic loader
+  // discarding every module. Doing it now would mean doing it twice, and the
+  // discarded attempt leaves a second trampoline module claiming the same
+  // address as the one that replaces it, which makes finding its unwind plan a
+  // coin flip.
   //
-  // Take a plain site for the moment and upgrade it once the loader has settled.
-  // Deliberately a plain site rather than none at all: a breakpoint with no site
-  // never fires, and a slow condition is a much better failure than a silent one.
-  const bool defer_injection =
-      constituent->GetInjectCondition() && [this]() {
-        DynamicLoader *dyld = GetDynamicLoader();
-        return dyld && dyld->ExpectsImageListTeardown();
-      }();
+  // Registering that module also runs the whole module-load path again, which
+  // is reentrant only up to a point: arriving here from
+  // Target::ModulesDidLoad() means a breakpoint is midway through resolving and
+  // recording its new locations, and starting a second recording over the top
+  // of that one is a hard error.
+  //
+  // Take a plain site for the moment and upgrade it once the loader has
+  // settled. Deliberately a plain site rather than none at all: a breakpoint
+  // with no site never fires, and a slow condition is a much better failure
+  // than a silent one.
+  const bool defer_injection = constituent->GetInjectCondition() && [this]() {
+    if (m_resolving_breakpoints)
+      return true;
+    DynamicLoader *dyld = GetDynamicLoader();
+    return dyld && dyld->ExpectsImageListTeardown();
+  }();
 
   if (defer_injection) {
     LLDB_LOG(log,
@@ -2249,6 +2258,15 @@ llvm::Error Process::FlushDeferredInjections() {
   DynamicLoader *dyld = GetDynamicLoader();
   if (dyld && dyld->ExpectsImageListTeardown())
     return llvm::Error::success();
+
+  // Building an injected site registers the trampoline's module, which comes
+  // back through here. Guard against that so the nested call returns instead of
+  // starting over. Deliberately not m_resolving_breakpoints: that one makes an
+  // injection defer itself, which is exactly what this is here to undo.
+  if (m_flushing_injections)
+    return llvm::Error::success();
+  m_flushing_injections = true;
+  llvm::scope_exit reset([this] { m_flushing_injections = false; });
 
   // Move before iterating: resolving a location compiles code into the inferior,
   // which loads modules, which brings us back here.

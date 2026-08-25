@@ -2403,6 +2403,16 @@ public:
   /// reintroduce those problems at the trap address.
   lldb::BreakpointSiteSP FindInjectedSiteByTrapAddress(lldb::addr_t trap_addr);
 
+  /// Record whether breakpoint locations are being resolved right now.
+  ///
+  /// Set around the resolution Target::ModulesDidLoad() drives, so that an
+  /// injected condition asked for underneath it is postponed rather than
+  /// re-entering module loading while that resolution is still recording its
+  /// new locations.
+  void SetResolvingBreakpoints(bool resolving) {
+    m_resolving_breakpoints = resolving;
+  }
+
   /// Build the injected sites that were postponed while the dynamic loader was
   /// still going to discard every module.
   ///
@@ -3606,6 +3616,17 @@ protected:
   /// location going away in the meantime needs no bookkeeping here.
   std::vector<std::pair<lldb::break_id_t, lldb::break_id_t>>
       m_deferred_injections;
+  /// Whether breakpoint locations are being resolved right now.
+  ///
+  /// Building an injected site registers a module for its trampoline, which
+  /// runs the module-load path again. That path resolves breakpoints, and a
+  /// second resolution starting while the first is still recording its new
+  /// locations is a hard error, so an injection asked for during one is
+  /// postponed to the end of it instead.
+  bool m_resolving_breakpoints = false;
+  /// Whether FlushDeferredInjections() is already running, so that the module
+  /// it registers for a trampoline does not start the flush over again.
+  bool m_flushing_injections = false;
   std::map<lldb::addr_t, size_t> m_fcb_allocations; ///< A map holding the fixed
                                                     /// trampoline allocations'
                                                     /// address / size
