@@ -2389,7 +2389,41 @@ public:
 
   bool NewFCBTrampolineAllocation(lldb::addr_t addr, size_t size);
 
-  lldb::addr_t NextFCBTrampolineAllocation(lldb::addr_t bp_load_addr) const;
+  /// Where to ask for the trampoline of a breakpoint at \a bp_load_addr.
+  ///
+  /// The patch installed at a site is a direct branch, so the trampoline has to
+  /// land within that branch's reach of the site. This is a hint rather than a
+  /// promise: the caller checks the address it actually got and refuses if the
+  /// branch cannot reach it.
+  ///
+  /// Nearer is better than merely reachable. An instruction displaced into the
+  /// trampoline may itself be pc relative with a much shorter reach than the
+  /// patch's branch, so the closer the trampoline sits the more of those can be
+  /// re-encoded rather than refused.
+  ///
+  /// \param[in] size
+  ///     How many bytes the trampoline needs, so a hole too small to hold it is
+  ///     not offered.
+  ///
+  /// \param[in] attempt
+  ///     Which candidate to return, counting from zero. A hole that looked free
+  ///     can still refuse a fixed allocation, so the caller asks for the next
+  ///     one rather than giving up.
+  lldb::addr_t NextFCBTrampolineAllocation(lldb::addr_t bp_load_addr,
+                                           size_t size, uint32_t attempt = 0);
+
+  /// Allocate a trampoline for a breakpoint at \a bp_load_addr.
+  ///
+  /// Placement and allocation are one operation because only the allocation can
+  /// tell whether a candidate was usable: the address space is described by one
+  /// call and mapped by another, and a fixed mapping fails rather than moving
+  /// when the page turns out to be taken.
+  ///
+  /// \return
+  ///     The trampoline address, or LLDB_INVALID_ADDRESS. Being reachable from
+  ///     \a bp_load_addr is not promised and remains the caller's to check.
+  lldb::addr_t AllocateFCBTrampoline(lldb::addr_t bp_load_addr, size_t size,
+                                     uint32_t permissions, Status &error);
 
   /// The injected site whose condition traps at \a trap_addr, if any.
   ///

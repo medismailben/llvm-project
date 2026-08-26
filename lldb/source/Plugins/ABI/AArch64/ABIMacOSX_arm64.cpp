@@ -284,18 +284,15 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
                       aarch64_instr_size, saved_instrs->GetByteSize()));
   }
 
-  /// Allocate trampoline +100MiB from the bp site
+  /// Allocate the trampoline near the site.
   /// We need to allocate the trampoline stub to compute the branch offset to it
   /// and back to the user code.
   /// TODO: We should DeAllocate the stub if we fail in the following stages.
   size_t trampoline_size = trampoline_instr->GetByteSize();
   uint32_t permission = ePermissionsReadable | ePermissionsExecutable;
   Status error;
-  addr_t trampoline_expected_addr =
-      process_sp->NextFCBTrampolineAllocation(bp_load_addr);
-  addr_t trampoline_addr = process_sp->AllocateMemory(
-      trampoline_size, permission, error, trampoline_expected_addr);
-  // Check that the returned trampoline addr is the paged aligned expected addr.
+  addr_t trampoline_addr = process_sp->AllocateFCBTrampoline(
+      bp_load_addr, trampoline_size, permission, error);
   if (!trampoline_addr || trampoline_addr == LLDB_INVALID_ADDRESS) {
     return llvm::createStringError("Couldn't allocate trampoline buffer");
   }

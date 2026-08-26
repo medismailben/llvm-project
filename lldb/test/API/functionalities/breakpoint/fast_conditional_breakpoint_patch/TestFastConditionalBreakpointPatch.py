@@ -150,11 +150,24 @@ class FastConditionalBreakpointPatchTestCase(TestBase):
         # And it goes back in. Note this currently rebuilds the site rather than
         # rewriting the branch, so it also covers arming a second time in one
         # session.
+        #
+        # A branch is asserted rather than the same branch. Re-arming allocates
+        # a fresh trampoline, and where that lands depends on what is mapped at
+        # the time, so the displacement is free to differ from the first one.
+        # Requiring the identical word would be testing that the allocator is
+        # deterministic, which it is not and does not promise to be.
         breakpoint.SetEnabled(True)
+        rearmed = self.read_word(process, site)
+        self.assertNotEqual(
+            rearmed,
+            displaced,
+            "re-enabling the breakpoint did not restore a branch",
+        )
         self.assertEqual(
-            self.read_word(process, site),
-            patched,
-            "re-enabling the breakpoint did not restore the branch",
+            rearmed & 0xFC000000,
+            0x14000000,
+            "re-enabling the breakpoint left something other than a branch at "
+            "the site",
         )
 
     @skipUnlessDarwin

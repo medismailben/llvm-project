@@ -2234,19 +2234,108 @@ bool Process::NewFCBTrampolineAllocation(lldb::addr_t addr, size_t size) {
   return true;
 }
 
-lldb::addr_t Process::NextFCBTrampolineAllocation(lldb::addr_t bp_load_addr)
-    const {
-  if (m_fcb_allocations.empty())
-    return bp_load_addr + 100 * 1024 * 1024;
+lldb::addr_t Process::NextFCBTrampolineAllocation(lldb::addr_t bp_load_addr,
+                                                  size_t size,
+                                                  uint32_t attempt) {
+  // How far to look before giving up. Comfortably inside the reach of the
+  // narrowest direct branch any supported architecture patches with, so a hole
+  // found here is one the caller can branch to. The caller still checks.
+  const lldb::addr_t max_distance = 64 * 1024 * 1024;
 
-  const auto last_it = m_fcb_allocations.crbegin();
-  const lldb::addr_t addr = last_it->first;
-  const size_t size = last_it->second;
+  const lldb::addr_t page_size = getpagesize();
+  const lldb::addr_t needed = llvm::alignTo(size ? size : 1, page_size);
 
-  const int page_size = getpagesize();
-  const size_t num_pages = std::ceil(static_cast<double>(size) / page_size);
+  // Does anything already handed out overlap [addr, addr + needed)?
+  auto collides_with_ours = [&](lldb::addr_t addr) {
+    for (const auto &allocation : m_fcb_allocations) {
+      const lldb::addr_t start = allocation.first;
+      const lldb::addr_t end =
+          start + llvm::alignTo(allocation.second, page_size);
+      if (addr < end && start < addr + needed)
+        return true;
+    }
+    return false;
+  };
 
-  return addr + page_size * num_pages + 1;
+  // Walk outward from the site, jumping over whole mapped regions rather than
+  // stepping a page at a time, since the address space between modules is
+  // mapped in large pieces.
+  //
+  // Deliberately computed from this site every time. Chaining from the previous
+  // trampoline, which is what this used to do, put the second breakpoint's
+  // trampoline next to the first one's, so two breakpoints in modules far apart
+  // left the second beyond the reach of its own site.
+  lldb::addr_t candidate = llvm::alignTo(bp_load_addr + 1, page_size);
+  const lldb::addr_t limit = bp_load_addr + max_distance;
+
+  while (candidate < limit) {
+    if (collides_with_ours(candidate)) {
+      candidate += needed;
+      continue;
+    }
+
+    MemoryRegionInfo region;
+    Status error = GetMemoryRegionInfo(candidate, region);
+    if (error.Fail())
+      break;
+
+    const lldb::addr_t region_end =
+        region.GetRange().GetRangeBase() + region.GetRange().GetByteSize();
+
+    // A region that reports no size would not advance the walk.
+    if (region_end <= candidate)
+      break;
+
+    if (region.GetMapped() != eLazyBoolYes &&
+        region_end - candidate >= needed) {
+      if (!attempt)
+        return candidate;
+      // This one was already tried and refused, so move past it.
+      --attempt;
+      candidate += needed;
+      continue;
+    }
+
+    candidate = region_end;
+  }
+
+  // Nothing found, so fall back to asking far away rather than not asking. The
+  // caller refuses if the branch cannot reach what it gets.
+  return llvm::alignTo(bp_load_addr + max_distance, page_size);
+}
+
+lldb::addr_t Process::AllocateFCBTrampoline(lldb::addr_t bp_load_addr,
+                                            size_t size, uint32_t permissions,
+                                            Status &error) {
+  Log *log = GetLog(LLDBLog::Process);
+
+  // Candidates to try before giving up on being near the site. A hole is
+  // described by one call and mapped by another, so a page that read as free
+  // can still refuse a fixed mapping, and the only way to find out is to ask.
+  const uint32_t max_attempts = 8;
+
+  for (uint32_t attempt = 0; attempt < max_attempts; ++attempt) {
+    const lldb::addr_t hint =
+        NextFCBTrampolineAllocation(bp_load_addr, size, attempt);
+
+    Status attempt_error;
+    const lldb::addr_t addr =
+        AllocateMemory(size, permissions, attempt_error, hint);
+    if (addr && addr != LLDB_INVALID_ADDRESS) {
+      error.Clear();
+      return addr;
+    }
+
+    LLDB_LOG(log,
+             "FCB: no trampoline at {0:x} for a site at {1:x} (attempt {2}): "
+             "{3}",
+             hint, bp_load_addr, attempt, attempt_error.AsCString());
+  }
+
+  // Last resort: let the allocator place it wherever it likes. The result is
+  // probably out of branch reach and the caller will refuse, but refusing for
+  // that reason is a better diagnostic than refusing to allocate at all.
+  return AllocateMemory(size, permissions, error);
 }
 
 llvm::Error Process::FlushDeferredInjections() {
