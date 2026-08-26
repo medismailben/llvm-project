@@ -109,24 +109,28 @@ EncodeAArch64Branch(int64_t byte_offset,
     out[byte] = (instruction >> (8 * byte)) & 0xff;
 }
 
-/// Locate the pair of reserved nops at the end of the emitted trampoline.
+/// Locate the run of \a count reserved nops at the end of the emitted
+/// trampoline.
 ///
 /// Scanning for them rather than hardcoding an instruction index keeps this
 /// working when the assembler changes how many instructions the preceding code
 /// needs, which it does depending on the immediates and literal pools involved.
-static lldb::offset_t FindTrampolineNopSlots(llvm::ArrayRef<uint8_t> buffer) {
+static lldb::offset_t FindTrampolineNopSlots(llvm::ArrayRef<uint8_t> buffer,
+                                            size_t count) {
   const size_t instr_size = ABIMacOSX_arm64::aarch64_instr_size;
-  const size_t slots_size = 2 * instr_size;
+  const size_t slots_size = count * instr_size;
 
-  if (buffer.size() < slots_size)
+  if (!count || buffer.size() < slots_size)
     return LLDB_INVALID_OFFSET;
 
   for (lldb::offset_t offset = 0; offset + slots_size <= buffer.size();
        offset += instr_size) {
-    if (!std::memcmp(buffer.data() + offset, g_aarch64_nop_bytes,
-                     sizeof(g_aarch64_nop_bytes)) &&
-        !std::memcmp(buffer.data() + offset + instr_size, g_aarch64_nop_bytes,
-                     sizeof(g_aarch64_nop_bytes)))
+    size_t found = 0;
+    while (found < count &&
+           !std::memcmp(buffer.data() + offset + found * instr_size,
+                        g_aarch64_nop_bytes, sizeof(g_aarch64_nop_bytes)))
+      ++found;
+    if (found == count)
       return offset;
   }
 
@@ -157,15 +161,20 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   if (!plan)
     return plan.takeError();
 
-  // Only the two reserved slots are available, one for the displaced
-  // instruction and one for the branch back, so a displaced instruction whose
-  // relocated form is a sequence has nowhere to go yet.
-  if (plan->relocated_code_size != aarch64_instr_size)
+  // The trampoline reserves room for the relocated form plus the branch back, so
+  // a relocated form that is a sequence is fine as long as it is whole
+  // instructions. Nothing here needs a constant pool yet, so a form asking for
+  // data has nowhere to put it.
+  if (!plan->relocated_code_size ||
+      plan->relocated_code_size % aarch64_instr_size)
     return llvm::createStringError(llvm::formatv(
-        "the instruction displaced at {0:x} needs {1} bytes to run out of line "
-        "and the trampoline reserves {2}",
-        bp_injected_site->GetLoadAddress(), plan->relocated_code_size,
-        aarch64_instr_size));
+        "the instruction displaced at {0:x} needs {1} bytes to run out of line, "
+        "which is not a whole number of instructions",
+        bp_injected_site->GetLoadAddress(), plan->relocated_code_size));
+
+  // One slot per relocated instruction, plus the branch back to the user's code.
+  const size_t reserved_slots =
+      plan->relocated_code_size / aarch64_instr_size + 1;
 
   std::stringstream ss;
 
@@ -258,8 +267,10 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
      << "           add     sp, sp, #0x100\n";
 
   /// Allocate space to copy inferior instructions and jump back to user's code
-  ss << "           nop\n"
-     << "           nop\n"
+  ss << "";
+  for (size_t slot = 0; slot < reserved_slots; ++slot)
+    ss << "           nop\n";
+  ss
      << "        )\");\n"
      << "}";
 
@@ -314,7 +325,7 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   /// independent of how many instructions the assembler produced for the code
   /// before them.
   const lldb::offset_t copied_instr_offset =
-      FindTrampolineNopSlots(trampoline_buffer);
+      FindTrampolineNopSlots(trampoline_buffer, reserved_slots);
 
   if (copied_instr_offset == LLDB_INVALID_OFFSET) {
     return llvm::createStringError(
@@ -332,9 +343,14 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   // their arithmetic and only then storing it signed relies on wraparound.
   const int64_t source_resume_addr = static_cast<int64_t>(bp_load_addr) +
                                      static_cast<int64_t>(aarch64_instr_size);
-  const int64_t source_branch_addr = static_cast<int64_t>(trampoline_addr) +
-                                     static_cast<int64_t>(copied_instr_offset) +
-                                     static_cast<int64_t>(aarch64_instr_size);
+  // The branch back sits after the whole relocated form, which is more than one
+  // instruction when the displaced instruction had to be rewritten as a
+  // sequence. Measuring from the wrong slot would land the inferior an
+  // instruction away from where it left off.
+  const int64_t source_branch_addr =
+      static_cast<int64_t>(trampoline_addr) +
+      static_cast<int64_t>(copied_instr_offset) +
+      static_cast<int64_t>(plan->relocated_code_size);
   const int64_t source_branch_target = source_resume_addr - source_branch_addr;
 
   // `b` reaches +/-128MiB, and the trampoline is deliberately allocated far
@@ -368,18 +384,20 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
             displaced->Relocate(bp_load_addr, slot_addr, referenced, relocated))
       return error;
 
-    if (relocated.size() != aarch64_instr_size)
+    // Reserving and emitting have to agree, or the branch back would land
+    // inside the relocated sequence or leave a nop running as code.
+    if (relocated.size() != plan->relocated_code_size)
       return llvm::createStringError(llvm::formatv(
           "relocating the instruction displaced at {0:x} produced {1} bytes "
-          "instead of {2}",
-          bp_load_addr, relocated.size(), aarch64_instr_size));
+          "but {2} were reserved",
+          bp_load_addr, relocated.size(), plan->relocated_code_size));
   }
 
   std::memcpy(&trampoline_buffer[copied_instr_offset], relocated.data(),
               relocated.size());
   EncodeAArch64Branch(
       source_branch_target,
-      &trampoline_buffer[copied_instr_offset + aarch64_instr_size]);
+      &trampoline_buffer[copied_instr_offset + relocated.size()]);
 
   // The trampoline is only registered as a module once everything below
   // succeeds, so this is the one chance to see what was built.

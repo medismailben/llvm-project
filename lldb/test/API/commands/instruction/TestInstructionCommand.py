@@ -242,6 +242,56 @@ class InstructionCommandTestCase(TestBase):
 
     @skipUnlessDarwin
     @skipIf(archs=no_match(["arm64", "arm64e"]))
+    def test_relocate_expands_a_conditional_branch(self):
+        """A conditional branch is rewritten as a pair, not re-encoded.
+
+        Its displacement field reaches 1MiB at most and a trampoline is nowhere
+        near that close, so the copy inverts the test and skips an unconditional
+        branch to the original target. The short field then only spans the pair
+        and the long one carries the distance.
+
+        Both halves are checked by disassembling the emitted bytes at the
+        destination: the inverted test has to skip exactly the branch that
+        follows it, and that branch has to name the address the original named.
+        Getting either wrong sends the program somewhere it never intended to
+        go, and neither is visible from the byte count alone.
+        """
+        target = self.make_target()
+        branch = self.find_instruction(
+            target,
+            lambda i: i.GetMnemonic(target).startswith("b."),
+            "conditional branch",
+        )
+        origin = self.address_of(target, branch)
+        destination = origin + 0x1000
+
+        output = self.run_command(
+            "instruction relocate --to %#x %#x" % (destination, origin)
+        )
+        self.assertIn("relocatable     yes, 8 bytes of code", output)
+
+        reads_as = [
+            line for line in output.splitlines() if "reads as" in line or
+            (line.startswith("        ") and "0x" in line and "reads" not in line)
+        ]
+        self.assertIn("reads as", output)
+
+        # The inverted test lands on the byte after the pair, so it skips the
+        # unconditional branch rather than falling into it.
+        self.assertIn("%#x" % (destination + 8), output)
+
+        # And the unconditional branch still names the original target, which a
+        # copied conditional branch would not.
+        original_target = branch.GetReferencedAddress(origin)
+        self.assertNotEqual(original_target, lldb.LLDB_INVALID_ADDRESS)
+        self.assertIn("%#x" % original_target, output)
+
+        # The pair must not be reported as needing a constant pool, since
+        # nothing reserves data room yet.
+        self.assertNotIn("of data", output)
+
+    @skipUnlessDarwin
+    @skipIf(archs=no_match(["arm64", "arm64e"]))
     def test_relocate_refuses_a_destination_out_of_range(self):
         """A call cannot be moved further from its target than it can reach.
 

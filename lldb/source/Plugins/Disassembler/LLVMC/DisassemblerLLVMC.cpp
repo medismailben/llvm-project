@@ -450,6 +450,51 @@ constexpr uint32_t g_aarch64_b = 0x14000000;
 constexpr uint32_t g_aarch64_bl = 0x94000000;
 constexpr uint32_t g_aarch64_imm26_mask = 0x03ffffff;
 
+/// The conditional branches, which reach far less than the unconditional ones:
+/// imm19 scaled by four for `b.cond`, `cbz` and `cbnz`, imm14 for `tbz` and
+/// `tbnz`. A trampoline is nowhere near that close, so these are rewritten as a
+/// pair rather than re-encoded.
+///
+/// Matched on the encoding class rather than the mnemonic, as above. Bit 4 is
+/// included in the `b.cond` mask because FEAT_HBC's `bc.cond` shares the same
+/// top byte with that bit set, and it is a different instruction.
+constexpr uint32_t g_aarch64_bcond_mask = 0xff000010;
+constexpr uint32_t g_aarch64_bcond = 0x54000000;
+constexpr uint32_t g_aarch64_compare_branch_mask = 0x7e000000;
+constexpr uint32_t g_aarch64_cbz = 0x34000000;
+constexpr uint32_t g_aarch64_tbz = 0x36000000;
+/// Selects the taken sense of a compare or test branch, so flipping it turns
+/// `cbz` into `cbnz` and `tbz` into `tbnz`.
+constexpr uint32_t g_aarch64_branch_sense_bit = 0x01000000;
+constexpr uint32_t g_aarch64_imm19_mask = 0x00ffffe0;
+constexpr uint32_t g_aarch64_imm14_mask = 0x0007ffe0;
+
+bool IsAArch64ConditionalBranch(uint32_t instruction) {
+  if ((instruction & g_aarch64_bcond_mask) == g_aarch64_bcond) {
+    // Condition 0b111x is "always" in both spellings, so flipping the low bit
+    // yields another always-taken branch and the rewrite below would skip the
+    // branch it is supposed to guard.
+    return (instruction & 0xf) < 0xe;
+  }
+
+  const uint32_t compare_class = instruction & g_aarch64_compare_branch_mask;
+  return compare_class == g_aarch64_cbz || compare_class == g_aarch64_tbz;
+}
+
+/// The same branch with its condition inverted and its displacement set to skip
+/// one instruction.
+uint32_t InvertAArch64ConditionalBranch(uint32_t instruction) {
+  if ((instruction & g_aarch64_bcond_mask) == g_aarch64_bcond) {
+    // Two instructions on from here, which is the byte after the pair.
+    return ((instruction ^ 1) & ~g_aarch64_imm19_mask) | (2u << 5);
+  }
+
+  const uint32_t inverted = instruction ^ g_aarch64_branch_sense_bit;
+  if ((instruction & g_aarch64_compare_branch_mask) == g_aarch64_tbz)
+    return (inverted & ~g_aarch64_imm14_mask) | (2u << 5);
+  return (inverted & ~g_aarch64_imm19_mask) | (2u << 5);
+}
+
 bool IsAArch64ImmediateBranch(uint32_t instruction) {
   const uint32_t opc = instruction & g_aarch64_branch_mask;
   return opc == g_aarch64_b || opc == g_aarch64_bl;
@@ -480,12 +525,19 @@ AArch64RelocationSize(const lldb_private::Opcode &opcode) {
   // literal loads and the address computations, needs either a longer sequence
   // or a constant placed nearby, so it is refused until the trampoline can hold
   // those.
-  if (!IsAArch64ImmediateBranch(*word))
-    return llvm::createStringError(
-        "moving this position dependent instruction out of line is not "
-        "implemented yet");
+  if (IsAArch64ImmediateBranch(*word))
+    return lldb_private::Instruction::RelocationSize{sizeof(uint32_t), 0};
 
-  return lldb_private::Instruction::RelocationSize{sizeof(uint32_t), 0};
+  // A conditional branch becomes two instructions: the same test with its
+  // condition inverted, skipping an unconditional branch to the original
+  // target. The short field then only has to span the pair, and the long one
+  // carries the distance, so the copy reaches from anywhere a `b` reaches.
+  if (IsAArch64ConditionalBranch(*word))
+    return lldb_private::Instruction::RelocationSize{2 * sizeof(uint32_t), 0};
+
+  return llvm::createStringError(
+      "moving this position dependent instruction out of line is not "
+      "implemented yet");
 }
 
 llvm::Error RelocateAArch64(const lldb_private::Opcode &opcode,
@@ -493,10 +545,29 @@ llvm::Error RelocateAArch64(const lldb_private::Opcode &opcode,
                             lldb::addr_t referenced_address,
                             llvm::SmallVectorImpl<uint8_t> &code) {
   std::optional<uint32_t> word = AArch64Word(opcode);
-  if (!word || !IsAArch64ImmediateBranch(*word))
+  if (!word)
     return llvm::createStringError(
         "moving this position dependent instruction out of line is not "
         "implemented yet");
+
+  // A conditional branch is emitted as an inverted test over an unconditional
+  // branch, so the reach that has to be checked is the unconditional one's. The
+  // inverted test only spans the pair, and the branch it guards is placed one
+  // instruction later, which is what \a to has to account for below.
+  const bool conditional = IsAArch64ConditionalBranch(*word);
+  if (!conditional && !IsAArch64ImmediateBranch(*word))
+    return llvm::createStringError(
+        "moving this position dependent instruction out of line is not "
+        "implemented yet");
+
+  if (conditional) {
+    const uint32_t inverted = InvertAArch64ConditionalBranch(*word);
+    for (unsigned byte = 0; byte < sizeof(inverted); ++byte)
+      code.push_back((inverted >> (8 * byte)) & 0xff);
+    // The unconditional branch sits one instruction further on, so it is the
+    // one whose displacement is measured from there.
+    to += sizeof(uint32_t);
+  }
 
   const int64_t displacement =
       static_cast<int64_t>(referenced_address) - static_cast<int64_t>(to);
@@ -514,8 +585,12 @@ llvm::Error RelocateAArch64(const lldb_private::Opcode &opcode,
         to, displacement < 0 ? -displacement : displacement,
         referenced_address));
 
+  // For a conditional branch the second instruction is a plain `b`, not a copy
+  // of the original: the condition has already been consumed by the inverted
+  // test above.
+  const uint32_t base = conditional ? g_aarch64_b : *word;
   const uint32_t relocated =
-      (*word & ~g_aarch64_imm26_mask) |
+      (base & ~g_aarch64_imm26_mask) |
       (static_cast<uint32_t>(scaled) & g_aarch64_imm26_mask);
 
   for (unsigned byte = 0; byte < sizeof(relocated); ++byte)
