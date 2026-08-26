@@ -76,6 +76,32 @@ class InstructionCommandTestCase(TestBase):
         self.runCmd(command)
         return self.res.GetOutput()
 
+    def swept_group(self, output, label):
+        """The register names in one group of a register-live sweep.
+
+        A group wraps once it outgrows a line, so the names continue on
+        following lines with no label. Reading only the labelled line would
+        silently drop the tail and make an assertion about a missing register
+        pass for the wrong reason.
+        """
+        names = []
+        collecting = False
+        for line in output.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(label + " "):
+                collecting = True
+                names.extend(stripped.split()[1:])
+                continue
+            if collecting:
+                # A new group, the legend, or anything unindented ends this one.
+                if not line.startswith("     ") or stripped.startswith("*"):
+                    break
+                if stripped.split()[0] in ("free", "live", "unknown"):
+                    break
+                names.extend(stripped.split())
+        self.assertTrue(names, "no '%s' group in:\n%s" % (label, output))
+        return names
+
     def line_starting_with(self, output, prefix):
         """The single line of \a output that begins with \a prefix."""
         matches = [
@@ -484,16 +510,19 @@ class InstructionCommandTestCase(TestBase):
         output = self.run_command("instruction register-live")
 
         # Compared without the callee saved mark, which this test is not about.
-        def names(line):
-            return [name.rstrip("*") for name in line.split()[1:]]
+        free = [n.rstrip("*") for n in self.swept_group(output, "free")]
+        live = [n.rstrip("*") for n in self.swept_group(output, "live")]
 
-        free = names(self.line_starting_with(output, "free"))
-        live = names(self.line_starting_with(output, "live"))
-
-        for caller_saved in ["x0", "x9", "x18"]:
-            self.assertIn(caller_saved, free)
+        # x9 through x17 are the registers AAPCS64 lets a function use without
+        # telling anyone, so in a leaf function they are the free ones and they
+        # are what a patch needing scratch space would draw from.
+        for temporary in ["x9", "x15", "x16", "x17"]:
+            self.assertIn(temporary, free)
         for callee_saved in ["x19", "x28", "fp", "lr", "sp"]:
             self.assertIn(callee_saved, live)
+        # Reserved by the platform on Darwin, and reported volatile by the ABI,
+        # which is exactly the case a caller-saved test would get wrong.
+        self.assertIn("x18", live)
 
         # A 32 bit half is the same register asked about twice, so only the
         # whole register is listed.
@@ -502,6 +531,50 @@ class InstructionCommandTestCase(TestBase):
         # pc and the flags are named by the register context and not by the
         # disassembler, so they are reported as unanswerable rather than free.
         self.assertIn("pc", self.line_starting_with(output, "unknown"))
+
+    @skipUnlessDarwin
+    @skipIf(archs=no_match(["arm64", "arm64e"]))
+    def test_register_live_does_not_prune_an_argument_at_a_call(self):
+        """An argument register is live at the call that reads it.
+
+        This is the case being caller saved gets wrong. MC models a call's
+        implicit uses as the link register and the stack pointer only, because
+        argument registers travel in a register mask belonging to CodeGen, so
+        the disassembler reports no read of x0 at a `bl`. Concluding from
+        "caller saved" that the value stopped mattering therefore reported the
+        first argument of every call dead, which is the direction that corrupts
+        the program being debugged.
+
+        The call chosen is one whose result is discarded, because a call whose
+        result is used has a downstream read of x0 that hides the bug.
+        """
+        self.build()
+        target, _, _, _ = lldbutil.run_to_name_breakpoint(self, "main")
+        target.DeleteAllBreakpoints()
+
+        # The printf call: its return value is never read, so nothing after it
+        # mentions x0.
+        call = self.find_instruction(
+            target,
+            lambda i: i.GetMnemonic(target) == "bl"
+            and "printf" in i.GetComment(target),
+            "call to printf",
+        )
+        site = self.address_of(target, call)
+
+        output = self.run_command("instruction register-live -r x0 %#x" % site)
+        self.assertIn("x0 may still be needed here", output)
+        self.assertIn("may read it as an argument", output)
+
+        # The registers the convention does let us prune are still free at the
+        # same site, so the fix did not simply give up on every register.
+        for temporary in ["x9", "x16", "x17"]:
+            free = self.run_command(
+                "instruction register-live -r %s %#x" % (temporary, site)
+            )
+            self.assertIn(
+                "%s holds no value the program still needs here" % temporary, free
+            )
 
     @skipUnlessDarwin
     @skipIf(archs=no_match(["arm64", "arm64e"]))
@@ -522,14 +595,14 @@ class InstructionCommandTestCase(TestBase):
         # In a leaf function nothing reads these, so they are unavailable purely
         # because their values belong to the caller, and the mark is what says
         # so.
-        live = self.line_starting_with(swept, "live").split()
+        live = self.swept_group(swept, "live")
         self.assertIn("x19*", live)
         self.assertIn("x28*", live)
         self.assertIn("* callee saved", swept)
 
         # A caller saved register carries no mark, so the two groups stay
         # distinguishable within one list.
-        free = self.line_starting_with(swept, "free").split()
+        free = self.swept_group(swept, "free")
         self.assertIn("x9", free)
         self.assertNotIn("x9*", free)
 

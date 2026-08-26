@@ -92,8 +92,9 @@ static bool IsBranchInRange(int64_t byte_offset) {
 /// proportional to the work that actually has to happen.
 ///
 /// \a byte_offset has to be in range, see IsBranchInRange().
-static void EncodeAArch64Branch(int64_t byte_offset,
-                                uint8_t out[ABIMacOSX_arm64::aarch64_instr_size]) {
+static void
+EncodeAArch64Branch(int64_t byte_offset,
+                    uint8_t out[ABIMacOSX_arm64::aarch64_instr_size]) {
   constexpr uint32_t b_opcode = 0x14000000;
   constexpr uint32_t imm26_mask = 0x03ffffff;
 
@@ -334,10 +335,9 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   // their arithmetic and only then storing it signed relies on wraparound.
   const int64_t source_resume_addr = static_cast<int64_t>(bp_load_addr) +
                                      static_cast<int64_t>(aarch64_instr_size);
-  const int64_t source_branch_addr =
-      static_cast<int64_t>(trampoline_addr) +
-      static_cast<int64_t>(copied_instr_offset) +
-      static_cast<int64_t>(aarch64_instr_size);
+  const int64_t source_branch_addr = static_cast<int64_t>(trampoline_addr) +
+                                     static_cast<int64_t>(copied_instr_offset) +
+                                     static_cast<int64_t>(aarch64_instr_size);
   const int64_t source_branch_target = source_resume_addr - source_branch_addr;
 
   // `b` reaches +/-128MiB, and the trampoline is deliberately allocated far
@@ -380,9 +380,9 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
 
   std::memcpy(&trampoline_buffer[copied_instr_offset], relocated.data(),
               relocated.size());
-  EncodeAArch64Branch(source_branch_target,
-                      &trampoline_buffer[copied_instr_offset +
-                                         aarch64_instr_size]);
+  EncodeAArch64Branch(
+      source_branch_target,
+      &trampoline_buffer[copied_instr_offset + aarch64_instr_size]);
 
   // The trampoline is only registered as a module once everything below
   // succeeds, so this is the one chance to see what was built.
@@ -397,7 +397,8 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
 
   /// Patch inferior to branch to trampoline
   const int64_t trampoline_branch_target =
-      static_cast<int64_t>(trampoline_addr) - static_cast<int64_t>(bp_load_addr);
+      static_cast<int64_t>(trampoline_addr) -
+      static_cast<int64_t>(bp_load_addr);
 
   uint8_t trampoline_branch[aarch64_instr_size];
   EncodeAArch64Branch(trampoline_branch_target, trampoline_branch);
@@ -414,8 +415,7 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   // undoes the patch.
   bp_injected_site->SetPatchedInstructions(
       bp_load_addr,
-      std::make_shared<DataBufferHeap>(trampoline_branch,
-                                       aarch64_instr_size),
+      std::make_shared<DataBufferHeap>(trampoline_branch, aarch64_instr_size),
       saved_instrs);
 
   // What the trampoline subtracts from sp before calling the condition checker:
@@ -801,6 +801,31 @@ ABIMacOSX_arm64::CreateTrampolineUnwindPlan(addr_t site_address,
 
 // We treat x29 as callee preserved also, else the unwinder won't try to
 // retrieve fp saves.
+
+/// AAPCS64 reserves x9 through x15 as caller-saved temporaries and x16, x17 as
+/// the intra-procedure-call registers, and none of the nine conveys anything
+/// across a call boundary: a linker veneer is allowed to destroy IP0 and IP1
+/// between a caller and the callee it reaches, so no callee may read them and
+/// no caller may expect them back.
+///
+/// Everything else is excluded for a reason. x0 through x7 carry arguments and
+/// x0 through x1 carry results, so a callee or a caller reads them even though
+/// they are caller saved. x8 is the indirect result location register. x18 is
+/// reserved by the platform on Darwin, and is reported volatile by
+/// RegisterIsVolatile even though nothing may rely on it, which is exactly the
+/// trap this predicate exists to avoid.
+bool ABIMacOSX_arm64::RegisterIsPureTemporary(llvm::StringRef reg_name) {
+  // Accept both widths: the disassembler names the 32 bit view of a register
+  // when the instruction writes it, and the two views are one register.
+  if (reg_name.size() < 2 || (reg_name[0] != 'x' && reg_name[0] != 'w'))
+    return false;
+
+  uint32_t num = 0;
+  if (reg_name.drop_front().getAsInteger(10, num))
+    return false;
+
+  return num >= 9 && num <= 17;
+}
 
 bool ABIMacOSX_arm64::RegisterIsVolatile(const RegisterInfo *reg_info) {
   if (reg_info) {

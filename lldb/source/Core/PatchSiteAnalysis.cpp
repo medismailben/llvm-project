@@ -247,6 +247,22 @@ bool PatchSiteAnalysis::IsCallerSaved(Process &process,
   return abi->RegisterIsVolatile(reg_info);
 }
 
+/// Whether the calling convention lets a path reaching a call or a return prove
+/// that \a reg_name's old value stopped mattering.
+///
+/// Caller saved is not the same question and answering with it is unsound. MC
+/// models a call's implicit uses as the link register and the stack pointer
+/// only, because argument registers travel in a register mask that belongs to
+/// CodeGen, so GetRegisterAccess() reports no read for an argument register at
+/// a call. Pruning on caller saved alone therefore reported the first argument
+/// of every call dead.
+static bool IsPureTemporary(Process &process, llvm::StringRef reg_name) {
+  ABI *abi = process.GetABI().get();
+  if (!abi)
+    return false;
+  return abi->RegisterIsPureTemporary(reg_name);
+}
+
 llvm::Error PatchSiteAnalysis::CheckRegisterIsDead(Process &process,
                                                    const Address &site,
                                                    llvm::StringRef reg_name) {
@@ -356,8 +372,10 @@ llvm::Error PatchSiteAnalysis::CheckRegisterIsDead(Process &process,
     // means this function never saved and restored it, so the caller is about
     // to rely on the value a patch would have destroyed.
     if (instruction->IsReturn()) {
-      if (!IsCallerSaved(process, reg_name))
-        return live(pc, "a return that must preserve it");
+      if (!IsPureTemporary(process, reg_name))
+        return live(pc, IsCallerSaved(process, reg_name)
+                            ? "a return that may read it as a result"
+                            : "a return that must preserve it");
       continue;
     }
 
@@ -368,8 +386,10 @@ llvm::Error PatchSiteAnalysis::CheckRegisterIsDead(Process &process,
     // without following it. A register that is not caller saved has to be
     // treated as live instead, since the callee is entitled to expect it back.
     if (instruction->IsCall()) {
-      if (!IsCallerSaved(process, reg_name))
-        return live(pc, "a call that must preserve it");
+      if (!IsPureTemporary(process, reg_name))
+        return live(pc, IsCallerSaved(process, reg_name)
+                            ? "a call that may read it as an argument"
+                            : "a call that must preserve it");
       worklist.push_back(pc + size);
       continue;
     }

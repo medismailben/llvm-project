@@ -124,6 +124,8 @@ public:
   llvm::Error SetupFastConditionalBreakpointTrampoline(
       lldb_private::BreakpointInjectedSite *bp_inject_site) override;
 
+  bool RegisterIsPureTemporary(llvm::StringRef reg_name) override;
+
   size_t GetJumpSize() override { return aarch64_instr_size; };
 
   llvm::StringRef GetRegisterContextAsString() override {
@@ -138,7 +140,8 @@ public:
 
   static void Terminate();
 
-  static lldb::ABISP CreateInstance(lldb::ProcessSP process_sp, const lldb_private::ArchSpec &arch);
+  static lldb::ABISP CreateInstance(lldb::ProcessSP process_sp,
+                                    const lldb_private::ArchSpec &arch);
 
   // PluginInterface protocol
 

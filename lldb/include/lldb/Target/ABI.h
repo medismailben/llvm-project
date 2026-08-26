@@ -132,6 +132,21 @@ public:
 
   virtual bool RegisterIsVolatile(const RegisterInfo *reg_info) = 0;
 
+  /// Whether \a reg_name is a pure temporary under this calling convention:
+  /// one this function may use freely, that no callee may read as an input and
+  /// no caller may expect to get back.
+  ///
+  /// Only for such a register does a path reaching a call or a return prove
+  /// that the old value stopped mattering. Being caller saved is not enough: an
+  /// argument register is caller saved and is read by the callee, and a result
+  /// register is caller saved and is read by the caller. Neither may be pruned.
+  ///
+  /// The default is false, which is the answer that keeps a register live, so
+  /// an ABI that has not described itself refuses rather than guesses.
+  virtual bool RegisterIsPureTemporary(llvm::StringRef reg_name) {
+    return false;
+  }
+
   virtual bool GetFallbackRegisterLocation(
       const RegisterInfo *reg_info,
       UnwindPlan::Row::AbstractRegisterLocation &unwind_regloc);
@@ -236,7 +251,8 @@ public:
 
   virtual uint64_t GetStackFrameSize() { return 512 * 1024; }
 
-  static lldb::ABISP FindPlugin(lldb::ProcessSP process_sp, const ArchSpec &arch);
+  static lldb::ABISP FindPlugin(lldb::ProcessSP process_sp,
+                                const ArchSpec &arch);
 
   struct MemoryPermissions {
     // Both of these are sets of lldb::Permissions values.
