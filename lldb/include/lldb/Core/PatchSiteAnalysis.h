@@ -87,6 +87,23 @@ public:
   CanPatch(Process &process, const Address &site, size_t patch_size,
            llvm::ArrayRef<llvm::StringRef> clobbered_registers = {});
 
+  /// Whether a callee may clobber \a reg_name without restoring it.
+  ///
+  /// The calling convention decides two of the conditions below: a path that
+  /// reaches a call or a return stops mattering for a caller saved register,
+  /// and means the opposite for a callee saved one, whose value belongs to the
+  /// caller. Exposed so that anything reporting a verdict can report the reason
+  /// from the same authority rather than from a second table that could
+  /// disagree with it.
+  ///
+  /// Answers false when the question cannot be settled, which is the answer
+  /// that keeps a register live.
+  ///
+  /// Note this comes from lldb's ABI plugin rather than from LLVM's MC layer,
+  /// which carries no calling convention information: LLVM keeps it in
+  /// TargetRegisterInfo, which belongs to CodeGen and is not linked here.
+  static bool IsCallerSaved(Process &process, llvm::StringRef reg_name);
+
   /// The individual conditions CanPatch() requires, in the order it applies
   /// them.
   ///
@@ -112,8 +129,7 @@ public:
                                             size_t patch_size);
 
   /// No thread may be executing inside the range being overwritten.
-  static llvm::Error CheckNoThreadInPatch(Process &process,
-                                          const Address &site,
+  static llvm::Error CheckNoThreadInPatch(Process &process, const Address &site,
                                           size_t patch_size);
 
   /// \a reg_name must hold no value that the program still needs at \a site.

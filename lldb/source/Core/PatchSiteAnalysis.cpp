@@ -12,6 +12,7 @@
 #include "lldb/Core/Disassembler.h"
 #include "lldb/Symbol/Function.h"
 #include "lldb/Symbol/SymbolContext.h"
+#include "lldb/Target/ABI.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/RegisterContext.h"
 #include "lldb/Target/Target.h"
@@ -28,8 +29,8 @@ using namespace lldb_private;
 
 /// Disassemble from \a start up to the end of the range of \a function that
 /// contains it.
-static DisassemblerSP DisassembleToEndOfRange(Target &target, Function &function,
-                                              addr_t start,
+static DisassemblerSP DisassembleToEndOfRange(Target &target,
+                                              Function &function, addr_t start,
                                               addr_t &range_end_out) {
   range_end_out = LLDB_INVALID_ADDRESS;
 
@@ -217,6 +218,35 @@ llvm::Error PatchSiteAnalysis::CheckNoBranchIntoPatch(Process &process,
   return llvm::Error::success();
 }
 
+bool PatchSiteAnalysis::IsCallerSaved(Process &process,
+                                      llvm::StringRef reg_name) {
+  ABI *abi = process.GetABI().get();
+  if (!abi)
+    return false;
+
+  // Looked up through a thread's register context, which is the only public
+  // way from a name to a RegisterInfo. Any thread will do: which registers a
+  // callee may clobber is a property of the ABI, not of a thread.
+  ThreadSP thread_sp = process.GetThreadList().GetSelectedThread();
+  if (!thread_sp)
+    thread_sp = process.GetThreadList().GetThreadAtIndex(0);
+  if (!thread_sp)
+    return false;
+
+  RegisterContextSP reg_ctx_sp = thread_sp->GetRegisterContext();
+  if (!reg_ctx_sp)
+    return false;
+
+  // The name is spelled the way the disassembler spells it. The register
+  // context recognizes the common spellings and their aliases, and answers
+  // null for anything it does not, which leaves the register live.
+  const RegisterInfo *reg_info = reg_ctx_sp->GetRegisterInfoByName(reg_name);
+  if (!reg_info)
+    return false;
+
+  return abi->RegisterIsVolatile(reg_info);
+}
+
 llvm::Error PatchSiteAnalysis::CheckRegisterIsDead(Process &process,
                                                    const Address &site,
                                                    llvm::StringRef reg_name) {
@@ -246,10 +276,12 @@ llvm::Error PatchSiteAnalysis::CheckRegisterIsDead(Process &process,
   llvm::DenseMap<addr_t, size_t> index_of_address;
   for (size_t i = 0; i < instructions.GetSize(); ++i) {
     InstructionSP instruction = instructions.GetInstructionAtIndex(i);
-    index_of_address[instruction->GetAddress().GetCallableLoadAddress(&target)] =
-        i;
+    index_of_address[instruction->GetAddress().GetCallableLoadAddress(
+        &target)] = i;
   }
 
+  // \a why names what stopped the proof, without a trailing "at": the address
+  // it happened at is appended here so every reason reads the same way.
   auto live = [&](addr_t pc, llvm::StringRef why) {
     return llvm::createStringError(llvm::formatv(
         "{0} may still be needed at {1:x} in '{2}': {3}", reg_name, site_addr,
@@ -257,8 +289,8 @@ llvm::Error PatchSiteAnalysis::CheckRegisterIsDead(Process &process,
   };
 
   // Follow every path from the site. The register is dead when no path reads it
-  // before the value stops mattering, which happens at a write, at a call, or at
-  // a return.
+  // before the value stops mattering, which happens at a write, at a call, or
+  // at a return.
   //
   // Note this starts at the site rather than after the patch, because the
   // displaced instructions run later out of the trampoline, by which time the
@@ -268,8 +300,8 @@ llvm::Error PatchSiteAnalysis::CheckRegisterIsDead(Process &process,
   worklist.push_back(site_addr);
 
   // A budget keeps a pathological function from turning breakpoint setting into
-  // a long analysis. Running out means the answer is unknown, so the register is
-  // assumed live.
+  // a long analysis. Running out means the answer is unknown, so the register
+  // is assumed live.
   size_t budget = 4096;
 
   while (!worklist.empty()) {
@@ -286,7 +318,7 @@ llvm::Error PatchSiteAnalysis::CheckRegisterIsDead(Process &process,
 
     auto it = index_of_address.find(pc);
     if (it == index_of_address.end())
-      return live(pc, "control leaves the function at");
+      return live(pc, "control leaves the function");
 
     InstructionSP instruction = instructions.GetInstructionAtIndex(it->second);
     const Instruction::RegisterAccess access =
@@ -302,39 +334,56 @@ llvm::Error PatchSiteAnalysis::CheckRegisterIsDead(Process &process,
     if (access.writes)
       continue;
 
-    // The ABI lets a callee clobber the scratch registers, so a path that
-    // reaches a call without reading first cannot care about the old value.
-    if (instruction->IsCall())
-      continue;
-
     const uint32_t size = instruction->GetOpcode().GetByteSize();
     if (!size)
-      return live(pc, "unknown instruction size at");
+      return live(pc, "an instruction of unknown size");
 
     if (!instruction->DoesBranch()) {
       worklist.push_back(pc + size);
       continue;
     }
 
-    std::optional<addr_t> destination = instruction->GetReferencedAddress(pc);
-    const lldb::InstructionControlFlowKind kind =
-        instruction->GetControlFlowKind(nullptr);
+    // Classified with the predicates MC derives from the instruction
+    // description rather than with GetControlFlowKind(), which is a hand
+    // written x86 opcode table and answers Unknown everywhere else. Reading
+    // Unknown here would take a return for a branch whose destination cannot be
+    // named, and would give an unconditional branch a fallthrough that never
+    // executes.
 
-    // A return ends the path: the scratch registers are caller saved, so
-    // nothing expects this one to survive.
-    if (kind == lldb::eInstructionControlFlowKindReturn ||
-        kind == lldb::eInstructionControlFlowKindFarReturn)
+    // A return ends the path for a caller saved register, since this
+    // function's caller does not expect one back. For a callee saved register
+    // it means the opposite: reaching a return without having passed a write
+    // means this function never saved and restored it, so the caller is about
+    // to rely on the value a patch would have destroyed.
+    if (instruction->IsReturn()) {
+      if (!IsCallerSaved(process, reg_name))
+        return live(pc, "a return that must preserve it");
       continue;
+    }
+
+    std::optional<addr_t> destination = instruction->GetReferencedAddress(pc);
+
+    // A call returns to the instruction after it, and the callee is free to
+    // clobber a caller saved register, so the path continues past the call
+    // without following it. A register that is not caller saved has to be
+    // treated as live instead, since the callee is entitled to expect it back.
+    if (instruction->IsCall()) {
+      if (!IsCallerSaved(process, reg_name))
+        return live(pc, "a call that must preserve it");
+      worklist.push_back(pc + size);
+      continue;
+    }
 
     // Anything else whose destination cannot be named leaves paths unexplored.
     if (!destination)
-      return live(pc, "an unresolved branch at");
+      return live(pc, "an unresolved branch");
 
     worklist.push_back(*destination);
 
-    // Only an unconditional jump has no fallthrough.
-    if (kind != lldb::eInstructionControlFlowKindJump &&
-        kind != lldb::eInstructionControlFlowKindFarJump)
+    // A barrier is MC's way of saying control does not continue at the next
+    // instruction, which is exactly what distinguishes an unconditional branch
+    // from a conditional one.
+    if (!instruction->IsBarrier())
       worklist.push_back(pc + size);
   }
 
