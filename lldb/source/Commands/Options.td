@@ -682,6 +682,19 @@ let Command = "instruction patch site" in {
              "May be repeated.">;
 }
 
+// "register live", not "register-live": the emitter turns spaces into
+// underscores and leaves everything else alone, so a hyphen here would name an
+// array that is not a C identifier. Same workaround as "instruction patch site"
+// above.
+let Command = "instruction register live" in {
+  def instruction_register_live_register
+      : Option<"register", "r">,
+        Arg<"RegisterName">,
+        Desc<"A register to test, named as the disassembler spells it. May be "
+             "repeated. Defaults to every general purpose register, reported "
+             "as a summary rather than one report each.">;
+}
+
 let Command = "disassemble" in {
   def disassemble_options_bytes
       : Option<"bytes", "b">,

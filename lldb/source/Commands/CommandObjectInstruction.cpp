@@ -23,8 +23,10 @@
 #include "lldb/Interpreter/CommandReturnObject.h"
 #include "lldb/Interpreter/OptionArgParser.h"
 #include "lldb/Interpreter/Options.h"
+#include "lldb/Symbol/Function.h"
 #include "lldb/Target/ABI.h"
 #include "lldb/Target/Process.h"
+#include "lldb/Target/StackFrame.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Utility/AnsiTerminal.h"
 
@@ -1115,6 +1117,437 @@ protected:
   CommandOptions m_options;
 };
 
+#define LLDB_OPTIONS_instruction_register_live
+#include "CommandOptions.inc"
+
+/// CommandObjectInstructionRegisterLive
+///
+/// Answer the question that decides which register a patch sequence may use as
+/// scratch: does anything downstream of this address still need what is in it.
+/// The answer comes from PatchSiteAnalysis, so this is also the way to see why
+/// a fast conditional breakpoint rejected a scratch register, which otherwise
+/// takes a rebuild with logging added.
+class CommandObjectInstructionRegisterLive : public CommandObjectParsed {
+public:
+  class CommandOptions : public Options {
+  public:
+    CommandOptions() = default;
+    ~CommandOptions() override = default;
+
+    Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
+                          ExecutionContext *execution_context) override {
+      Status error;
+      switch (m_getopt_table[option_idx].val) {
+      case 'r':
+        registers.push_back(option_arg.str());
+        break;
+      default:
+        llvm_unreachable("Unimplemented option");
+      }
+      return error;
+    }
+
+    void OptionParsingStarting(ExecutionContext *execution_context) override {
+      registers.clear();
+    }
+
+    llvm::ArrayRef<OptionDefinition> GetDefinitions() override {
+      return llvm::ArrayRef(g_instruction_register_live_options);
+    }
+
+    std::vector<std::string> registers;
+  };
+
+  /// Requires a live, stopped process: the walk reads the code that is actually
+  /// mapped rather than the code on disk, and deciding whether a callee may
+  /// clobber a register needs the ABI this process is running under.
+  CommandObjectInstructionRegisterLive(CommandInterpreter &interpreter)
+      : CommandObjectParsed(
+            interpreter, "instruction register-live",
+            "Report which registers still hold a value the program needs at "
+            "an address. Defaults to every general purpose register at the "
+            "selected frame's pc.",
+            nullptr,
+            eCommandRequiresTarget | eCommandRequiresProcess |
+                eCommandProcessMustBeLaunched | eCommandProcessMustBePaused) {
+    AddSimpleArgumentList(eArgTypeAddressOrExpression, eArgRepeatOptional);
+    SetHelpLong(R"(
+Patching code in place needs a scratch register when the branch it installs
+cannot reach its target directly, and that register's previous contents are
+gone by the time anything could save them. So it has to be one the program no
+longer needs. This command asks that question: from the given address it
+follows every path forward until the register is read, which makes it live, or
+until its value provably stops mattering, which happens when it is overwritten,
+when a path reaches a call that may clobber it, or when a path returns.
+
+With no arguments it sweeps every general purpose register at the selected
+frame's pc and reports which are free, which is the form that answers "what may
+I clobber here". Naming registers with --register reports each one in detail,
+including the instructions that touch it, which is what choosing between two
+candidates needs.
+
+Going up a frame asks about that frame's return address, since that is where
+the program resumes and therefore where the question applies.
+
+The walk is conservative by construction. It answers "live" whenever it cannot
+prove otherwise, so a wrong answer costs a refused patch rather than a
+corrupted program.)");
+  }
+
+  ~CommandObjectInstructionRegisterLive() override = default;
+
+  Options *GetOptions() override { return &m_options; }
+
+protected:
+  /// Every general purpose register, named as this process names them.
+  ///
+  /// Found by asking the register context rather than from a list per
+  /// architecture, because the process already knows what it has.
+  ///
+  /// Matched on either spelling of the set: a register context built from a
+  /// static table gives the short name "gpr", while one built from what the
+  /// remote stub reported leaves the short name null and carries only the long
+  /// one, and the second is the case that occurs against a live process.
+  static std::vector<std::string> GeneralPurposeRegisters(Process &process) {
+    std::vector<std::string> names;
+
+    ThreadSP thread_sp = process.GetThreadList().GetSelectedThread();
+    if (!thread_sp)
+      return names;
+
+    RegisterContextSP reg_ctx_sp = thread_sp->GetRegisterContext();
+    if (!reg_ctx_sp)
+      return names;
+
+    for (size_t set = 0, sets = reg_ctx_sp->GetRegisterSetCount(); set < sets;
+         ++set) {
+      const RegisterSet *reg_set = reg_ctx_sp->GetRegisterSet(set);
+      if (!reg_set)
+        continue;
+
+      const bool is_gpr =
+          (reg_set->short_name &&
+           llvm::StringRef(reg_set->short_name) == "gpr") ||
+          (reg_set->name &&
+           llvm::StringRef(reg_set->name).starts_with("General Purpose"));
+      if (!is_gpr)
+        continue;
+
+      for (size_t i = 0; i < reg_set->num_registers; ++i) {
+        const RegisterInfo *reg_info =
+            reg_ctx_sp->GetRegisterInfoAtIndex(reg_set->registers[i]);
+        if (!reg_info || !reg_info->name)
+          continue;
+
+        // Skip a register that is only a view of another one, such as the
+        // 32 bit halves on AArch64. Whether the whole register is free is the
+        // same question, and reporting both spellings doubles the list without
+        // adding an answer.
+        if (reg_info->value_regs)
+          continue;
+
+        names.push_back(reg_info->name);
+      }
+      break;
+    }
+
+    return names;
+  }
+
+  /// Whether the disassembler has a register spelled this way.
+  ///
+  /// Instruction::GetRegisterAccess() reports a read and no write for a name it
+  /// does not recognize, which the walk reads as "live at the very first
+  /// instruction". Sweeping a whole register set would therefore report the
+  /// registers only the register context knows about, such as the flags, as
+  /// live for a reason that is not true. Ask first so they can be reported as
+  /// unknown instead.
+  static bool IsKnownToTheDisassembler(Process &process,
+                                       llvm::StringRef reg_name) {
+    ABI *abi = process.GetABI().get();
+    // Nothing to check against, which is not a reason to hide the register.
+    if (!abi)
+      return true;
+
+    llvm::MCRegisterInfo &reg_info = abi->GetMCRegisterInfo();
+    for (unsigned reg = 1, end = reg_info.getNumRegs(); reg < end; ++reg)
+      if (reg_name.equals_insensitive(reg_info.getName(reg)))
+        return true;
+    return false;
+  }
+
+  /// Mark a callee saved register in a swept list.
+  ///
+  /// A single column rather than a second list, so the marked and unmarked
+  /// names stay in the order and the grouping the reader is scanning. A marked
+  /// name in the free list is worth noticing: it means this function already
+  /// saves and restores the register, so clobbering it is safe here even though
+  /// the value belongs to the caller.
+  static std::string Decorate(llvm::StringRef reg_name, bool callee_saved) {
+    return callee_saved ? (reg_name + "*").str() : reg_name.str();
+  }
+
+  /// State which side of the calling convention a register is on.
+  ///
+  /// Printed for a free register as well as a live one, because the reason a
+  /// register is available matters as much as the fact: a caller saved register
+  /// is the natural scratch choice, while a callee saved one is only free
+  /// because this function happens to restore it.
+  static void DescribeConvention(Stream &s, llvm::StringRef reg_name,
+                                 bool callee_saved) {
+    if (callee_saved)
+      s.Format("     {0} is callee saved, so its value belongs to this "
+               "function's caller\n",
+               reg_name);
+    else
+      s.Format("     {0} is caller saved, so a callee may clobber it anyway\n",
+               reg_name);
+  }
+
+  /// Print one group of register names, wrapped to stay readable.
+  static void PrintGroup(Stream &s, llvm::StringRef label,
+                         llvm::ArrayRef<std::string> names) {
+    if (names.empty())
+      return;
+
+    // Wrapped rather than one per line: the point of the sweep is to be read at
+    // a glance, and a register set is dozens of names long.
+    const size_t indent = 11;
+    const size_t width = 78;
+    size_t column = indent;
+
+    s.Format("  {0,-9}", label);
+    for (const std::string &name : names) {
+      if (column + name.size() + 1 > width) {
+        s.Format("\n{0}", std::string(indent, ' '));
+        column = indent;
+      }
+      s.Format("{0} ", name);
+      column += name.size() + 1;
+    }
+    s.PutCString("\n");
+  }
+
+  /// List the instructions in the function around \a site that name
+  /// \a reg_name.
+  ///
+  /// This is a listing and not a second opinion: it walks the function in
+  /// address order and says nothing about which of these a path from the site
+  /// can reach. It answers the question the user has once told a register is
+  /// live, which is what else touches it, so a different one can be chosen.
+  void DescribeTouches(Stream &s, Target &target, const Address &site,
+                       llvm::StringRef reg_name, const Colors &colors) {
+    Address resolved_site(site);
+    Function *function = resolved_site.CalculateSymbolContextFunction();
+    if (!function)
+      return;
+
+    DisassemblerSP disassembler_sp = Disassembler::DisassembleRange(
+        target.GetArchitecture(), /*plugin_name=*/nullptr, /*flavor=*/nullptr,
+        /*cpu=*/nullptr, /*features=*/nullptr, target,
+        function->GetAddressRanges(), /*force_live_memory=*/true);
+    if (!disassembler_sp)
+      return;
+
+    const addr_t site_addr = site.GetCallableLoadAddress(&target);
+    InstructionList &instructions = disassembler_sp->GetInstructionList();
+
+    // Held back until there is a first line to print, so that a register
+    // nothing in the function mentions produces no empty heading.
+    bool printed_heading = false;
+    size_t shown = 0;
+    size_t elided = 0;
+
+    for (size_t i = 0; i < instructions.GetSize(); ++i) {
+      InstructionSP instruction = instructions.GetInstructionAtIndex(i);
+      const Instruction::RegisterAccess access =
+          instruction->GetRegisterAccess(reg_name);
+      if (!access.reads && !access.writes)
+        continue;
+
+      if (shown == kMaxTouchesShown) {
+        ++elided;
+        continue;
+      }
+
+      if (!printed_heading) {
+        s.Format("     {0} is named by these instructions in '{1}':\n",
+                 reg_name, function->GetName());
+        printed_heading = true;
+      }
+
+      const addr_t pc =
+          instruction->GetAddress().GetCallableLoadAddress(&target);
+
+      // Only a read can make the register live, so which it is gets spelled
+      // out rather than left to be worked out from the mnemonic.
+      llvm::StringRef what =
+          access.reads ? (access.writes ? "reads, writes" : "reads") : "writes";
+      s.Format("       {0}  {1,-13}  {2}{3}\n", colors.Address(pc), what,
+               colors.Code(*instruction, m_exe_ctx),
+               pc < site_addr ? "   (before the site)" : "");
+      ++shown;
+    }
+
+    if (elided)
+      s.Format("       and {0} more\n", elided);
+  }
+
+  void DoExecute(Args &command, CommandReturnObject &result) override {
+    // Guaranteed by the flags this command was constructed with.
+    Target &target = *GetTarget();
+    Process &process = m_exe_ctx.GetProcessRef();
+
+    if (command.GetArgumentCount() > 1) {
+      result.AppendError("expected at most one address");
+      return;
+    }
+
+    addr_t addr = LLDB_INVALID_ADDRESS;
+    if (command.GetArgumentCount() == 1) {
+      Status error;
+      addr = OptionArgParser::ToAddress(&m_exe_ctx, command[0].ref(),
+                                        LLDB_INVALID_ADDRESS, &error);
+      if (addr == LLDB_INVALID_ADDRESS) {
+        result.AppendErrorWithFormat("'%s' is not an address: %s",
+                                     command[0].c_str(), error.AsCString());
+        return;
+      }
+    } else {
+      // The selected frame rather than the thread's pc, so that going up a
+      // frame asks about that frame instead. Deliberately the frame's pc and
+      // not the address symbolication would use, which is a byte earlier for a
+      // parent frame: the question is which registers matter where the program
+      // resumes, and it resumes at the return address.
+      StackFrame *frame = m_exe_ctx.GetFramePtr();
+      if (!frame) {
+        result.AppendError("no frame is selected, so there is no address to "
+                           "report about; pass one explicitly");
+        return;
+      }
+      addr = frame->GetFrameCodeAddress().GetLoadAddress(&target);
+      if (addr == LLDB_INVALID_ADDRESS) {
+        result.AppendError("the selected frame has no address in this process");
+        return;
+      }
+    }
+
+    // The walk reaches the surrounding function through the section this
+    // address belongs to, so an address that resolves to no section is refused
+    // here rather than reported once per register as a site no function covers.
+    Address site;
+    if (!target.ResolveLoadAddress(addr, site)) {
+      result.AppendErrorWithFormat("0x%" PRIx64 " is not inside any section "
+                                   "loaded in this process",
+                                   addr);
+      return;
+    }
+
+    // Naming registers asks about those in detail; naming none asks which of
+    // the general purpose registers are free, which is a different question
+    // and wants a different shape of answer. Settled before anything is
+    // printed, so a refusal is not preceded by a header for a report that
+    // never comes.
+    const bool sweep = m_options.registers.empty();
+    std::vector<std::string> requested =
+        sweep ? GeneralPurposeRegisters(process) : m_options.registers;
+
+    if (requested.empty()) {
+      result.AppendError("this process does not describe a general purpose "
+                         "register set, so --register is required");
+      return;
+    }
+
+    const addr_t site_addr = site.GetCallableLoadAddress(&target);
+
+    Stream &s = result.GetOutputStream();
+    const Colors colors(GetDebugger().GetUseColor());
+
+    StreamString description;
+    site.Dump(&description, &target, Address::DumpStyleResolvedDescription,
+              Address::DumpStyleModuleWithFileAddress);
+    s.Format("{0}  {1}\n", colors.Address(site_addr), description.GetString());
+
+    std::vector<std::string> free_registers;
+    std::vector<std::string> live_registers;
+    std::vector<std::string> unknown_registers;
+    bool any_callee_saved = false;
+
+    for (llvm::StringRef reg_name : requested) {
+      if (!IsKnownToTheDisassembler(process, reg_name)) {
+        // Reported rather than dropped, so a sweep accounts for every register
+        // it was given and none looks quietly free.
+        if (sweep) {
+          unknown_registers.push_back(reg_name.str());
+          continue;
+        }
+        s.Format("  {0}  the disassembler for this target has no register "
+                 "named '{1}'\n",
+                 colors.Mark(false), reg_name);
+        continue;
+      }
+
+      const bool callee_saved =
+          !PatchSiteAnalysis::IsCallerSaved(process, reg_name);
+      if (callee_saved)
+        any_callee_saved = true;
+
+      llvm::Error dead =
+          PatchSiteAnalysis::CheckRegisterIsDead(process, site, reg_name);
+
+      if (!dead) {
+        llvm::consumeError(std::move(dead));
+        if (sweep) {
+          free_registers.push_back(Decorate(reg_name, callee_saved));
+          continue;
+        }
+        s.Format("  {0}  {1} holds no value the program still needs here\n",
+                 colors.Mark(true), reg_name);
+        DescribeConvention(s, reg_name, callee_saved);
+        continue;
+      }
+
+      if (sweep) {
+        live_registers.push_back(Decorate(reg_name, callee_saved));
+        llvm::consumeError(std::move(dead));
+        continue;
+      }
+
+      s.Format("  {0}  {1} may still be needed here\n", colors.Mark(false),
+               reg_name);
+      s.Format("     {0}\n", llvm::toString(std::move(dead)));
+      DescribeConvention(s, reg_name, callee_saved);
+      DescribeTouches(s, target, site, reg_name, colors);
+    }
+
+    if (sweep) {
+      PrintGroup(s, "free", free_registers);
+      PrintGroup(s, "live", live_registers);
+      PrintGroup(s, "unknown", unknown_registers);
+
+      if (any_callee_saved)
+        s.PutCString("           * callee saved: the value belongs to this "
+                     "function's caller\n");
+
+      // Said plainly, because an empty free list is the answer that decides
+      // whether a patch needing a scratch register is possible at all.
+      if (free_registers.empty())
+        s.PutCString("\nNo general purpose register is free here.\n");
+    }
+
+    // A register that turns out to be live is an answer, not a failure: the
+    // command did what it was asked. Only a question that could not be asked at
+    // all is an error.
+    result.SetStatus(eReturnStatusSuccessFinishResult);
+  }
+
+  /// Enough lines to choose a different register from, few enough that a
+  /// register used throughout a large function does not bury the verdict.
+  static constexpr size_t kMaxTouchesShown = 16;
+
+  CommandOptions m_options;
+};
+
 CommandObjectMultiwordInstruction::CommandObjectMultiwordInstruction(
     CommandInterpreter &interpreter)
     : CommandObjectMultiword(
@@ -1130,6 +1563,9 @@ CommandObjectMultiwordInstruction::CommandObjectMultiwordInstruction(
       CommandObjectSP(new CommandObjectInstructionPatchSite(interpreter)));
   LoadSubCommand(
       "reach", CommandObjectSP(new CommandObjectInstructionReach(interpreter)));
+  LoadSubCommand(
+      "register-live",
+      CommandObjectSP(new CommandObjectInstructionRegisterLive(interpreter)));
   LoadSubCommand(
       "relocate",
       CommandObjectSP(new CommandObjectInstructionRelocate(interpreter)));

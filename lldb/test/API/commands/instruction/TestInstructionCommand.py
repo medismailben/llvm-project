@@ -430,6 +430,216 @@ class InstructionCommandTestCase(TestBase):
 
     @skipUnlessDarwin
     @skipIf(archs=no_match(["arm64", "arm64e"]))
+    def test_register_live_tells_a_read_from_a_write(self):
+        """A register a later instruction reads is live; one it overwrites is not.
+
+        Both directions come from one run, because a report that always said
+        live would satisfy the first half on its own, and a report that always
+        said dead would satisfy the second.
+
+        Needs a live process: the walk reads the code that is mapped, and
+        deciding whether a callee may clobber a register needs the ABI this
+        process runs under.
+        """
+        self.build()
+        target, _, _, _ = lldbutil.run_to_name_breakpoint(self, "main")
+        target.DeleteAllBreakpoints()
+
+        # The instruction feeding the loop comparison: it writes a register that
+        # the compare right after it reads back.
+        compare = self.find_instruction(
+            target,
+            lambda i: i.GetMnemonic(target) == "subs",
+            "compare",
+        )
+        reader = self.address_of(target, compare)
+
+        register = compare.GetOperands(target).split(",")[0].strip()
+
+        output = self.run_command(
+            "instruction register-live -r %s %#x" % (register, reader)
+        )
+        self.assertIn("%s may still be needed here" % register, output)
+        self.assertIn("read by the instruction", output)
+        # The listing is what makes a live answer actionable, so it has to name
+        # the instruction rather than only report the verdict.
+        self.assertIn("is named by these instructions in 'main'", output)
+        self.assertIn("reads", output)
+
+    @skipUnlessDarwin
+    @skipIf(archs=no_match(["arm64", "arm64e"]))
+    def test_register_live_sweeps_every_register_by_default(self):
+        """With no arguments, report which registers are free.
+
+        The answer is checked against the calling convention rather than
+        against a captured list: on AAPCS64 x0 through x18 are caller saved and
+        x19 through x28 are not, so in a leaf function, where the only path
+        forward is the return, the split has to fall exactly there. A sweep that
+        reported everything free would pass a weaker test and be useless.
+        """
+        self.build()
+        target, _, _, _ = lldbutil.run_to_name_breakpoint(self, "helper")
+        target.DeleteAllBreakpoints()
+
+        output = self.run_command("instruction register-live")
+
+        # Compared without the callee saved mark, which this test is not about.
+        def names(line):
+            return [name.rstrip("*") for name in line.split()[1:]]
+
+        free = names(self.line_starting_with(output, "free"))
+        live = names(self.line_starting_with(output, "live"))
+
+        for caller_saved in ["x0", "x9", "x18"]:
+            self.assertIn(caller_saved, free)
+        for callee_saved in ["x19", "x28", "fp", "lr", "sp"]:
+            self.assertIn(callee_saved, live)
+
+        # A 32 bit half is the same register asked about twice, so only the
+        # whole register is listed.
+        self.assertNotIn("w0", output)
+
+        # pc and the flags are named by the register context and not by the
+        # disassembler, so they are reported as unanswerable rather than free.
+        self.assertIn("pc", self.line_starting_with(output, "unknown"))
+
+    @skipUnlessDarwin
+    @skipIf(archs=no_match(["arm64", "arm64e"]))
+    def test_register_live_reports_the_calling_convention(self):
+        """Say which side of the calling convention a register is on.
+
+        Whether a register is callee saved is most of the reason it is
+        unavailable, so reporting the verdict without it leaves the reader to
+        look it up. The mark comes from the same authority the walk consults, so
+        the two cannot disagree.
+        """
+        self.build()
+        target, _, _, _ = lldbutil.run_to_name_breakpoint(self, "helper")
+        target.DeleteAllBreakpoints()
+
+        swept = self.run_command("instruction register-live")
+
+        # In a leaf function nothing reads these, so they are unavailable purely
+        # because their values belong to the caller, and the mark is what says
+        # so.
+        live = self.line_starting_with(swept, "live").split()
+        self.assertIn("x19*", live)
+        self.assertIn("x28*", live)
+        self.assertIn("* callee saved", swept)
+
+        # A caller saved register carries no mark, so the two groups stay
+        # distinguishable within one list.
+        free = self.line_starting_with(swept, "free").split()
+        self.assertIn("x9", free)
+        self.assertNotIn("x9*", free)
+
+        # Naming one register states the convention in words rather than as a
+        # mark, since there is no list to scan.
+        live_detail = self.run_command("instruction register-live -r x20")
+        self.assertIn(
+            "x20 is callee saved, so its value belongs to this function's "
+            "caller",
+            live_detail,
+        )
+
+        free_detail = self.run_command("instruction register-live -r x9")
+        self.assertIn(
+            "x9 is caller saved, so a callee may clobber it anyway", free_detail
+        )
+
+    @skipUnlessDarwin
+    @skipIf(archs=no_match(["arm64", "arm64e"]))
+    def test_register_live_follows_the_selected_frame(self):
+        """With no address, ask about the selected frame's pc.
+
+        Going up a frame asks about that frame's return address, which is a
+        different question with a different answer: the register holding the
+        callee's result is live there, because the caller is about to use it,
+        while it was free inside the callee.
+        """
+        self.build()
+        target, process, _, _ = lldbutil.run_to_name_breakpoint(self, "helper")
+        target.DeleteAllBreakpoints()
+
+        in_callee = self.run_command("instruction register-live")
+        self.assertIn("x0", self.line_starting_with(in_callee, "free").split())
+
+        thread = process.GetSelectedThread()
+        self.assertTrue(
+            thread.SetSelectedFrame(1), "could not select the calling frame"
+        )
+
+        in_caller = self.run_command("instruction register-live")
+        # The report is about the caller now, so it names a different address.
+        self.assertNotEqual(
+            in_callee.splitlines()[0],
+            in_caller.splitlines()[0],
+            "selecting the calling frame did not change the address reported",
+        )
+        self.assertIn(
+            "x0",
+            self.line_starting_with(in_caller, "live").split(),
+            "the returned value is not live at the address it returns to",
+        )
+
+    @skipUnlessDarwin
+    @skipIf(archs=no_match(["arm64", "arm64e"]))
+    def test_register_live_respects_the_calling_convention(self):
+        """A call ends the path for a volatile register, not for a saved one.
+
+        The walk stops caring about a caller saved register once a path reaches
+        a call, since the callee may destroy it anyway. A callee saved register
+        is the opposite: the callee is entitled to hand it back untouched, so a
+        patch that overwrote it before the call would be observable afterwards.
+
+        Reporting a callee saved register dead is the direction that corrupts
+        the program being debugged, which is why it is worth a test of its own.
+        """
+        self.build()
+        target, _, _, _ = lldbutil.run_to_name_breakpoint(self, "main")
+        target.DeleteAllBreakpoints()
+
+        # A site before the call, so every path from it reaches one.
+        call = self.call_instruction(target)
+        site = self.address_of(target, call)
+
+        # x9 through x15 are caller saved on AAPCS64, x19 through x28 are not.
+        volatile = self.run_command("instruction register-live -r x9 %#x" % site)
+        self.assertIn("x9 holds no value the program still needs here", volatile)
+
+        saved = self.run_command("instruction register-live -r x19 %#x" % site)
+        self.assertIn("x19 may still be needed here", saved)
+        self.assertIn("a call that must preserve it", saved)
+
+    @skipUnlessDarwin
+    @skipIf(archs=no_match(["arm64", "arm64e"]))
+    def test_register_live_ends_a_path_at_a_return(self):
+        """A return ends a path rather than reading as an unresolved branch.
+
+        Which instructions end a path is decided with the predicates MC derives
+        from the instruction description. The older classification was an x86
+        opcode table that answered Unknown on AArch64, where it took a ret for a
+        branch whose destination could not be named and reported every register
+        live because of it.
+        """
+        self.build()
+        target, _, _, _ = lldbutil.run_to_name_breakpoint(self, "main")
+        target.DeleteAllBreakpoints()
+
+        ret = self.find_instruction(
+            target, lambda i: i.GetMnemonic(target) == "ret", "return"
+        )
+
+        # Just before the return, so the only path forward is off the end of the
+        # function. A caller saved register cannot be needed there.
+        site = self.address_of(target, ret) - 4
+
+        output = self.run_command("instruction register-live -r x9 %#x" % site)
+        self.assertIn("x9 holds no value the program still needs here", output)
+        self.assertNotIn("unresolved branch", output)
+
+    @skipUnlessDarwin
+    @skipIf(archs=no_match(["arm64", "arm64e"]))
     def test_patch_site_takes_a_size(self):
         """--size overrides the ABI's branch width, and is reported as such."""
         self.build()
