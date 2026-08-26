@@ -500,6 +500,107 @@ bool IsAArch64ImmediateBranch(uint32_t instruction) {
   return opc == g_aarch64_b || opc == g_aarch64_bl;
 }
 
+/// `adr` and `adrp`, which compute an address into a register rather than
+/// branching to it. Bits 28 to 24 are 10000 for both and bit 31 tells them
+/// apart, and nothing else in the instruction set has that shape.
+constexpr uint32_t g_aarch64_adr_mask = 0x9f000000;
+constexpr uint32_t g_aarch64_adr = 0x10000000;
+constexpr uint32_t g_aarch64_adrp = 0x90000000;
+
+/// The literal loads, which read from an address relative to the pc: `ldr` of a
+/// word or a doubleword, `ldrsw`, the three SIMD forms and `prfm`, all sharing
+/// bits 29 to 27 of 011 and bits 25 and 24 of zero.
+constexpr uint32_t g_aarch64_load_literal_mask = 0x3b000000;
+constexpr uint32_t g_aarch64_load_literal = 0x18000000;
+/// Which of the class it is: the size in bits 31 and 30, and whether the
+/// destination is a vector register in bit 26.
+constexpr uint32_t g_aarch64_load_literal_size_mask = 0xc0000000;
+constexpr uint32_t g_aarch64_load_literal_word = 0x00000000;
+constexpr uint32_t g_aarch64_load_literal_doubleword = 0x40000000;
+constexpr uint32_t g_aarch64_load_literal_signed_word = 0x80000000;
+constexpr uint32_t g_aarch64_load_literal_simd_bit = 0x04000000;
+
+/// The register field, in the low five bits of all of the forms above.
+constexpr uint32_t g_aarch64_register_mask = 0x0000001f;
+/// Register 31 is the zero register in these forms, so it holds nothing.
+constexpr uint32_t g_aarch64_zero_register = 31;
+
+/// `movz` and `movk` of one 16 bit field into a 64 bit register. Four of these
+/// build any address at all, and unlike a literal load they need nothing placed
+/// nearby to point at, so a copy can reach as far as it likes.
+constexpr uint32_t g_aarch64_movz64 = 0xd2800000;
+constexpr uint32_t g_aarch64_movk64 = 0xf2800000;
+constexpr unsigned g_aarch64_mov_field_shift = 21;
+constexpr unsigned g_aarch64_mov_imm16_shift = 5;
+constexpr unsigned g_aarch64_mov_field_count = 4;
+
+/// `ldr` and `ldrsw` with an unsigned scaled offset of zero, which is what a
+/// literal load turns into once the copy has the address in a register.
+constexpr uint32_t g_aarch64_ldr32_unsigned = 0xb9400000;
+constexpr uint32_t g_aarch64_ldr64_unsigned = 0xf9400000;
+constexpr uint32_t g_aarch64_ldrsw_unsigned = 0xb9800000;
+constexpr unsigned g_aarch64_rn_shift = 5;
+
+bool IsAArch64AddressComputation(uint32_t instruction) {
+  const uint32_t form = instruction & g_aarch64_adr_mask;
+  return form == g_aarch64_adr || form == g_aarch64_adrp;
+}
+
+/// The register a literal load writes, when a copy of it can be built at all.
+///
+/// A copy has to compute the address for itself, and the one place it can put
+/// it without first proving some other register is dead is the register the
+/// load is about to overwrite. So a destination that cannot hold an address
+/// leaves the copy nowhere to put one: nothing here can be done for the SIMD
+/// forms, whose destination is a vector register, for `prfm`, whose field holds
+/// a prefetch operation rather than a destination, or for the zero register,
+/// which discards what is written to it.
+std::optional<uint32_t> AArch64LiteralLoadRegister(uint32_t instruction) {
+  if ((instruction & g_aarch64_load_literal_mask) != g_aarch64_load_literal)
+    return std::nullopt;
+  if (instruction & g_aarch64_load_literal_simd_bit)
+    return std::nullopt;
+
+  switch (instruction & g_aarch64_load_literal_size_mask) {
+  case g_aarch64_load_literal_word:
+  case g_aarch64_load_literal_doubleword:
+  case g_aarch64_load_literal_signed_word:
+    break;
+  default:
+    // The remaining size with a general purpose destination is `prfm`.
+    return std::nullopt;
+  }
+
+  const uint32_t reg = instruction & g_aarch64_register_mask;
+  if (reg == g_aarch64_zero_register)
+    return std::nullopt;
+  return reg;
+}
+
+void EmitAArch64Word(uint32_t word, llvm::SmallVectorImpl<uint8_t> &code) {
+  for (unsigned byte = 0; byte < sizeof(word); ++byte)
+    code.push_back((word >> (8 * byte)) & 0xff);
+}
+
+/// Build \a value in \a reg, sixteen bits at a time.
+///
+/// Always four instructions, even where the high fields are zero and fewer
+/// would do. GetRelocationSize() has to answer before there is any address to
+/// build, and a size that depended on which address it turned out to be would
+/// let reserving and emitting disagree.
+void EmitAArch64Materialize(uint64_t value, uint32_t reg,
+                            llvm::SmallVectorImpl<uint8_t> &code) {
+  for (unsigned field = 0; field < g_aarch64_mov_field_count; ++field) {
+    // The first writes the register and zeroes the rest of it, the others keep
+    // what is already there.
+    const uint32_t opcode = field ? g_aarch64_movk64 : g_aarch64_movz64;
+    const uint32_t imm16 = (value >> (16 * field)) & 0xffff;
+    EmitAArch64Word(opcode | (field << g_aarch64_mov_field_shift) |
+                        (imm16 << g_aarch64_mov_imm16_shift) | reg,
+                    code);
+  }
+}
+
 std::optional<uint32_t> AArch64Word(const lldb_private::Opcode &opcode) {
   if (opcode.GetByteSize() != sizeof(uint32_t))
     return std::nullopt;
@@ -520,11 +621,9 @@ AArch64RelocationSize(const lldb_private::Opcode &opcode) {
         "a position dependent instruction that is not four bytes cannot be "
         "moved out of line");
 
-  // Only the unconditional immediate branches for now. Everything else that
-  // reads the pc, the conditional branches with their shorter reach, the
-  // literal loads and the address computations, needs either a longer sequence
-  // or a constant placed nearby, so it is refused until the trampoline can hold
-  // those.
+  // The four classes below are disjoint, so the order they are tried in does
+  // not matter: a branch has bit 27 clear where a literal load has it set, and
+  // the address computations are the only forms with bits 28 to 24 of 10000.
   if (IsAArch64ImmediateBranch(*word))
     return lldb_private::Instruction::RelocationSize{sizeof(uint32_t), 0};
 
@@ -534,6 +633,19 @@ AArch64RelocationSize(const lldb_private::Opcode &opcode) {
   // carries the distance, so the copy reaches from anywhere a `b` reaches.
   if (IsAArch64ConditionalBranch(*word))
     return lldb_private::Instruction::RelocationSize{2 * sizeof(uint32_t), 0};
+
+  // An address computation becomes the same address built in the same register.
+  // Nothing has to be placed near the copy for it to point at, so it reaches
+  // anywhere at all rather than the +/-1MiB of `adr` or the +/-4GiB of `adrp`.
+  if (IsAArch64AddressComputation(*word))
+    return lldb_private::Instruction::RelocationSize{
+        g_aarch64_mov_field_count * sizeof(uint32_t), 0};
+
+  // A literal load becomes the address built in the register the load writes,
+  // and then the load through it.
+  if (AArch64LiteralLoadRegister(*word))
+    return lldb_private::Instruction::RelocationSize{
+        (g_aarch64_mov_field_count + 1) * sizeof(uint32_t), 0};
 
   return llvm::createStringError(
       "moving this position dependent instruction out of line is not "
@@ -550,6 +662,48 @@ llvm::Error RelocateAArch64(const lldb_private::Opcode &opcode,
         "moving this position dependent instruction out of line is not "
         "implemented yet");
 
+  // An address computation writes the address it worked out and reads nothing
+  // else, so a copy that puts the same address in the same register behaves
+  // identically wherever it runs. Note that \a from does not come into it: what
+  // has to be preserved is the value the original computed, which the caller
+  // worked out and passed in.
+  if (IsAArch64AddressComputation(*word)) {
+    EmitAArch64Materialize(referenced_address, *word & g_aarch64_register_mask,
+                           code);
+    return llvm::Error::success();
+  }
+
+  // A literal load has to have the address somewhere before it can read through
+  // it, and the register the load is about to overwrite is the one place a copy
+  // can put it without first proving that some other register is dead.
+  if (std::optional<uint32_t> reg = AArch64LiteralLoadRegister(*word)) {
+    uint32_t load = 0;
+    switch (*word & g_aarch64_load_literal_size_mask) {
+    case g_aarch64_load_literal_word:
+      load = g_aarch64_ldr32_unsigned;
+      break;
+    case g_aarch64_load_literal_doubleword:
+      load = g_aarch64_ldr64_unsigned;
+      break;
+    case g_aarch64_load_literal_signed_word:
+      load = g_aarch64_ldrsw_unsigned;
+      break;
+    default:
+      // AArch64LiteralLoadRegister() answered for this instruction, so it is
+      // one of the three above.
+      return llvm::createStringError(
+          "moving this position dependent instruction out of line is not "
+          "implemented yet");
+    }
+
+    EmitAArch64Materialize(referenced_address, *reg, code);
+    // Offset zero, and the base register is the one just written, so the load
+    // reads exactly what the original read. A narrower load still writes the
+    // whole register, which is what the original did too.
+    EmitAArch64Word(load | (*reg << g_aarch64_rn_shift) | *reg, code);
+    return llvm::Error::success();
+  }
+
   // A conditional branch is emitted as an inverted test over an unconditional
   // branch, so the reach that has to be checked is the unconditional one's. The
   // inverted test only spans the pair, and the branch it guards is placed one
@@ -562,8 +716,7 @@ llvm::Error RelocateAArch64(const lldb_private::Opcode &opcode,
 
   if (conditional) {
     const uint32_t inverted = InvertAArch64ConditionalBranch(*word);
-    for (unsigned byte = 0; byte < sizeof(inverted); ++byte)
-      code.push_back((inverted >> (8 * byte)) & 0xff);
+    EmitAArch64Word(inverted, code);
     // The unconditional branch sits one instruction further on, so it is the
     // one whose displacement is measured from there.
     to += sizeof(uint32_t);
@@ -593,8 +746,7 @@ llvm::Error RelocateAArch64(const lldb_private::Opcode &opcode,
       (base & ~g_aarch64_imm26_mask) |
       (static_cast<uint32_t>(scaled) & g_aarch64_imm26_mask);
 
-  for (unsigned byte = 0; byte < sizeof(relocated); ++byte)
-    code.push_back((relocated >> (8 * byte)) & 0xff);
+  EmitAArch64Word(relocated, code);
 
   return llvm::Error::success();
 }

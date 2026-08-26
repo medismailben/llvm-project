@@ -39,6 +39,27 @@ class InstructionCommandTestCase(TestBase):
         self.assertTrue(main, "no main to disassemble")
         return list(main.GetInstructions(target))
 
+    def instructions_in(self, target, name):
+        function = target.FindFunctions(name).GetContextAtIndex(0).GetFunction()
+        self.assertTrue(function, "no %s to disassemble" % name)
+        return list(function.GetInstructions(target))
+
+    def pcrel_form(self, target, mnemonic, operand=None):
+        """One of the hand-written forms in pcrel_forms.
+
+        Matched on the mnemonic, and on an operand where one mnemonic covers more
+        than one form: `ldr` is a doubleword, a word and a single precision load
+        here, and only the first two can be moved.
+        """
+        for instruction in self.instructions_in(target, "pcrel_forms"):
+            if instruction.GetMnemonic(target) != mnemonic:
+                continue
+            if operand is None:
+                return instruction
+            if instruction.GetOperands(target).split(",")[0].strip() == operand:
+                return instruction
+        self.fail("no %s %s in pcrel_forms" % (mnemonic, operand or ""))
+
     def find_instruction(self, target, predicate, description):
         """The first instruction in main that satisfies \a predicate.
 
@@ -324,19 +345,22 @@ class InstructionCommandTestCase(TestBase):
     @skipUnlessDarwin
     @skipIf(archs=no_match(["arm64", "arm64e"]))
     def test_relocate_refuses_a_form_with_no_relocated_encoding(self):
-        """adrp has no out of line form, at any address.
+        """A literal load into a vector register has no out of line form.
 
         The first tier of refusal. It is reported before a destination is even
         considered, so moving the trampoline cannot help and the wording has to
         say so.
+
+        This one cannot be moved because a copy has to compute the address for
+        itself, and the only register it may clobber is the one the load writes,
+        which here is a vector register and cannot hold an address. The forms
+        whose destination can are covered above.
         """
         target = self.make_target()
-        adrp = self.find_instruction(
-            target, lambda i: i.GetMnemonic(target) == "adrp", "adrp"
-        )
+        load = self.pcrel_form(target, "ldr", "s0")
 
         output = self.run_command(
-            "instruction relocate %#x -o 16" % self.address_of(target, adrp)
+            "instruction relocate %#x -o 16" % self.address_of(target, load)
         )
 
         self.assertIn("relocatable     no, at any address", output)
@@ -432,7 +456,7 @@ class InstructionCommandTestCase(TestBase):
     @skipUnlessDarwin
     @skipIf(archs=no_match(["arm64", "arm64e"]))
     def test_patch_site_reports_a_site_that_can_be_patched(self):
-        """A call site can be patched, and an adrp site cannot.
+        """A call site can be patched, and a vector literal load site cannot.
 
         Both verdicts come from one run, because a report that always said yes
         would satisfy the first half on its own.
@@ -489,16 +513,16 @@ class InstructionCommandTestCase(TestBase):
             "a patchable site was refused:\n%s" % output,
         )
 
-        # And the negative. adrp has no out of line form, so the site fails the
+        # And the negative. A literal load into a vector register has no out of
+        # line form, because a copy has to compute the address for itself and the
+        # only register it may clobber cannot hold one. So the site fails the
         # first requirement and the verdict has to follow it.
-        adrp = self.find_instruction(
-            target, lambda i: i.GetMnemonic(target) == "adrp", "adrp"
-        )
-        adrp_site = self.address_of(target, adrp)
-        output = self.run_command("instruction patch-site %#x" % adrp_site)
+        load = self.pcrel_form(target, "ldr", "s0")
+        load_site = self.address_of(target, load)
+        output = self.run_command("instruction patch-site %#x" % load_site)
         self.assertIn("cannot be moved out of line", output)
         self.assertIn(
-            "4 bytes at %#x cannot be replaced with a branch." % adrp_site,
+            "4 bytes at %#x cannot be replaced with a branch." % load_site,
             output,
             "a site holding an instruction that cannot run out of line was "
             "accepted:\n%s" % output,
@@ -855,3 +879,96 @@ class InstructionCommandTestCase(TestBase):
             plain,
             "an escape sequence survived `use-color false`:\n%r" % plain,
         )
+
+    @skipUnlessDarwin
+    @skipIf(archs=no_match(["arm64", "arm64e"]))
+    def test_relocate_rebuilds_an_address_computation(self):
+        """adr and adrp become the address they computed, built in place.
+
+        Neither branches: they write an address to a register and read nothing
+        else, so a copy only has to put the same address in the same register.
+        Built with movz and movk rather than re-encoded, which needs nothing
+        placed near the copy to point at and so reaches any address at all,
+        instead of the 1MiB an adr reaches or the 4GiB an adrp reaches.
+
+        Checked by reading the immediates back out and reassembling the value,
+        because the byte count says nothing about whether the address is right,
+        and an address that is wrong by a page still disassembles cleanly.
+        """
+        target = self.make_target()
+
+        for mnemonic in ["adr", "adrp"]:
+            instruction = self.pcrel_form(target, mnemonic)
+            origin = self.address_of(target, instruction)
+            expected = instruction.GetReferencedAddress(origin)
+            self.assertNotEqual(
+                expected, lldb.LLDB_INVALID_ADDRESS,
+                "%s should refer to an address" % mnemonic)
+
+            output = self.run_command(
+                "instruction relocate --to %#x %#x" % (origin + 0x100000, origin)
+            )
+            self.assertIn("relocatable     yes, 16 bytes of code", output)
+
+            # Four movs, each carrying one 16 bit field of the address, in order
+            # from the low field up.
+            fields = re.findall(r"#(0x[0-9a-f]+|\d+)(?:, lsl #(\d+))?", output)
+            self.assertEqual(
+                len(fields), 4,
+                "expected four immediate fields for %s in:\n%s" %
+                (mnemonic, output))
+
+            rebuilt = 0
+            for value, shift in fields:
+                rebuilt |= int(value, 0) << int(shift or 0)
+            self.assertEqual(
+                rebuilt, expected,
+                "the copy of %s builds %#x where the original computes %#x" %
+                (mnemonic, rebuilt, expected))
+
+    @skipUnlessDarwin
+    @skipIf(archs=no_match(["arm64", "arm64e"]))
+    def test_relocate_rebuilds_a_literal_load(self):
+        """A literal load becomes the address, then the load through it.
+
+        The address has to be somewhere before it can be read through, and the
+        register the load is about to overwrite is the one place a copy can put it
+        without first proving some other register is dead. So the destination is
+        both the address it computes and the register it loads into.
+
+        The load that follows has to keep the width the original had: reading four
+        bytes where the original read eight, or forgetting to sign extend, is not
+        visible in the byte count and is not something the disassembler objects
+        to.
+        """
+        target = self.make_target()
+
+        widths = {"x2": "ldr    x2, [x2]",
+                  "w3": "ldr    w3, [x3]",
+                  "x4": "ldrsw  x4, [x4]"}
+
+        for destination, expected_load in widths.items():
+            mnemonic = "ldrsw" if expected_load.startswith("ldrsw") else "ldr"
+            instruction = self.pcrel_form(target, mnemonic, destination)
+            origin = self.address_of(target, instruction)
+            expected = instruction.GetReferencedAddress(origin)
+            self.assertNotEqual(expected, lldb.LLDB_INVALID_ADDRESS)
+
+            output = self.run_command(
+                "instruction relocate --to %#x %#x" % (origin + 0x100000, origin)
+            )
+            self.assertIn("relocatable     yes, 20 bytes of code", output)
+
+            fields = re.findall(r"#(0x[0-9a-f]+|\d+)(?:, lsl #(\d+))?", output)
+            rebuilt = 0
+            for value, shift in fields[:4]:
+                rebuilt |= int(value, 0) << int(shift or 0)
+            self.assertEqual(
+                rebuilt, expected,
+                "the copy loads from %#x where the original loads from %#x" %
+                (rebuilt, expected))
+
+            # Spacing is the disassembler's, so compare on the pieces rather than
+            # on the whole line.
+            for piece in expected_load.split():
+                self.assertIn(piece, output)
