@@ -54,14 +54,26 @@ llvm::Expected<std::string> ABIMacOSX_arm64::GetRegisterName(uint32_t num) {
                       "register information in ABI.",
                       num));
 
-  if (num > m_mc_register_info_up->getNumRegs())
+  // A DWARF register number, which for AArch64 gives 0 to 30 to x0 to x30 and
+  // 31 to the stack pointer. 32 is ELR_mode and 64 to 95 are the vector
+  // registers, none of which the caller can name, so they are refused here
+  // rather than turned into a field that does not exist.
+  //
+  // Not compared against getNumRegs(), which counts MC register numbers. That
+  // is a different and much larger numbering, so it let a vector register
+  // through as "x64".
+  constexpr uint32_t dwarf_sp_regnum = 31;
+  if (num > dwarf_sp_regnum)
     return llvm::createStringError(
-        llvm::formatv("Failed to get register name for register #{0}: Invalid "
-                      "register number.",
+        llvm::formatv("Failed to get register name for register #{0}: not a "
+                      "general purpose register.",
                       num));
 
-  llvm::Twine reg_name("x" + llvm::Twine(num));
-  return GetMCName(reg_name.str());
+  // Built directly rather than through a named Twine. A Twine holds references
+  // to what it was built from, and the documentation is explicit that one must
+  // never outlive the expression that made it, so storing it and calling str()
+  // in the next statement reads temporaries that are already gone.
+  return GetMCName("x" + std::to_string(num));
 }
 
 /// AArch64 `nop`, little endian. Two of these are emitted at the end of the
@@ -116,7 +128,7 @@ EncodeAArch64Branch(int64_t byte_offset,
 /// working when the assembler changes how many instructions the preceding code
 /// needs, which it does depending on the immediates and literal pools involved.
 static lldb::offset_t FindTrampolineNopSlots(llvm::ArrayRef<uint8_t> buffer,
-                                            size_t count) {
+                                             size_t count) {
   const size_t instr_size = ABIMacOSX_arm64::aarch64_instr_size;
   const size_t slots_size = count * instr_size;
 
@@ -161,18 +173,20 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   if (!plan)
     return plan.takeError();
 
-  // The trampoline reserves room for the relocated form plus the branch back, so
-  // a relocated form that is a sequence is fine as long as it is whole
+  // The trampoline reserves room for the relocated form plus the branch back,
+  // so a relocated form that is a sequence is fine as long as it is whole
   // instructions. Nothing here needs a constant pool yet, so a form asking for
   // data has nowhere to put it.
   if (!plan->relocated_code_size ||
       plan->relocated_code_size % aarch64_instr_size)
     return llvm::createStringError(llvm::formatv(
-        "the instruction displaced at {0:x} needs {1} bytes to run out of line, "
+        "the instruction displaced at {0:x} needs {1} bytes to run out of "
+        "line, "
         "which is not a whole number of instructions",
         bp_injected_site->GetLoadAddress(), plan->relocated_code_size));
 
-  // One slot per relocated instruction, plus the branch back to the user's code.
+  // One slot per relocated instruction, plus the branch back to the user's
+  // code.
   const size_t reserved_slots =
       plan->relocated_code_size / aarch64_instr_size + 1;
 
@@ -270,8 +284,7 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   ss << "";
   for (size_t slot = 0; slot < reserved_slots; ++slot)
     ss << "           nop\n";
-  ss
-     << "        )\");\n"
+  ss << "        )\");\n"
      << "}";
 
   ExecutionContext exe_ctx = bp_injected_site->GetOwnerExecutionContext();
