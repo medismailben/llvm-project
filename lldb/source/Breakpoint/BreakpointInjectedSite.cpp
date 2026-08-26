@@ -390,16 +390,15 @@ bool BreakpointInjectedSite::GatherArgumentsMetadata() {
     // below, because selecting from a location list needs the function's load
     // address to convert this site's pc back into the file address the list is
     // keyed by.
+    //
+    // A global has no enclosing function and needs neither: its location is a
+    // single always-valid DW_OP_addr, which the selection below returns without
+    // consulting an address, and which is relative to nothing. So this is
+    // recorded rather than refused, and a variable that turns out to need
+    // either is refused where it is needed.
     SymbolContextScope *owner_scope = var_sp->GetSymbolContextScope();
-    Function *func = nullptr;
-    if (!owner_scope ||
-        !(func = owner_scope->CalculateSymbolContextFunction())) {
-      LLDB_LOG(log,
-               "FCB: variable {0} has no enclosing function, so its frame base "
-               "cannot be resolved",
-               var_sp->GetName());
-      return false;
-    }
+    Function *func =
+        owner_scope ? owner_scope->CalculateSymbolContextFunction() : nullptr;
 
     DWARFExpressionList lldb_dwarf_exprs = var_sp->LocationExpressionList();
 
@@ -416,7 +415,8 @@ bool BreakpointInjectedSite::GatherArgumentsMetadata() {
     // breakpoint address rather than the patched site's: the trampoline runs on
     // its behalf, before the displaced instruction.
     const addr_t func_load_addr =
-        func->GetAddress().GetLoadAddress(m_target_sp.get());
+        func ? func->GetAddress().GetLoadAddress(m_target_sp.get())
+             : LLDB_INVALID_ADDRESS;
     const addr_t site_load_addr = m_real_addr.GetLoadAddress(m_target_sp.get());
 
     std::optional<DWARFExpressionList::DWARFExpressionEntry> location =
@@ -438,8 +438,10 @@ bool BreakpointInjectedSite::GatherArgumentsMetadata() {
 
     uint8_t addr_size = m_target_sp->GetArchitecture().GetAddressByteSize();
 
-    // FIXME: const ref ?
-    DWARFExpressionList frame_base_expr = func->GetFrameBaseExpression();
+    // Empty for a global, which is what makes DW_OP_fbreg the thing that
+    // refuses rather than the lookup above.
+    DWARFExpressionList frame_base_expr =
+        func ? func->GetFrameBaseExpression() : DWARFExpressionList();
 
     VariableMetadata metadata(
         expr_var->GetName().GetCString(), *size, captured.offset, llvm_data,
