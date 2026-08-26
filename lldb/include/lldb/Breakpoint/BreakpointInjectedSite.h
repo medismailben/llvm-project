@@ -87,8 +87,8 @@ public:
     // Constructor
 
     /// This constructor stores the variable name and type size and create a
-    /// DWARF Expression from the DataExtractor containing the DWARF Operation
-    /// and its operands.
+    /// DWARF Expression from the buffer containing the DWARF Operations and
+    /// their operands.
     ///
     /// \param[in] name
     ///    The name of the variable.
@@ -96,8 +96,14 @@ public:
     /// \param[in] size
     ///    The type size of the variable.
     ///
-    /// \param[in] data
-    ///    The buffer containing the variable DWARF Expression data.
+    /// \param[in] location_bytes
+    ///    The variable's DWARF location expression, owned rather than
+    ///    referenced: llvm::DWARFExpression holds a StringRef over these bytes,
+    ///    so they have to outlive it and survive this being copied into the
+    ///    site's vector.
+    ///
+    /// \param[in] is_little_endian
+    ///    The byte order the location expression's operands are encoded in.
     ///
     /// \param[in] address_size
     ///    The size in bytes for the address of the current architecture.
@@ -114,13 +120,19 @@ public:
     ///    the list is keyed by.
     ///
     VariableMetadata(std::string name, size_t size, lldb::offset_t offset,
-                     llvm::DataExtractor data, uint8_t address_size,
-                     DWARFExpressionList expr,
+                     lldb::DataBufferSP location_bytes, bool is_little_endian,
+                     uint8_t address_size, DWARFExpressionList expr,
                      DWARFExpressionList &frame_base_expr,
                      lldb::addr_t func_load_addr)
         : name(std::move(name)), size(size), offset(offset),
-          dwarf(data, address_size), expr_list(expr),
-          frame_base_expr_list(frame_base_expr),
+          location_bytes(std::move(location_bytes)),
+          dwarf(llvm::DataExtractor(
+                    llvm::StringRef(reinterpret_cast<const char *>(
+                                        this->location_bytes->GetBytes()),
+                                    this->location_bytes->GetByteSize()),
+                    is_little_endian),
+                address_size),
+          expr_list(expr), frame_base_expr_list(frame_base_expr),
           func_load_addr(func_load_addr) {}
 
     /// The variable name.
@@ -130,6 +142,10 @@ public:
     /// Its byte offset in the argument structure, as the condition expression's
     /// own layout assigned it. Not derivable from the position in this vector.
     lldb::offset_t offset;
+    /// The bytes \a dwarf below reads. Declared before it so that it is
+    /// constructed first, and shared rather than copied so that copying the
+    /// metadata does not leave the expression pointing at a dead buffer.
+    lldb::DataBufferSP location_bytes;
     /// The variable DWARF Expression.
     llvm::DWARFExpression dwarf;
     /// The LLDB DWARF variable expression list.
@@ -236,21 +252,6 @@ private:
   ///     \b true if building the argument structure succeeded,
   ///     \b false otherwise.
   bool CreateArgumentsStructure();
-
-  /// Parse the variable's DWARF Expression and return the proper source code,
-  /// according to the DWARF Operation.
-  ///
-  /// \param[in] index
-  ///     The index of the variable in the metadata vector.
-  ///
-  /// \param[in] error
-  ///     The thread against which to test.
-  ///
-  /// \return
-  ///     The source code needed to copy the variable in the argument structure.
-  std::string ParseDWARFExpression(size_t index, Status &error);
-
-  llvm::DataExtractor GetLLVMDataExtractor(const DataExtractor &lldb_data);
 
 private:
   /// The target that hold the breakpoint.
