@@ -379,17 +379,6 @@ bool BreakpointInjectedSite::GatherArgumentsMetadata() {
 
     VariableSP var_sp = val_obj_sp->GetVariable();
 
-    DWARFExpressionList lldb_dwarf_exprs = var_sp->LocationExpressionList();
-
-    DataExtractor lldb_data;
-    if (!lldb_dwarf_exprs.GetExpressionData(lldb_data)) {
-      return false;
-    }
-
-    llvm::DataExtractor llvm_data = GetLLVMDataExtractor(lldb_data);
-
-    uint8_t addr_size = m_target_sp->GetArchitecture().GetAddressByteSize();
-
     auto size = var_sp->GetType()->GetByteSize(m_target_sp.get());
     if (!size) {
       LLDB_LOG(log, "FCB: Variable {0} has invalid size",
@@ -397,6 +386,10 @@ bool BreakpointInjectedSite::GatherArgumentsMetadata() {
       return false;
     }
 
+    // Looked up before the location is selected, not only for the frame base
+    // below, because selecting from a location list needs the function's load
+    // address to convert this site's pc back into the file address the list is
+    // keyed by.
     SymbolContextScope *owner_scope = var_sp->GetSymbolContextScope();
     Function *func = nullptr;
     if (!owner_scope ||
@@ -408,12 +401,49 @@ bool BreakpointInjectedSite::GatherArgumentsMetadata() {
       return false;
     }
 
+    DWARFExpressionList lldb_dwarf_exprs = var_sp->LocationExpressionList();
+
+    // Select the location that covers this site.
+    //
+    // A variable with one location is always valid and was found whatever was
+    // passed here, which is why this worked at all. A variable with a location
+    // list was not: the default arguments are an invalid function address and a
+    // pc of zero, and the conversion back to a file address then yields zero,
+    // which no entry contains. So every location list refused the whole
+    // install.
+    //
+    // The site's own address is the one to ask about, and it is the user's
+    // breakpoint address rather than the patched site's: the trampoline runs on
+    // its behalf, before the displaced instruction.
+    const addr_t func_load_addr =
+        func->GetAddress().GetLoadAddress(m_target_sp.get());
+    const addr_t site_load_addr = m_real_addr.GetLoadAddress(m_target_sp.get());
+
+    std::optional<DWARFExpressionList::DWARFExpressionEntry> location =
+        lldb_dwarf_exprs.GetExpressionEntryAtAddress(func_load_addr,
+                                                     site_load_addr);
+    // An entry with an empty expression is how DWARF says the variable has no
+    // location over that range, so it reads the same way as no entry at all.
+    DataExtractor lldb_data;
+    if (!location || !location->expr ||
+        !location->expr->GetExpressionData(lldb_data)) {
+      LLDB_LOG(log,
+               "FCB: variable {0} has no location at {1:x}, so its condition "
+               "cannot be evaluated in the inferior",
+               var_sp->GetName(), site_load_addr);
+      return false;
+    }
+
+    llvm::DataExtractor llvm_data = GetLLVMDataExtractor(lldb_data);
+
+    uint8_t addr_size = m_target_sp->GetArchitecture().GetAddressByteSize();
+
     // FIXME: const ref ?
     DWARFExpressionList frame_base_expr = func->GetFrameBaseExpression();
 
-    VariableMetadata metadata(expr_var->GetName().GetCString(), *size,
-                              captured.offset, llvm_data, addr_size,
-                              lldb_dwarf_exprs, frame_base_expr);
+    VariableMetadata metadata(
+        expr_var->GetName().GetCString(), *size, captured.offset, llvm_data,
+        addr_size, lldb_dwarf_exprs, frame_base_expr, func_load_addr);
 
     m_metadatas.push_back(metadata);
   }
@@ -589,8 +619,14 @@ std::string BreakpointInjectedSite::ParseDWARFExpression(size_t expr_idx,
 
   std::vector<std::string> frame_bases;
   VariableMetadata &var_metadata = m_metadatas[expr_idx];
+  // Selected for this site rather than taken with the defaults, for the reason
+  // spelled out in GatherArgumentsMetadata. A frame base is usually a single
+  // always-valid expression, so this only matters where the compiler emitted a
+  // list, which clang does under -fomit-frame-pointer.
   DataExtractor fb_expr_data;
-  if (var_metadata.frame_base_expr_list.GetExpressionData(fb_expr_data)) {
+  if (var_metadata.frame_base_expr_list.GetExpressionData(
+          fb_expr_data, var_metadata.func_load_addr,
+          m_real_addr.GetLoadAddress(m_target_sp.get()))) {
     llvm::DataExtractor data = GetLLVMDataExtractor(fb_expr_data);
     llvm::DWARFExpression fb_expr(data, fb_expr_data.GetAddressByteSize());
     for (auto op : fb_expr) {

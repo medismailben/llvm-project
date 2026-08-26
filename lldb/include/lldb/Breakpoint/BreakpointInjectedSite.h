@@ -108,13 +108,20 @@ public:
     /// \param[in] frame_base_expr
     ///    The DWARF expression list for the frame base register.
     ///
+    /// \param[in] func_load_addr
+    ///    Where the enclosing function starts, which is what selecting from a
+    ///    location list needs in order to turn a pc back into the file address
+    ///    the list is keyed by.
+    ///
     VariableMetadata(std::string name, size_t size, lldb::offset_t offset,
                      llvm::DataExtractor data, uint8_t address_size,
                      DWARFExpressionList expr,
-                     DWARFExpressionList &frame_base_expr)
+                     DWARFExpressionList &frame_base_expr,
+                     lldb::addr_t func_load_addr)
         : name(std::move(name)), size(size), offset(offset),
           dwarf(data, address_size), expr_list(expr),
-          frame_base_expr_list(frame_base_expr) {}
+          frame_base_expr_list(frame_base_expr),
+          func_load_addr(func_load_addr) {}
 
     /// The variable name.
     std::string name;
@@ -129,6 +136,8 @@ public:
     DWARFExpressionList expr_list;
     /// The LLDB DWARF frame base register expression list.
     DWARFExpressionList frame_base_expr_list;
+    /// Where the enclosing function starts.
+    lldb::addr_t func_load_addr = LLDB_INVALID_ADDRESS;
   };
 
   size_t GetArgsStructSize() const { return m_args_struct_size; }
