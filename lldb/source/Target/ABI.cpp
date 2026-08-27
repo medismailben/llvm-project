@@ -213,7 +213,14 @@ lldb::ModuleSP ABI::CreateModuleForFastConditionalBreakpointTrampoline(
 
   if (UnwindPlanSP trampoline_unwind_plan_sp =
           CreateTrampolineUnwindPlan(site_address, frame_size)) {
-    func_unwinders_sp->SetTrampolineUnwindPlan(trampoline_unwind_plan_sp);
+    // Recorded on the table rather than on the FuncUnwinders, which is a cache
+    // that Module::GetObjectFile() and friends throw away through
+    // UnwindTable::ModuleWasUpdated(). Setting it directly meant the plan
+    // survived until the first flush and then the trampoline frame was unwound
+    // with an assembly plan that reads the patched function's saved lr as its
+    // return address, which drops that function out of the backtrace.
+    unwind_table.SetTrampolineUnwindPlan(symbol->GetAddress().GetFileAddress(),
+                                         trampoline_unwind_plan_sp);
     return trampoline_module_sp;
   }
 

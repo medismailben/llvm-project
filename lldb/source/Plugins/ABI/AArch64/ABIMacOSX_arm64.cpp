@@ -805,10 +805,29 @@ ABIMacOSX_arm64::CreateTrampolineUnwindPlan(addr_t site_address,
   // A frame's CFA is defined to be its caller's stack pointer.
   row.SetRegisterLocationToIsCFAPlusOffset(sp_reg_num, 0, true);
 
+  // Where the trampoline's prologue put each of the patched function's
+  // registers. It stores x0 through x30 as consecutive doublewords at the base
+  // of the register context, which sits aarch64_register_context_size below the
+  // CFA, so xN is at CFA - context_size + 8N.
+  //
+  // Describing them is not optional. Without this the caller's callee-saved
+  // registers are undefined, and a function whose own CFA rule is fp relative,
+  // which is every unoptimized one, then cannot be unwound out of: the
+  // backtrace stops at the patched function instead of continuing past it.
+  for (uint32_t reg = arm64_dwarf::x0; reg <= arm64_dwarf::lr; ++reg) {
+    const int32_t offset = static_cast<int32_t>(reg * aarch64_gpr_size) -
+                           static_cast<int32_t>(aarch64_register_context_size);
+    row.SetRegisterLocationToAtCFAPlusOffset(reg, offset, true);
+  }
+
   // Report the patched address itself rather than where the trampoline will
   // resume: the displaced instruction has not run yet. The frame is marked as a
   // trap below so that the unwinder does not back the address up by one the way
   // it would for a return address.
+  //
+  // Set after the loop, because lr is one of the registers above and a caller's
+  // pc is not its lr here: the trampoline was branched to, not called, so the
+  // saved lr belongs to the frame above the patched function rather than to it.
   row.SetRegisterLocationToConstantValue(pc_reg_num, site_address, true);
 
   auto plan_sp = std::make_shared<UnwindPlan>(eRegisterKindDWARF);

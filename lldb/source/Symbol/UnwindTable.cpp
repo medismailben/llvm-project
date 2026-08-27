@@ -86,6 +86,8 @@ void UnwindTable::Initialize() {
 void UnwindTable::ModuleWasUpdated() {
   std::lock_guard<std::mutex> guard(m_mutex);
   m_scanned_all_unwind_sources = false;
+  // m_trampoline_plans is deliberately kept. Everything in m_unwinds can be
+  // rebuilt from the object file, and a plan for code lldb wrote itself cannot.
   m_unwinds.clear();
 }
 
@@ -152,10 +154,35 @@ UnwindTable::GetFuncUnwindersContainingAddress(const Address &addr,
 
   auto func_unwinder_sp =
       std::make_shared<FuncUnwinders>(*this, start_addr, ranges);
+  InstallTrampolineUnwindPlan(func_unwinder_sp);
   for (const AddressRange &range : ranges)
     m_unwinds.emplace_hint(insert_pos, range.GetBaseAddress().GetFileAddress(),
                            func_unwinder_sp);
   return func_unwinder_sp;
+}
+
+void UnwindTable::SetTrampolineUnwindPlan(lldb::addr_t start_file_addr,
+                                          lldb::UnwindPlanSP plan_sp) {
+  std::lock_guard<std::mutex> guard(m_mutex);
+  m_trampoline_plans[start_file_addr] = plan_sp;
+
+  // A FuncUnwinders for this function may already be cached, in which case it
+  // has to be told now: nothing will ask this table again until the cache is
+  // flushed.
+  iterator pos = m_unwinds.find(start_file_addr);
+  if (pos != m_unwinds.end())
+    pos->second->SetTrampolineUnwindPlan(std::move(plan_sp));
+}
+
+void UnwindTable::InstallTrampolineUnwindPlan(
+    lldb::FuncUnwindersSP &func_unwinders_sp) {
+  if (m_trampoline_plans.empty() || !func_unwinders_sp)
+    return;
+
+  auto pos = m_trampoline_plans.find(
+      func_unwinders_sp->GetFunctionStartAddress().GetFileAddress());
+  if (pos != m_trampoline_plans.end())
+    func_unwinders_sp->SetTrampolineUnwindPlan(pos->second);
 }
 
 // Ignore any existing FuncUnwinders for this function, create a new one and
@@ -171,7 +198,13 @@ FuncUnwindersSP UnwindTable::GetUncachedFuncUnwindersContainingAddress(
   if (ranges.empty())
     return nullptr;
 
-  return std::make_shared<FuncUnwinders>(*this, start_addr, std::move(ranges));
+  auto func_unwinder_sp =
+      std::make_shared<FuncUnwinders>(*this, start_addr, std::move(ranges));
+  // Even here, where the point is to build fresh plans: a trampoline plan is
+  // not something this can rebuild, so `target modules show-unwind` would
+  // otherwise report that a trampoline has none.
+  InstallTrampolineUnwindPlan(func_unwinder_sp);
+  return func_unwinder_sp;
 }
 
 void UnwindTable::Dump(Stream &s) {

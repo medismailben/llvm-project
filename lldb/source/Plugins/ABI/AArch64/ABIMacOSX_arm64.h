@@ -22,6 +22,11 @@ public:
   /// with it.
   static constexpr const std::size_t aarch64_register_context_size = 0x100;
 
+  /// Width of one slot in that context. The prologue stores x0 through x30 as
+  /// consecutive doublewords from its base, which is what lets the trampoline's
+  /// unwind plan describe where each of the patched function's registers went.
+  static constexpr const std::size_t aarch64_gpr_size = 8;
+
   static constexpr const char *register_context = R"(typedef struct {
                                                       intptr_t x0;
                                                       intptr_t x1;

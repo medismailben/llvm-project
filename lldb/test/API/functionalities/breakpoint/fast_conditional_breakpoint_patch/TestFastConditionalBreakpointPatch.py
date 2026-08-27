@@ -318,6 +318,62 @@ class FastConditionalBreakpointPatchTestCase(TestBase):
     @skipUnlessDarwin
     @skipIf(archs=no_match(["arm64", "arm64e", "x86_64"]))
     @add_test_categories(["pyapi"])
+    def test_backtrace_walks_through_the_patched_function(self):
+        """The patched function is in the backtrace, at the site, and unwinds out.
+
+        Three things, because each failed separately at some point and only the
+        first is visible without looking past it:
+
+        The function has to be there at all. The trampoline is branched to rather
+        than called, so an unwind rule that reads the saved lr as a return address
+        skips it: with a leaf function that produces a backtrace with the user's
+        code missing entirely.
+
+        Its pc has to be the site, not near it. The plan reports a constant, so
+        this is exact rather than off by an instruction.
+
+        And the frame above it has to be reachable, which is what needs the
+        patched function's callee-saved registers described. An unoptimized
+        function's CFA is fp relative, so without fp the walk stops at the patched
+        function and everything that called it is lost.
+        """
+        process, _, location = self.arm("counter == 9")
+        thread = process.GetSelectedThread()
+
+        frames = [thread.GetFrameAtIndex(i)
+                  for i in range(thread.GetNumFrames())]
+        names = [f.GetFunctionName() for f in frames]
+        self.assertIn(
+            "main", names,
+            "the patched function is not in the backtrace:\n%s" % "\n".join(
+                str(f) for f in frames))
+
+        main_index = names.index("main")
+        main_frame = frames[main_index]
+
+        self.assertEqual(
+            main_frame.GetPC(),
+            location.GetLoadAddress(),
+            "the patched function's frame reports a pc other than the site",
+        )
+
+        self.assertGreater(
+            len(frames), main_index + 1,
+            "nothing above the patched function, so the unwind stopped there "
+            "instead of walking out of it",
+        )
+
+        # The variable the condition tested has to be readable from that frame,
+        # which is the practical reason any of this matters.
+        counter = main_frame.GetValueForVariablePath("counter")
+        self.assertTrue(counter.IsValid(), "counter is not readable from main")
+        # The site is the start of the line, so the increment in it has not run.
+        self.assertEqual(counter.GetValueAsSigned(), 9,
+                         "counter reads wrong from the patched frame")
+
+    @skipUnlessDarwin
+    @skipIf(archs=no_match(["arm64", "arm64e", "x86_64"]))
+    @add_test_categories(["pyapi"])
     def test_detach_does_not_leave_the_patch_behind(self):
         """Detaching takes the patch out.
 
