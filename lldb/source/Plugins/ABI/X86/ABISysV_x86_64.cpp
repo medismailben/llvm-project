@@ -85,6 +85,27 @@ ABISysV_x86_64::GetDebugTrapOpcode() {
   return llvm::ArrayRef(g_x86_64_debug_trap_opcodes);
 }
 
+/// The System V AMD64 ABI's DWARF register numbering, which is not the order
+/// the registers are named in nor the order `register_context` stores them in.
+///
+/// Only the sixteen general purpose registers are here. Number 16 is the return
+/// address column, and 17 upwards are the vector and segment registers, none of
+/// which the trampoline saves, so a location naming one has nowhere to be read
+/// from and is refused rather than turned into a field that does not exist.
+llvm::Expected<std::string> ABISysV_x86_64::GetRegisterName(uint32_t num) {
+  static constexpr llvm::StringLiteral names[] = {
+      "rax", "rdx", "rcx", "rbx", "rsi", "rdi", "rbp", "rsp",
+      "r8",  "r9",  "r10", "r11", "r12", "r13", "r14", "r15"};
+
+  if (num >= std::size(names))
+    return llvm::createStringError(
+        llvm::formatv("Failed to get register name for register #{0}: not a "
+                      "general purpose register.",
+                      num));
+
+  return names[num].str();
+}
+
 llvm::Error ABISysV_x86_64::SetupFastConditionalBreakpointTrampoline(
     BreakpointInjectedSite *bp_injected_site) {
   Log *log = GetLog(LLDBLog::JITLoader);

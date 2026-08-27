@@ -140,6 +140,8 @@ public:
     return register_context;
   }
 
+  llvm::Expected<std::string> GetRegisterName(uint32_t num) override;
+
   bool SupportsFCB() override { return true; }
 
   // Static Functions
