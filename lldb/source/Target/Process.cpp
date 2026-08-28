@@ -2110,7 +2110,8 @@ Process::CreateBreakpointSite(const BreakpointLocationSP &constituent,
   return LLDB_INVALID_BREAK_ID;
 }
 
-lldb::WritableDataBufferSP Process::SaveInstructions(Address &address) {
+lldb::WritableDataBufferSP Process::SaveInstructions(Address &address,
+                                                     size_t patch_size) {
   Log *log = GetLog(LLDBLog::JITLoader);
 
   TargetSP target_sp = m_target_wp.lock();
@@ -2155,7 +2156,7 @@ lldb::WritableDataBufferSP Process::SaveInstructions(Address &address) {
   }
 
   const lldb::addr_t disasm_range_size = range_end - addr;
-  const size_t jump_size = abi_sp->GetJumpSize();
+  const size_t jump_size = patch_size ? patch_size : abi_sp->GetJumpSize();
 
   if (disasm_range_size < jump_size) {
     LLDB_LOG(
@@ -2234,13 +2235,15 @@ bool Process::NewFCBTrampolineAllocation(lldb::addr_t addr, size_t size) {
   return true;
 }
 
-lldb::addr_t Process::NextFCBTrampolineAllocation(lldb::addr_t bp_load_addr,
-                                                  size_t size,
-                                                  uint32_t attempt) {
-  // How far to look before giving up. Comfortably inside the reach of the
-  // narrowest direct branch any supported architecture patches with, so a hole
-  // found here is one the caller can branch to. The caller still checks.
-  const lldb::addr_t max_distance = 64 * 1024 * 1024;
+std::vector<lldb::addr_t>
+Process::FindFCBTrampolineCandidates(lldb::addr_t bp_load_addr, size_t size,
+                                     lldb::addr_t max_distance,
+                                     uint32_t max_candidates) {
+  Log *log = GetLog(LLDBLog::Process);
+
+  std::vector<lldb::addr_t> candidates;
+  if (!max_candidates)
+    return candidates;
 
   const lldb::addr_t page_size = getpagesize();
   const lldb::addr_t needed = llvm::alignTo(size ? size : 1, page_size);
@@ -2257,55 +2260,152 @@ lldb::addr_t Process::NextFCBTrampolineAllocation(lldb::addr_t bp_load_addr,
     return false;
   };
 
-  // Walk outward from the site, jumping over whole mapped regions rather than
+  // The whole trampoline has to be in reach, not only its first byte: the
+  // branch back to the site is emitted at its far end, so measuring from
+  // whichever end is further away is what both branches have to satisfy.
+  auto in_reach = [&](lldb::addr_t addr) {
+    const lldb::addr_t distance = addr > bp_load_addr
+                                      ? (addr + needed - 1) - bp_load_addr
+                                      : bp_load_addr - addr;
+    return distance <= max_distance;
+  };
+
+  // Offer the addresses in a hole nearest the site first. Nearer is worth
+  // wanting for its own sake, not only for reachability: an instruction
+  // displaced into the trampoline may be pc relative with a much shorter reach
+  // than the patch's branch, so a closer trampoline is one more of those can be
+  // re-encoded rather than refused.
+  //
+  // \return Whether anything in the hole was offered.
+  auto offer = [&](lldb::addr_t hole_start, lldb::addr_t hole_end) {
+    if (hole_end < hole_start + needed)
+      return false;
+
+    const lldb::addr_t nearest =
+        bp_load_addr <= hole_start
+            ? hole_start
+            : llvm::alignDown(std::min(hole_end - needed, bp_load_addr),
+                              page_size);
+
+    // More than one offer per hole because a hole that reads as free can still
+    // refuse a fixed mapping, and a second offer in the same hole is the
+    // cheapest retry there is. Nothing beyond the second, since a hole that
+    // refuses twice is more likely reserved than momentarily busy.
+    const unsigned offers_per_hole = 2;
+    bool offered = false;
+    for (unsigned nth = 0; nth < offers_per_hole; ++nth) {
+      const lldb::addr_t addr = bp_load_addr <= hole_start
+                                    ? nearest + nth * needed
+                                    : nearest - nth * needed;
+      if (addr < hole_start || addr + needed > hole_end)
+        break;
+      if (candidates.size() >= max_candidates)
+        break;
+      if (!in_reach(addr) || collides_with_ours(addr))
+        continue;
+      candidates.push_back(addr);
+      offered = true;
+    }
+    return offered;
+  };
+
+  // Walk outward from the site in both directions, taking whichever side is
+  // currently nearer, and jumping over whole mapped regions rather than
   // stepping a page at a time, since the address space between modules is
   // mapped in large pieces.
   //
-  // Deliberately computed from this site every time. Chaining from the previous
-  // trampoline, which is what this used to do, put the second breakpoint's
+  // Both directions, because a hole below the site serves it just as well as
+  // one above, and a site in the upper half of a large image has nothing above
+  // it but the rest of that image. Deliberately measured from this site every
+  // time: chaining from the previous trampoline put the second breakpoint's
   // trampoline next to the first one's, so two breakpoints in modules far apart
   // left the second beyond the reach of its own site.
-  lldb::addr_t candidate = llvm::alignTo(bp_load_addr + 1, page_size);
-  const lldb::addr_t limit = bp_load_addr + max_distance;
+  lldb::addr_t up = llvm::alignTo(bp_load_addr + 1, page_size);
+  lldb::addr_t down = llvm::alignDown(bp_load_addr, page_size);
+  bool up_done = false;
+  bool down_done = down < needed;
 
-  while (candidate < limit) {
-    if (collides_with_ours(candidate)) {
-      candidate += needed;
+  // A backstop on how much of the address space this is willing to describe one
+  // region at a time. Reaching it is reported rather than passed off as an
+  // exhausted search.
+  const unsigned max_regions = 256;
+  unsigned regions_seen = 0;
+
+  while ((!up_done || !down_done) && candidates.size() < max_candidates) {
+    if (++regions_seen > max_regions) {
+      LLDB_LOG(log,
+               "FCB: stopped describing the address space around {0:x} after "
+               "{1} regions with {2} candidate placements",
+               bp_load_addr, max_regions, candidates.size());
+      break;
+    }
+
+    // Whichever side is nearer, so that the first candidate found is the
+    // nearest one and the search can stop as soon as it has enough.
+    const bool go_up =
+        !up_done && (down_done || (up - bp_load_addr) <= (bp_load_addr - down));
+    const lldb::addr_t probe = go_up ? up : down;
+
+    if (!in_reach(probe)) {
+      if (go_up)
+        up_done = true;
+      else
+        down_done = true;
       continue;
     }
 
     MemoryRegionInfo region;
-    Status error = GetMemoryRegionInfo(candidate, region);
-    if (error.Fail())
-      break;
-
-    const lldb::addr_t region_end =
-        region.GetRange().GetRangeBase() + region.GetRange().GetByteSize();
-
-    // A region that reports no size would not advance the walk.
-    if (region_end <= candidate)
-      break;
-
-    if (region.GetMapped() != eLazyBoolYes &&
-        region_end - candidate >= needed) {
-      if (!attempt)
-        return candidate;
-      // This one was already tried and refused, so move past it.
-      --attempt;
-      candidate += needed;
+    if (GetMemoryRegionInfo(probe, region).Fail()) {
+      if (go_up)
+        up_done = true;
+      else
+        down_done = true;
       continue;
     }
 
-    candidate = region_end;
+    const lldb::addr_t region_base = region.GetRange().GetRangeBase();
+    const lldb::addr_t region_end =
+        region_base + region.GetRange().GetByteSize();
+
+    // A region that reports no size, or one that does not contain what was
+    // asked about, would not advance the walk.
+    if (region_end <= probe || region_base > probe) {
+      if (go_up)
+        up_done = true;
+      else
+        down_done = true;
+      continue;
+    }
+
+    bool offered = false;
+    if (region.GetMapped() != eLazyBoolYes) {
+      // An unmapped range is described from the address asked about rather than
+      // from where the hole really starts, so only [probe, region_end) is known
+      // to be free.
+      offered = offer(std::max(region_base, probe), region_end);
+    }
+
+    if (go_up) {
+      up = region_end;
+    } else if (offered) {
+      // Where this hole ends below is not knowable from one query, so getting
+      // past it to whatever is under it would take a probe per page. Everything
+      // down there is further from the site than what this hole just offered
+      // anyway, so the walk stops on this side instead.
+      down_done = true;
+    } else if (region_base < needed) {
+      down_done = true;
+    } else {
+      down = llvm::alignDown(region_base - 1, page_size);
+    }
   }
 
-  // Nothing found, so fall back to asking far away rather than not asking. The
-  // caller refuses if the branch cannot reach what it gets.
-  return llvm::alignTo(bp_load_addr + max_distance, page_size);
+  return candidates;
 }
 
 lldb::addr_t Process::AllocateFCBTrampoline(lldb::addr_t bp_load_addr,
                                             size_t size, uint32_t permissions,
+                                            lldb::addr_t max_distance,
                                             Status &error) {
   Log *log = GetLog(LLDBLog::Process);
 
@@ -2314,10 +2414,16 @@ lldb::addr_t Process::AllocateFCBTrampoline(lldb::addr_t bp_load_addr,
   // can still refuse a fixed mapping, and the only way to find out is to ask.
   const uint32_t max_attempts = 8;
 
-  for (uint32_t attempt = 0; attempt < max_attempts; ++attempt) {
-    const lldb::addr_t hint =
-        NextFCBTrampolineAllocation(bp_load_addr, size, attempt);
+  const std::vector<lldb::addr_t> hints = FindFCBTrampolineCandidates(
+      bp_load_addr, size, max_distance, max_attempts);
 
+  if (hints.empty())
+    LLDB_LOG(log,
+             "FCB: nothing is unmapped within {0} bytes of the site at {1:x}, "
+             "so no placement a branch from it could reach exists",
+             max_distance, bp_load_addr);
+
+  for (lldb::addr_t hint : hints) {
     Status attempt_error;
     const lldb::addr_t addr =
         AllocateMemory(size, permissions, attempt_error, hint);
@@ -2326,10 +2432,8 @@ lldb::addr_t Process::AllocateFCBTrampoline(lldb::addr_t bp_load_addr,
       return addr;
     }
 
-    LLDB_LOG(log,
-             "FCB: no trampoline at {0:x} for a site at {1:x} (attempt {2}): "
-             "{3}",
-             hint, bp_load_addr, attempt, attempt_error.AsCString());
+    LLDB_LOG(log, "FCB: no trampoline at {0:x} for a site at {1:x}: {2}", hint,
+             bp_load_addr, attempt_error.AsCString());
   }
 
   // Last resort: let the allocator place it wherever it likes. The result is

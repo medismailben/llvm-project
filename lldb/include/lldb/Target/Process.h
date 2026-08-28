@@ -2385,32 +2385,50 @@ public:
                                   bool use_hardware, Log *log,
                                   const llvm::Error error);
 
-  lldb::WritableDataBufferSP SaveInstructions(Address &address);
+  /// Read the whole instructions a patch of \a patch_size bytes at \a address
+  /// would overwrite, so that they can be put back and run out of line.
+  ///
+  /// \param[in] patch_size
+  ///     How many bytes the patch occupies. Zero asks the ABI for the size of
+  ///     its narrowest patch, which is what a caller not choosing a wider form
+  ///     wants.
+  lldb::WritableDataBufferSP SaveInstructions(Address &address,
+                                              size_t patch_size = 0);
 
   bool NewFCBTrampolineAllocation(lldb::addr_t addr, size_t size);
 
-  /// Where to ask for the trampoline of a breakpoint at \a bp_load_addr.
+  /// Where a trampoline for a breakpoint at \a bp_load_addr could go.
   ///
-  /// The patch installed at a site is a direct branch, so the trampoline has to
-  /// land within that branch's reach of the site. This is a hint rather than a
-  /// promise: the caller checks the address it actually got and refuses if the
-  /// branch cannot reach it.
+  /// The patch installed at a site is a branch, so the trampoline has to land
+  /// within that branch's reach of the site. These are hints rather than
+  /// promises: a hole is described by one call and mapped by another, so a page
+  /// that reads as free can still refuse a fixed mapping.
   ///
-  /// Nearer is better than merely reachable. An instruction displaced into the
-  /// trampoline may itself be pc relative with a much shorter reach than the
-  /// patch's branch, so the closer the trampoline sits the more of those can be
-  /// re-encoded rather than refused.
+  /// Nearest first. Nearer is better than merely reachable: an instruction
+  /// displaced into the trampoline may itself be pc relative with a much
+  /// shorter reach than the patch's branch, so the closer the trampoline sits
+  /// the more of those can be re-encoded rather than refused.
   ///
   /// \param[in] size
   ///     How many bytes the trampoline needs, so a hole too small to hold it is
-  ///     not offered.
+  ///     not offered. Zero asks for a hole at least one page big, which is the
+  ///     smallest allocation the process hands out and therefore the right
+  ///     question when the trampoline has not been assembled yet.
   ///
-  /// \param[in] attempt
-  ///     Which candidate to return, counting from zero. A hole that looked free
-  ///     can still refuse a fixed allocation, so the caller asks for the next
-  ///     one rather than giving up.
-  lldb::addr_t NextFCBTrampolineAllocation(lldb::addr_t bp_load_addr,
-                                           size_t size, uint32_t attempt = 0);
+  /// \param[in] max_distance
+  ///     How far from the site a placement is still usable, which is the reach
+  ///     of the branch the caller is going to install. Nothing further away is
+  ///     offered, so an empty result means this site cannot be patched with a
+  ///     branch of that reach rather than that the search gave up early.
+  ///
+  /// \param[in] max_candidates
+  ///     How many placements to describe. Finding one takes a round trip per
+  ///     region of the address space walked over, so a caller that will only
+  ///     try a few should not ask for more.
+  std::vector<lldb::addr_t>
+  FindFCBTrampolineCandidates(lldb::addr_t bp_load_addr, size_t size,
+                              lldb::addr_t max_distance,
+                              uint32_t max_candidates);
 
   /// Allocate a trampoline for a breakpoint at \a bp_load_addr.
   ///
@@ -2419,11 +2437,19 @@ public:
   /// call and mapped by another, and a fixed mapping fails rather than moving
   /// when the page turns out to be taken.
   ///
+  /// \param[in] max_distance
+  ///     The reach of the branch the caller is going to install, see
+  ///     FindFCBTrampolineCandidates().
+  ///
   /// \return
   ///     The trampoline address, or LLDB_INVALID_ADDRESS. Being reachable from
-  ///     \a bp_load_addr is not promised and remains the caller's to check.
+  ///     \a bp_load_addr is not promised and remains the caller's to check:
+  ///     when nothing within reach can be had this still allocates somewhere,
+  ///     so that the caller can refuse for being out of reach, which says more
+  ///     than refusing to allocate at all.
   lldb::addr_t AllocateFCBTrampoline(lldb::addr_t bp_load_addr, size_t size,
-                                     uint32_t permissions, Status &error);
+                                     uint32_t permissions,
+                                     lldb::addr_t max_distance, Status &error);
 
   /// The injected site whose condition traps at \a trap_addr, if any.
   ///

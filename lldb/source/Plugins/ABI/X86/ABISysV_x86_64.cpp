@@ -201,7 +201,7 @@ llvm::Error ABISysV_x86_64::SetupFastConditionalBreakpointTrampoline(
   Status error;
   const uint32_t permissions = ePermissionsReadable | ePermissionsExecutable;
   const lldb::addr_t trampoline_addr = process_sp->AllocateFCBTrampoline(
-      jmp_addr, expected_trampoline_size, permissions, error);
+      jmp_addr, expected_trampoline_size, permissions, x86_64_jmp_reach, error);
 
   if (trampoline_addr == LLDB_INVALID_ADDRESS || error.Fail()) {
     return llvm::createStringError(llvm::formatv(

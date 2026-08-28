@@ -17,6 +17,10 @@ public:
   static constexpr const uint8_t x86_64_jmp_opcode                 = 0xE9;
   static constexpr const std::size_t x86_64_jmp_size               = 5;
 
+  /// `jmp rel32` displaces the program counter by a signed 32 bit byte count,
+  /// so every address within 2GiB of the site is in reach of the patch.
+  static constexpr const uint64_t x86_64_jmp_reach = (1ULL << 31) - 1;
+
   static constexpr const uint8_t x86_64_call_opcode                = 0xE8;
   static constexpr const std::size_t x86_64_call_size              = 5;
 

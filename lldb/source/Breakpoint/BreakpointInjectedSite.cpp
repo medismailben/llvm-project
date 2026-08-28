@@ -511,6 +511,11 @@ public:
   /// has been looked at.
   llvm::Error Analyze();
 
+  /// Which registers of the trampoline's register context the emitted code
+  /// reads. Only complete once Emit() has run, since a piece's field name is
+  /// resolved as its code is produced.
+  const llvm::StringSet<> &GetRegistersRead() const { return m_registers_read; }
+
   /// How many bytes past the end of the condition's own layout this location
   /// needs. Zero unless the variable has to be assembled or copied somewhere.
   size_t GetScratchSize() const {
@@ -762,6 +767,10 @@ private:
   /// Whether the variable is assembled from pieces rather than being in one
   /// place. Not the same as m_pieces.size() > 1, which never happens otherwise.
   bool m_is_composite = false;
+  /// Registers the emitted code reads, see GetRegistersRead(). Mutable because
+  /// producing the code is a const operation on everything else here, and the
+  /// alternative is for every caller to thread a set through.
+  mutable llvm::StringSet<> m_registers_read;
 };
 
 /// The fewest bytes an operand of this encoding can occupy.
@@ -1471,6 +1480,13 @@ DWARFLocationEmitter::RegisterField(uint64_t dwarf_regnum) const {
         "the location of variable '{0}' reads DWARF register "
         "{1}, which this target's ABI cannot name: {2}",
         m_metadata.name, dwarf_regnum, llvm::fmt_consume(name.takeError())));
+
+  // Recorded here rather than at each call site because this is the one place a
+  // register becomes part of the generated code, so nothing can read one
+  // without it being noticed. See
+  // BreakpointInjectedSite::ConditionReadsRegister().
+  m_registers_read.insert(*name);
+
   return "regs->" + *name;
 }
 
@@ -1874,6 +1890,11 @@ bool BreakpointInjectedSite::CreateArgumentsStructure() {
   for (DWARFLocationEmitter &emitter : emitters) {
     expr += emitter.Emit(scratch_offset);
     scratch_offset += emitter.GetScratchSize();
+    // Collected after emitting, since that is when a register becomes part of
+    // the generated code. A patch wide enough to need a scratch register has to
+    // stay away from these.
+    for (const auto &entry : emitter.GetRegistersRead())
+      m_condition_registers.insert(entry.getKey());
   }
 
   expr += "\n"

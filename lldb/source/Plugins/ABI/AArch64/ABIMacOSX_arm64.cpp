@@ -121,6 +121,105 @@ EncodeAArch64Branch(int64_t byte_offset,
     out[byte] = (instruction >> (8 * byte)) & 0xff;
 }
 
+/// Write one instruction word, little endian.
+static void EncodeAArch64Word(uint32_t word, uint8_t *out) {
+  for (unsigned byte = 0; byte < ABIMacOSX_arm64::aarch64_instr_size; ++byte)
+    out[byte] = (word >> (8 * byte)) & 0xff;
+}
+
+/// A register the wider patch form can get to its target through.
+struct AArch64ScratchRegister {
+  /// As the disassembler and the trampoline's register context spell it.
+  const char *name;
+  /// As the instruction encodings below take it.
+  uint32_t number;
+};
+
+/// The registers the wider patch form will consider, in the order it tries
+/// them.
+///
+/// x16 and x17 first: the procedure call standard names them IP0 and IP1 and
+/// sets them aside for exactly this, a jump that needs a register to reach
+/// where it is going. The remaining temporaries follow, so that a site where
+/// the pair the linker uses happens to be live is not refused while another is
+/// free.
+///
+/// Whichever is chosen, the register context the trampoline saves holds the
+/// trampoline's own address for it rather than what the program had there, so
+/// reading it from a frame below the trampoline reports that instead. That is
+/// the register the site proved the program no longer reads, which is why this
+/// is acceptable, and why the condition is not allowed to read it either.
+static constexpr AArch64ScratchRegister g_aarch64_scratch_registers[] = {
+    {"x16", 16}, {"x17", 17}, {"x9", 9},   {"x10", 10}, {"x11", 11},
+    {"x12", 12}, {"x13", 13}, {"x14", 14}, {"x15", 15}};
+
+/// Encode `adrp reg, page(to)` / `add reg, reg, offset(to)` / `br reg` at
+/// \a from, which is how a patch reaches a trampoline a direct branch cannot.
+///
+/// Three instructions rather than a literal load and a branch, which would be
+/// four: every extra instruction the patch displaces is another one that has to
+/// be safe to run out of line, and another place nothing in the function may
+/// branch into.
+static llvm::Error
+EncodeAArch64FarBranch(lldb::addr_t from, lldb::addr_t to, uint32_t reg,
+                       uint8_t out[ABIMacOSX_arm64::aarch64_far_patch_size]) {
+  constexpr uint32_t adrp_opcode = 0x90000000;
+  constexpr uint32_t add_imm64_opcode = 0x91000000;
+  constexpr uint32_t br_opcode = 0xd61f0000;
+  // `adrp` counts 4KiB pages whatever page size the process runs with: the
+  // immediate is defined by the instruction, not by the kernel.
+  constexpr unsigned adrp_page_shift = 12;
+  constexpr uint32_t adrp_page_mask = (1 << adrp_page_shift) - 1;
+
+  const int64_t pages = static_cast<int64_t>(to >> adrp_page_shift) -
+                        static_cast<int64_t>(from >> adrp_page_shift);
+  if (!llvm::isInt<21>(pages))
+    return llvm::createStringError(llvm::formatv(
+        "{0:x} is more than 4GiB from {1:x}, which no pc relative address on "
+        "this architecture reaches",
+        to, from));
+
+  // The immediate is split, with its two low bits at the top of the word.
+  const uint32_t imm21 = static_cast<uint32_t>(pages) & 0x1fffff;
+  EncodeAArch64Word(adrp_opcode | ((imm21 & 0x3) << 29) |
+                        (((imm21 >> 2) & 0x7ffff) << 5) | reg,
+                    out);
+  EncodeAArch64Word(add_imm64_opcode |
+                        ((static_cast<uint32_t>(to) & adrp_page_mask) << 10) |
+                        (reg << 5) | reg,
+                    out + ABIMacOSX_arm64::aarch64_instr_size);
+  EncodeAArch64Word(br_opcode | (reg << 5),
+                    out + 2 * ABIMacOSX_arm64::aarch64_instr_size);
+  return llvm::Error::success();
+}
+
+/// Encode four `movz`/`movk` building \a value in \a reg, then `br reg`, which
+/// is how the trampoline gets back to a site a direct branch cannot reach.
+///
+/// Absolute rather than pc relative, unlike the patch: the trampoline has room
+/// for the extra two instructions, and an absolute address cannot be out of
+/// range, so where the allocator happened to put the trampoline stops mattering
+/// once it is reachable from the site at all.
+static void EncodeAArch64FarBranchAbsolute(
+    lldb::addr_t value, uint32_t reg,
+    uint8_t out[ABIMacOSX_arm64::aarch64_far_branch_slots *
+                ABIMacOSX_arm64::aarch64_instr_size]) {
+  constexpr uint32_t movz64_opcode = 0xd2800000;
+  constexpr uint32_t movk64_opcode = 0xf2800000;
+  constexpr uint32_t br_opcode = 0xd61f0000;
+  constexpr unsigned field_shift = 21;
+  constexpr unsigned fields = 4;
+
+  for (unsigned field = 0; field < fields; ++field) {
+    const uint32_t opcode = field ? movk64_opcode : movz64_opcode;
+    const uint32_t imm16 = (value >> (16 * field)) & 0xffff;
+    EncodeAArch64Word(opcode | (field << field_shift) | (imm16 << 5) | reg,
+                      out + field * ABIMacOSX_arm64::aarch64_instr_size);
+  }
+  EncodeAArch64Word(br_opcode | (reg << 5),
+                    out + fields * ABIMacOSX_arm64::aarch64_instr_size);
+}
+
 /// Locate the run of \a count reserved nops at the end of the emitted
 /// trampoline.
 ///
@@ -159,17 +258,99 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   if (!process_sp)
     return llvm::createStringError("there is no live process to patch");
 
-  // A single `b` displaces exactly one instruction, which is checked against
-  // what SaveInstructions() returns below.
-  //
-  // Everything after this assumes the displaced instruction can run from a
+  Address &bp_addr = bp_injected_site->GetRealAddress();
+  const addr_t bp_load_addr = bp_addr.GetLoadAddress(target_sp.get());
+
+  // Allocate the trampoline before building it. How far it lands from the site
+  // decides which form the patch takes, and that decides how many instructions
+  // the patch displaces, which decides how much room the trampoline needs at
+  // its end. Asking the other way round means guessing at the answer and
+  // refusing when the guess turns out wrong.
+  Status error;
+  const uint32_t permission = ePermissionsReadable | ePermissionsExecutable;
+  const addr_t trampoline_addr = process_sp->AllocateFCBTrampoline(
+      bp_load_addr, aarch64_trampoline_reservation, permission,
+      aarch64_far_patch_reach, error);
+  if (!trampoline_addr || trampoline_addr == LLDB_INVALID_ADDRESS)
+    return llvm::createStringError(llvm::formatv(
+        "Couldn't allocate trampoline buffer: {0}", error.AsCString()));
+
+  if (!process_sp->NewFCBTrampolineAllocation(trampoline_addr,
+                                              aarch64_trampoline_reservation))
+    return llvm::createStringError(
+        "Allocated trampoline address already in use");
+
+  // The site owns the reservation from here on, so any failure below releases
+  // it by destroying the site.
+  bp_injected_site->SetTrampolineAllocation(trampoline_addr);
+
+  // The narrowest patch that reaches what was allocated. Measured to the far
+  // end of the reservation, because the branch back to the site is emitted near
+  // there and has to reach just as far.
+  const addr_t distance =
+      trampoline_addr > bp_load_addr
+          ? (trampoline_addr + aarch64_trampoline_reservation) - bp_load_addr
+          : bp_load_addr - trampoline_addr;
+  const bool direct = distance <= aarch64_branch_reach;
+
+  const size_t patch_size =
+      direct ? aarch64_instr_size : aarch64_far_patch_size;
+
+  // Everything after this assumes the displaced instructions can run from a
   // different address and that nothing else in the function reaches into the
   // bytes being overwritten. Refuse rather than corrupt the inferior when that
   // does not hold; the caller falls back to evaluating the condition out of
   // process.
-  llvm::Expected<PatchSiteAnalysis::PatchPlan> plan =
-      PatchSiteAnalysis::CanPatch(
-          *process_sp, bp_injected_site->GetRealAddress(), aarch64_instr_size);
+  //
+  // The wider form also needs a register to get where it is going, and whatever
+  // that register held is gone before the trampoline could save it, so it has
+  // to be one this site proves the program no longer needs. Candidates are
+  // tried in turn because a site that refuses one may well accept another, and
+  // being refused here costs the speedup this feature exists for.
+  std::optional<AArch64ScratchRegister> scratch;
+  llvm::Expected<PatchSiteAnalysis::PatchPlan> plan = [&] {
+    if (direct)
+      return PatchSiteAnalysis::CanPatch(*process_sp, bp_addr, patch_size);
+
+    llvm::Error refused = llvm::Error::success();
+    for (const AArch64ScratchRegister &candidate :
+         g_aarch64_scratch_registers) {
+      // Not just any dead register: one the condition reads out of the register
+      // context would be handed the trampoline's own address instead of the
+      // value the variable had, which is a wrong answer rather than a refusal.
+      if (bp_injected_site->ConditionReadsRegister(candidate.name))
+        continue;
+
+      llvm::Expected<PatchSiteAnalysis::PatchPlan> attempt =
+          PatchSiteAnalysis::CanPatch(*process_sp, bp_addr, patch_size,
+                                      {candidate.name});
+      if (attempt) {
+        consumeError(std::move(refused));
+        scratch = candidate;
+        return attempt;
+      }
+
+      // The first refusal is the one worth reporting: the conditions are the
+      // same for every candidate but the register, so a later one fails the
+      // same way or fails on its own register, and a list of both is longer
+      // without saying more.
+      if (!refused)
+        refused = attempt.takeError();
+      else
+        consumeError(attempt.takeError());
+    }
+
+    llvm::Error unreachable = llvm::createStringError(llvm::formatv(
+        "the nearest trampoline the site at {0:x} could get is {1} bytes away, "
+        "further than a direct branch reaches, so the patch has to get there "
+        "through a register and this site has none to spare",
+        bp_load_addr, distance));
+
+    if (refused)
+      return llvm::Expected<PatchSiteAnalysis::PatchPlan>(
+          llvm::joinErrors(std::move(unreachable), std::move(refused)));
+    return llvm::Expected<PatchSiteAnalysis::PatchPlan>(std::move(unreachable));
+  }();
   if (!plan)
     return plan.takeError();
 
@@ -186,9 +367,11 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
         bp_injected_site->GetLoadAddress(), plan->relocated_code_size));
 
   // One slot per relocated instruction, plus the branch back to the user's
-  // code.
+  // code, which takes the wider form too when the site is out of reach of a
+  // direct branch from the trampoline.
+  const size_t branch_back_slots = direct ? 1 : aarch64_far_branch_slots;
   const size_t reserved_slots =
-      plan->relocated_code_size / aarch64_instr_size + 1;
+      plan->relocated_code_size / aarch64_instr_size + branch_back_slots;
 
   std::stringstream ss;
 
@@ -292,44 +475,32 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   if (!trampoline_instr)
     return llvm::createStringError("couldn't assemble the trampoline");
 
-  Address &bp_addr = bp_injected_site->GetRealAddress();
-  addr_t bp_load_addr = bp_addr.GetLoadAddress(target_sp.get());
-  auto saved_instrs = process_sp->SaveInstructions(bp_addr);
+  auto saved_instrs = process_sp->SaveInstructions(bp_addr, patch_size);
   if (!saved_instrs) {
     return llvm::createStringError(
         "Couldn't save the instructions displaced by the branch");
   }
 
-  // Only the two nop slots reserved at the end of the trampoline are available
-  // for the displaced instruction and the branch back.
-  if (saved_instrs->GetByteSize() != aarch64_instr_size) {
+  // The slots reserved at the end of the trampoline hold exactly the relocated
+  // form of what was displaced and the branch back, so saving a different
+  // amount than the patch displaces would leave one of them wrong.
+  if (saved_instrs->GetByteSize() != plan->displaced_size) {
     return llvm::createStringError(
         llvm::formatv("Expected {0} bytes of displaced instructions, saved {1}",
-                      aarch64_instr_size, saved_instrs->GetByteSize()));
+                      plan->displaced_size, saved_instrs->GetByteSize()));
   }
 
-  /// Allocate the trampoline near the site.
-  /// We need to allocate the trampoline stub to compute the branch offset to it
-  /// and back to the user code.
-  /// TODO: We should DeAllocate the stub if we fail in the following stages.
-  size_t trampoline_size = trampoline_instr->GetByteSize();
-  uint32_t permission = ePermissionsReadable | ePermissionsExecutable;
-  Status error;
-  addr_t trampoline_addr = process_sp->AllocateFCBTrampoline(
-      bp_load_addr, trampoline_size, permission, error);
-  if (!trampoline_addr || trampoline_addr == LLDB_INVALID_ADDRESS) {
-    return llvm::createStringError("Couldn't allocate trampoline buffer");
+  // Everything from the reservation on is written into it, so a trampoline that
+  // outgrew it has to be refused rather than truncated. The reservation is a
+  // page and a trampoline is a few hundred bytes, so this is a guard on the
+  // code above changing out from under the constant, not a case to expect.
+  const size_t trampoline_size = trampoline_instr->GetByteSize();
+  if (trampoline_size > aarch64_trampoline_reservation) {
+    return llvm::createStringError(llvm::formatv(
+        "the assembled trampoline needs {0} bytes, more than the {1} reserved "
+        "for it",
+        trampoline_size, aarch64_trampoline_reservation));
   }
-
-  if (!process_sp->NewFCBTrampolineAllocation(trampoline_addr,
-                                              trampoline_size)) {
-    return llvm::createStringError(
-        "Allocated trampoline address already in use");
-  }
-
-  // The site owns the reservation from here on, so any failure below releases
-  // it by destroying the site.
-  bp_injected_site->SetTrampolineAllocation(trampoline_addr);
 
   const auto &trampoline_buffer = trampoline_instr->GetData();
 
@@ -348,69 +519,84 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   // `b <imm>` assembles the immediate as a PC-relative byte offset, so the
   // offset has to be measured from where the instruction ends up in the
   // trampoline, not from wherever the assembler happened to lay it out. The
-  // branch back occupies the second nop slot, right after the displaced
-  // instruction in the first, and resumes at the instruction following the one
-  // the patch overwrote.
+  // branch back occupies the slots after the relocated code and resumes at the
+  // instruction following the last one the patch overwrote.
   //
   // Signed throughout: every term is an unsigned type, so computing this in
   // their arithmetic and only then storing it signed relies on wraparound.
-  const int64_t source_resume_addr = static_cast<int64_t>(bp_load_addr) +
-                                     static_cast<int64_t>(aarch64_instr_size);
+  const int64_t source_resume_addr =
+      static_cast<int64_t>(bp_load_addr) + static_cast<int64_t>(patch_size);
   // The branch back sits after the whole relocated form, which is more than one
-  // instruction when the displaced instruction had to be rewritten as a
-  // sequence. Measuring from the wrong slot would land the inferior an
-  // instruction away from where it left off.
+  // instruction when a displaced instruction had to be rewritten as a sequence.
+  // Measuring from the wrong slot would land the inferior an instruction away
+  // from where it left off.
   const int64_t source_branch_addr =
       static_cast<int64_t>(trampoline_addr) +
       static_cast<int64_t>(copied_instr_offset) +
       static_cast<int64_t>(plan->relocated_code_size);
   const int64_t source_branch_target = source_resume_addr - source_branch_addr;
 
-  // `b` reaches +/-128MiB, and the trampoline is deliberately allocated far
-  // from the code it patches, so both directions have to be checked.
-  if (!IsBranchInRange(source_branch_target) ||
-      !IsBranchInRange(static_cast<int64_t>(trampoline_addr) -
-                       static_cast<int64_t>(bp_load_addr))) {
+  // `b` reaches +/-128MiB either way, so a direct patch has to be checked in
+  // both directions. The wider form was chosen precisely because nothing was
+  // free that close, so it is checked against its own reach where it is
+  // encoded, not here.
+  if (direct && (!IsBranchInRange(source_branch_target) ||
+                 !IsBranchInRange(static_cast<int64_t>(trampoline_addr) -
+                                  static_cast<int64_t>(bp_load_addr)))) {
     return llvm::createStringError(llvm::formatv(
         "the trampoline at {0:x} is out of branch range of the site at {1:x}",
         trampoline_addr, bp_load_addr));
   }
 
-  /// Put the displaced instruction in the first reserved slot, then the branch
-  /// back to the instruction after the one it came from.
+  /// Put the displaced instructions in the first reserved slots, then the
+  /// branch back to the instruction after the last one they came from.
   ///
   /// Relocate() rather than a copy: an instruction that refers to its own
   /// address, a branch for instance, means something different from the
   /// trampoline and has to be rewritten to keep referring to what it did. For
   /// anything position independent this hands back the original bytes.
-  const lldb::addr_t slot_addr = trampoline_addr + copied_instr_offset;
-  llvm::SmallVector<uint8_t, 8> relocated;
+  ///
+  /// A reference that lands inside the displaced range would have to be
+  /// redirected to wherever the copy of that instruction went, which is not
+  /// done here because nothing gets this far: CanPatch() refuses a site
+  /// anything branches into, including the displaced instructions themselves.
+  llvm::SmallVector<uint8_t, 32> relocated;
   {
-    assert(plan->displaced_instructions.size() == 1 &&
-           "a single b displaces exactly one instruction");
-    InstructionSP displaced = plan->displaced_instructions.front();
-    const lldb::addr_t referenced =
-        displaced->GetReferencedAddress(bp_load_addr)
-            .value_or(LLDB_INVALID_ADDRESS);
+    lldb::addr_t from = bp_load_addr;
+    lldb::addr_t slot_addr = trampoline_addr + copied_instr_offset;
 
-    if (llvm::Error error =
-            displaced->Relocate(bp_load_addr, slot_addr, referenced, relocated))
-      return error;
+    for (const InstructionSP &displaced : plan->displaced_instructions) {
+      llvm::SmallVector<uint8_t, 8> bytes;
+      const lldb::addr_t referenced =
+          displaced->GetReferencedAddress(from).value_or(LLDB_INVALID_ADDRESS);
+
+      if (llvm::Error error =
+              displaced->Relocate(from, slot_addr, referenced, bytes))
+        return error;
+
+      from += displaced->GetOpcode().GetByteSize();
+      slot_addr += bytes.size();
+      relocated.append(bytes.begin(), bytes.end());
+    }
 
     // Reserving and emitting have to agree, or the branch back would land
     // inside the relocated sequence or leave a nop running as code.
     if (relocated.size() != plan->relocated_code_size)
       return llvm::createStringError(llvm::formatv(
-          "relocating the instruction displaced at {0:x} produced {1} bytes "
+          "relocating the instructions displaced at {0:x} produced {1} bytes "
           "but {2} were reserved",
           bp_load_addr, relocated.size(), plan->relocated_code_size));
   }
 
   std::memcpy(&trampoline_buffer[copied_instr_offset], relocated.data(),
               relocated.size());
-  EncodeAArch64Branch(
-      source_branch_target,
-      &trampoline_buffer[copied_instr_offset + relocated.size()]);
+  uint8_t *branch_back =
+      &trampoline_buffer[copied_instr_offset + relocated.size()];
+  if (direct)
+    EncodeAArch64Branch(source_branch_target, branch_back);
+  else
+    EncodeAArch64FarBranchAbsolute(static_cast<addr_t>(source_resume_addr),
+                                   scratch->number, branch_back);
 
   // The trampoline is only registered as a module once everything below
   // succeeds, so this is the one chance to see what was built.
@@ -424,16 +610,21 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   }
 
   /// Patch inferior to branch to trampoline
-  const int64_t trampoline_branch_target =
-      static_cast<int64_t>(trampoline_addr) -
-      static_cast<int64_t>(bp_load_addr);
-
-  uint8_t trampoline_branch[aarch64_instr_size];
-  EncodeAArch64Branch(trampoline_branch_target, trampoline_branch);
+  uint8_t trampoline_branch[aarch64_far_patch_size];
+  if (direct) {
+    const int64_t trampoline_branch_target =
+        static_cast<int64_t>(trampoline_addr) -
+        static_cast<int64_t>(bp_load_addr);
+    EncodeAArch64Branch(trampoline_branch_target, trampoline_branch);
+  } else if (llvm::Error error =
+                 EncodeAArch64FarBranch(bp_load_addr, trampoline_addr,
+                                        scratch->number, trampoline_branch)) {
+    return error;
+  }
 
   written_bytes = process_sp->WriteMemory(bp_load_addr, trampoline_branch,
-                                          aarch64_instr_size, error);
-  if (written_bytes != aarch64_instr_size || error.Fail()) {
+                                          patch_size, error);
+  if (written_bytes != patch_size || error.Fail()) {
     return llvm::createStringError(
         "Couldn't patch inferior with branch to trampoline");
   }
@@ -443,7 +634,7 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   // undoes the patch.
   bp_injected_site->SetPatchedInstructions(
       bp_load_addr,
-      std::make_shared<DataBufferHeap>(trampoline_branch, aarch64_instr_size),
+      std::make_shared<DataBufferHeap>(trampoline_branch, patch_size),
       saved_instrs);
 
   // What the trampoline subtracts from sp before calling the condition checker:

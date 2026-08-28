@@ -17,6 +17,39 @@ class ABIMacOSX_arm64 : public ABIAArch64 {
 public:
   static constexpr const std::size_t aarch64_instr_size = 4;
 
+  /// `b` encodes a signed 26 bit immediate scaled by the instruction size, so
+  /// every address within 128MiB of the site is in reach of a direct patch.
+  static constexpr const uint64_t aarch64_branch_reach = 128ULL * 1024 * 1024;
+
+  /// Bytes the wider patch form occupies: `adrp`, `add`, `br`.
+  ///
+  /// Needed because a large image can have no free page within 128MiB of any of
+  /// its code: a debug build of clang leaves nothing unmapped for a quarter of
+  /// a gigabyte past its own text, and there is nothing but the rest of the
+  /// image below.
+  static constexpr const std::size_t aarch64_far_patch_size =
+      3 * aarch64_instr_size;
+
+  /// `adrp` displaces by a signed 21 bit count of 4KiB pages, so the wider form
+  /// reaches 4GiB either way. One page short of that, since what the immediate
+  /// counts is pages between the page the patch is in and the page it names.
+  static constexpr const uint64_t aarch64_far_patch_reach =
+      4ULL * 1024 * 1024 * 1024 - 4096;
+
+  /// Instructions the branch back to the patched code takes when the site is
+  /// out of a direct branch's reach: four to build its address, then `br`.
+  static constexpr const std::size_t aarch64_far_branch_slots = 5;
+
+  /// What is set aside for a trampoline before it has been assembled.
+  ///
+  /// It has to be allocated before it can be built: how far it lands from the
+  /// site decides which form the patch takes, and that decides how many
+  /// instructions the patch displaces, which decides what the trampoline has to
+  /// hold. A page is the smallest thing the allocator hands out anyway, and a
+  /// trampoline that somehow does not fit in one is refused rather than
+  /// truncated.
+  static constexpr const std::size_t aarch64_trampoline_reservation = 4096;
+
   /// Stack the trampoline reserves for the `register_context` struct below. The
   /// generated prologue subtracts this from sp, so the unwind plan has to agree
   /// with it.

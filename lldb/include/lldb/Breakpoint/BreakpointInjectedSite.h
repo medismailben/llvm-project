@@ -25,6 +25,7 @@
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 
+#include "llvm/ADT/StringSet.h"
 #include "llvm/DebugInfo/DWARF/LowLevel/DWARFExpression.h"
 
 #include <numeric>
@@ -158,6 +159,23 @@ public:
 
   size_t GetArgsStructSize() const { return m_args_struct_size; }
 
+  /// Whether the code that assembles this site's argument structure reads
+  /// \a reg_name out of the register context the trampoline saves.
+  ///
+  /// A patch wide enough to reach a far trampoline gets there through a
+  /// register, and whatever that register held is gone before the trampoline
+  /// can save it. Proving the program no longer needs it is not enough: a
+  /// variable can still be described as living there past its last use, and the
+  /// condition would then be handed the trampoline's own address in place of
+  /// the value the variable had. That is a wrong answer rather than a refusal,
+  /// so a register this reports is not available as scratch.
+  ///
+  /// Names are spelled as the ABI's register context spells them, which is what
+  /// the generated code reads.
+  bool ConditionReadsRegister(llvm::StringRef reg_name) const {
+    return m_condition_registers.contains(reg_name);
+  }
+
   /// Hand over the patch: where it was written, the bytes the branch to the
   /// trampoline is made of, and the bytes it overwrote.
   ///
@@ -272,6 +290,9 @@ private:
   std::vector<VariableMetadata> m_metadatas;
   /// The size of the JIT-ed argument structure.
   size_t m_args_struct_size;
+  /// Registers of the trampoline's register context that the argument structure
+  /// builder reads, see ConditionReadsRegister().
+  llvm::StringSet<> m_condition_registers;
   /// The instructions the branch to the trampoline overwrote, kept so the patch
   /// can be undone. Empty until the ABI has actually patched the site.
   lldb::WritableDataBufferSP m_displaced_instructions_sp;
