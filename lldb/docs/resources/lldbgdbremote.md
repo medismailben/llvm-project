@@ -1539,8 +1539,11 @@ tuples to return are:
                           the start address of the range that contains `<addr>`
 * `size:<size>;` - `<size>` is a big endian hex byte size of the address
                    of the range that contains `<addr>`
-* `permissions:<permissions>;` - `<permissions>` is a string that contains one
-                                 or more of the characters from `rwx`
+* `permissions:<permissions>;` - `<permissions>` is a string that contains zero
+                                 or more of the characters from `rwx`. Present
+                                 on any range a mapping covers, empty when that
+                                 mapping grants nothing; absent when nothing is
+                                 mapped over the range at all
 * `name:<name>;` - `<name>` is a hex encoded string that contains the name of
                    the memory region mapped at the given address. In case of
                    regions backed by a file it have to be the absolute path of
@@ -1580,14 +1583,21 @@ For instance, with a macOS process which has nothing mapped in the first
   start:2;size:fffffffe;
 ```
 
-The lack of `permissions:` indicates that none of read/write/execute are valid
-for this region.
+The lack of `permissions:` indicates that nothing is mapped over this range,
+so it is available for something to be mapped into.
 
-The stub must include `permissions:` key-value on all memory ranges
-that are valid to access in the inferior process -- the lack of
-`permissions:` means that this is an inaccessible (no page table
-entries exist, in a system using VM) memory range.  If a stub cannot
-determine actual permissions, return `rwx`.
+The stub must include a `permissions:` key-value on every range a mapping
+covers, including one that grants nothing, where the value is empty:
+```
+  qMemoryRegionInfo:1000
+  start:1000;size:4000;permissions:;
+```
+
+A guard page and a reserved range like Mach-O's `__PAGEZERO` look like that.
+Distinguishing them from a gap matters to anything looking for room to map
+something of its own: a fixed mapping over a range that grants nothing fails
+just as it does over a range that grants everything. If a stub cannot determine
+actual permissions, return `rwx`.
 
 **Priority To Implement:** Medium
 

@@ -1795,8 +1795,10 @@ Status GDBRemoteCommunicationClient::GetMemoryRegionInfo(
         region_info.SetPageSize(m_target_vm_page_size);
 
       if (region_info.GetRange().IsValid()) {
-        // We got a valid address range back but no permissions -- which means
-        // this is an unmapped page
+        // We got a valid address range back but no permissions key at all,
+        // which means nothing is mapped over it. A mapping that grants nothing
+        // sends the key with an empty value and is handled above, so the two
+        // are not confused: only one of them has room for something else.
         if (!saw_permissions) {
           region_info.SetReadable(eLazyBoolNo);
           region_info.SetWritable(eLazyBoolNo);

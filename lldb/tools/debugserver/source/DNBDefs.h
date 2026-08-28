@@ -358,10 +358,19 @@ struct DNBExecutableImageInfo {
 struct DNBRegionInfo {
 public:
   DNBRegionInfo()
-      : addr(0), size(0), permissions(0), flags(), dirty_pages(), vm_types() {}
+      : addr(0), size(0), permissions(0), mapped(false), flags(), dirty_pages(),
+        vm_types() {}
   nub_addr_t addr;
   nub_addr_t size;
   uint32_t permissions;
+  /// Whether a mapping covers this range, as opposed to the range being the gap
+  /// between two of them.
+  ///
+  /// Not the same as having any permissions: a range can be mapped and grant
+  /// nothing, which is how a guard page and the reserved page zero look. Those
+  /// are not available to map something else into, so a client that cannot tell
+  /// them from a gap will keep asking for them and keep being refused.
+  bool mapped;
   std::vector<std::string> flags;
   std::vector<nub_addr_t> dirty_pages;
   std::vector<std::string> vm_types;

@@ -4593,7 +4593,12 @@ rnb_err_t RNBRemote::HandlePacket_MemoryRegionInfo(const char *p) {
         start:3a50000,size:100000,permissions:rwx
 
         qMemoryRegionInfo:0
-        error:address in unmapped region
+        start:0,size:100000000,permissions:;dirty-pages:;
+
+     A mapping that grants nothing, such as a guard page or the reserved page
+     zero above, still reports a permissions key, with nothing in it. A range
+     with no key at all is the gap between two mappings, which is the only
+     answer that means something could be mapped there.
 
         qMemoryRegionInfo:3a551140   (on a different platform)
         error:region lookup cannot be performed
@@ -4627,7 +4632,12 @@ rnb_err_t RNBRemote::HandlePacket_MemoryRegionInfo(const char *p) {
   if (region_info.size > 0)
     ostrm << "size:" << std::hex << region_info.size << ';';
 
-  if (region_info.permissions) {
+  // Keyed on being mapped rather than on granting anything, so that a mapping
+  // that grants nothing is still reported as a mapping. A guard page and the
+  // reserved page zero look like that, and a client told they were gaps will
+  // keep trying to map something into them. The client reads a present
+  // permissions key, empty or not, as "a mapping covers this".
+  if (region_info.mapped) {
     ostrm << "permissions:";
 
     if (region_info.permissions & eMemoryPermissionsReadable)

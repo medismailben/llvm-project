@@ -124,6 +124,7 @@ nub_bool_t MachVMMemory::GetMemoryRegionInfo(task_t task, nub_addr_t address,
     region_info->addr = vmRegion.StartAddress();
     region_info->size = vmRegion.GetByteSize();
     region_info->permissions = vmRegion.GetDNBPermissions();
+    region_info->mapped = true;
     region_info->flags = vmRegion.GetFlags();
     region_info->dirty_pages =
         get_dirty_pages(task, vmRegion.StartAddress(), vmRegion.GetByteSize());
@@ -131,6 +132,7 @@ nub_bool_t MachVMMemory::GetMemoryRegionInfo(task_t task, nub_addr_t address,
   } else {
     region_info->addr = address;
     region_info->size = 0;
+    region_info->mapped = false;
     if (vmRegion.GetError().Success()) {
       // vmRegion.GetRegionForAddress() return false, indicating that "address"
       // wasn't in a valid region, but the "vmRegion" info was successfully
