@@ -397,8 +397,20 @@ class FastConditionalBreakpointPatchTestCase(TestBase):
         if os.path.exists(marker):
             os.unlink(marker)
 
-        process = target.LaunchSimple(
-            [marker], None, self.get_process_working_directory())
+        # Anything this test launches has to keep running after the debugger
+        # lets go of it, so its output cannot go to a pty the debugger owns:
+        # nothing drains that once detached, and the inferior blocks in write()
+        # partway through the loop with no way to tell that apart from dying on
+        # a patch that was left behind.
+        stdio = self.getBuildArtifact("detached-stdio.txt")
+        info = lldb.SBLaunchInfo([marker])
+        info.SetWorkingDirectory(self.get_process_working_directory())
+        info.AddOpenFileAction(1, stdio, False, True)
+        info.AddOpenFileAction(2, stdio, False, True)
+
+        error = lldb.SBError()
+        process = target.Launch(info, error)
+        self.assertSuccess(error, "launching")
         self.assertTrue(process, PROCESS_IS_VALID)
         self.assertState(process.GetState(), lldb.eStateStopped)
 
