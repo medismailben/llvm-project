@@ -245,6 +245,14 @@ public:
 
   const BreakpointOptions &GetBreakpointOptions() { return m_bp_opts; }
 
+  /// Whether injection was asked for on this command line.
+  ///
+  /// Distinct from the option being set in the options above: copying options
+  /// over an existing breakpoint records the request, but only rebuilding its
+  /// site carries it out, and only a caller that knows a request was made knows
+  /// to do that.
+  bool GetInjectConditionAsked() const { return m_inject_condition; }
+
   std::vector<std::string> m_commands;
   BreakpointOptions m_bp_opts;
   bool m_inject_condition = false;
@@ -2106,15 +2114,28 @@ protected:
         if (cur_bp_id.GetBreakpointID() != LLDB_INVALID_BREAK_ID) {
           Breakpoint *bp =
               target->GetBreakpointByID(cur_bp_id.GetBreakpointID()).get();
+          // Whether a condition is injected is settled when the site is built,
+          // so copying the option over a location that has already resolved
+          // leaves the site as it was. Nothing else here needs the site
+          // rebuilt, which is why this is not part of copying the options.
+          const bool injection_requested = m_bp_opts.GetInjectConditionAsked();
           if (cur_bp_id.GetLocationID() != LLDB_INVALID_BREAK_ID) {
             BreakpointLocation *location =
                 bp->FindLocationByID(cur_bp_id.GetLocationID()).get();
-            if (location)
+            if (location) {
               location->GetLocationOptions().CopyOverSetOptions(
                   m_bp_opts.GetBreakpointOptions());
+              if (injection_requested)
+                location->RebuildSiteIfInjectionChanged();
+            }
           } else {
             bp->GetOptions().CopyOverSetOptions(
                 m_bp_opts.GetBreakpointOptions());
+            if (injection_requested)
+              for (size_t idx = 0; idx < bp->GetNumLocations(); ++idx)
+                if (BreakpointLocationSP location_sp =
+                        bp->GetLocationAtIndex(idx))
+                  location_sp->RebuildSiteIfInjectionChanged();
           }
         }
       }

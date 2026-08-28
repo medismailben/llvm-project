@@ -174,6 +174,16 @@ public:
   /// process.
   void SetInjectCondition(bool inject_condition);
 
+  /// Take the site down and build it again when the kind installed disagrees
+  /// with what GetInjectCondition() now asks for.
+  ///
+  /// Whether a condition is injected is decided when the site is built, so
+  /// anything that changes the answer after a location has resolved, which is
+  /// every location on a running process, has to say so here. Otherwise the
+  /// option reads as set while the condition is still being evaluated by the
+  /// debugger.
+  void RebuildSiteIfInjectionChanged();
+
   bool ConditionSaysStop(ExecutionContext &exe_ctx, Status &error);
 
   /// Set the valid thread to be checked when the breakpoint is hit.
