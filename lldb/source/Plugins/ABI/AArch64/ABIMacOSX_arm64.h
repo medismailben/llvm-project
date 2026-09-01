@@ -195,6 +195,9 @@ public:
   llvm::Error ReserveFastConditionalBreakpointTrampoline(
       lldb_private::BreakpointInjectedSite *bp_inject_site) override;
 
+  llvm::Error EncodeBranchTo(lldb::addr_t from, lldb::addr_t to,
+                             llvm::SmallVectorImpl<uint8_t> &code) override;
+
   bool RegisterIsPureTemporary(llvm::StringRef reg_name) override;
 
   size_t GetJumpSize() override { return aarch64_instr_size; };

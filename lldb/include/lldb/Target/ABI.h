@@ -223,6 +223,21 @@ public:
         "the {0} ABI does not implement injected conditions", GetPluginName()));
   }
 
+  /// Encode an unconditional branch from \a from to \a to.
+  ///
+  /// The bytes only, with nothing saved or restored: a caller replacing a whole
+  /// function does not need the displaced instructions to run, so it needs no
+  /// trampoline, unlike SetupFastConditionalBreakpointTrampoline().
+  ///
+  /// \return
+  ///     Success, or the reason \a to cannot be reached from \a from, which for
+  ///     a direct branch is a matter of how far apart they are.
+  virtual llvm::Error EncodeBranchTo(lldb::addr_t from, lldb::addr_t to,
+                                     llvm::SmallVectorImpl<uint8_t> &code) {
+    return llvm::createStringError(llvm::formatv(
+        "the {0} ABI does not know how to encode a branch", GetPluginName()));
+  }
+
   /// Set aside the memory a trampoline for \a bp_inject_site will need, before
   /// anything else is allocated in the inferior on its behalf.
   ///

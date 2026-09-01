@@ -10,6 +10,7 @@
 #include "lldb/DataFormatters/DataVisualization.h"
 #include "lldb/DataFormatters/ValueObjectPrinter.h"
 #include "lldb/Host/Config.h"
+#include "lldb/Host/FileSystem.h"
 #include "lldb/Host/OptionParser.h"
 #include "lldb/Interpreter/CommandInterpreter.h"
 #include "lldb/Interpreter/CommandOptionArgumentTable.h"
@@ -20,9 +21,12 @@
 #include "lldb/Interpreter/OptionGroupVariable.h"
 #include "lldb/Interpreter/Options.h"
 #include "lldb/Symbol/Function.h"
+#include "lldb/Symbol/LineTable.h"
 #include "lldb/Symbol/SymbolContext.h"
 #include "lldb/Symbol/Variable.h"
 #include "lldb/Symbol/VariableList.h"
+#include "lldb/Target/ABI.h"
+#include "lldb/Target/Process.h"
 #include "lldb/Target/StackFrame.h"
 #include "lldb/Target/StackFrameRecognizer.h"
 #include "lldb/Target/StopInfo.h"
@@ -1357,6 +1361,222 @@ public:
   ~CommandObjectFrameRecognizer() override = default;
 };
 
+#pragma mark CommandObjectFrameDeoptimize
+
+/// Replace the selected frame's function with a clone of it compiled at -O0.
+///
+/// The optimiser throws variables away, and the debug info then has nowhere to
+/// point. Rather than try to recover them, recompile the function from its own
+/// source with no optimisation, where every local lives in a stack slot, and
+/// point the original's entry at the clone so the next call runs it instead.
+///
+/// The current activation cannot be replaced: its registers and stack slots are
+/// laid out the way the optimiser chose, and there is no general mapping from
+/// that onto the clone's frame. So this takes effect on the next call, which
+/// for anything called more than once composes with an injected condition to
+/// arrive back at the same place immediately.
+///
+/// Incomplete: the clone runs and computes correctly, but nothing in the target
+/// covers its address, so a frame in it has no name, no source and no readable
+/// locals, which is the whole point of the command. The debug info exists,
+/// since the expression is compiled with SetGenerateDebugInfo(true) and
+/// ClangUserExpression::Parse appends the JIT module to the target's images
+/// when that is set. What has not been established is why nothing covers the
+/// address afterwards for a top level expression.
+class CommandObjectFrameDeoptimize : public CommandObjectParsed {
+public:
+  CommandObjectFrameDeoptimize(CommandInterpreter &interpreter)
+      : CommandObjectParsed(
+            interpreter, "frame deoptimize",
+            "Recompile the selected frame's function without optimisation and "
+            "redirect its entry to the result, so that its variables become "
+            "readable on the next call.",
+            "frame deoptimize",
+            eCommandRequiresFrame | eCommandRequiresProcess |
+                eCommandProcessMustBeLaunched | eCommandProcessMustBePaused) {}
+
+  ~CommandObjectFrameDeoptimize() override = default;
+
+protected:
+  /// The text of \a function, from its declaration to its closing brace.
+  ///
+  /// DWARF records where a function starts but not where it ends, so the extent
+  /// comes from the line table over its address range, widened to the enclosing
+  /// braces. Approximate by construction: a macro or a nested definition can
+  /// defeat it, which is why the result is shown to the user rather than used
+  /// silently.
+  static llvm::Expected<std::string> ExtractSource(Function &function,
+                                                   Target &target) {
+    CompileUnit *cu = function.GetCompileUnit();
+    if (!cu)
+      return llvm::createStringError("no compile unit describes this function");
+
+    LineTable *line_table = cu->GetLineTable();
+    if (!line_table)
+      return llvm::createStringError(
+          "no line table, so the function's extent in the source is unknown");
+
+    // Every range, since a function's code need not be contiguous.
+    const AddressRanges ranges = function.GetAddressRanges();
+    uint32_t lowest = UINT32_MAX, highest = 0;
+    for (uint32_t i = 0, n = line_table->GetSize(); i < n; ++i) {
+      LineEntry entry;
+      if (!line_table->GetLineEntryAtIndex(i, entry) || !entry.line)
+        continue;
+      const bool inside = llvm::any_of(ranges, [&](const AddressRange &range) {
+        return range.ContainsFileAddress(entry.range.GetBaseAddress());
+      });
+      if (!inside)
+        continue;
+      lowest = std::min(lowest, entry.line);
+      highest = std::max(highest, entry.line);
+    }
+    if (lowest == UINT32_MAX)
+      return llvm::createStringError(
+          "the line table says nothing about this function's address range");
+
+    FileSpec source = cu->GetPrimaryFile();
+    auto buffer = FileSystem::Instance().CreateDataBuffer(source);
+    if (!buffer)
+      return llvm::createStringError(
+          llvm::formatv("couldn't read {0}", source.GetPath()));
+
+    llvm::SmallVector<llvm::StringRef, 256> lines;
+    llvm::StringRef(reinterpret_cast<const char *>(buffer->GetBytes()),
+                    buffer->GetByteSize())
+        .split(lines, '\n');
+
+    // Back up to the signature, which the line table does not point at, and
+    // forward to the closing brace, which it points at or before.
+    llvm::StringRef name = function.GetNameNoArguments().GetStringRef();
+    size_t first = lowest ? lowest - 1 : 0;
+    while (first > 0 && !lines[first].contains(name))
+      --first;
+    size_t last = std::min<size_t>(highest, lines.size());
+    while (last < lines.size() && lines[last - 1].trim() != "}")
+      ++last;
+    if (first >= last)
+      return llvm::createStringError(
+          "couldn't find the function's text in its source file");
+
+    std::string text;
+    for (size_t i = first; i < last; ++i)
+      text += (lines[i] + "\n").str();
+    return text;
+  }
+
+  void DoExecute(Args &command, CommandReturnObject &result) override {
+    StackFrame *frame = m_exe_ctx.GetFramePtr();
+    Function *function =
+        frame->GetSymbolContext(eSymbolContextFunction).function;
+    if (!function) {
+      result.AppendError("no function covers the selected frame, so there is "
+                         "no source to recompile");
+      return;
+    }
+
+    Target &target = m_exe_ctx.GetTargetRef();
+    ProcessSP process_sp = m_exe_ctx.GetProcessSP();
+    ABISP abi_sp = process_sp->GetABI();
+    if (!abi_sp) {
+      result.AppendError("this target has no ABI, so the entry cannot be "
+                         "redirected");
+      return;
+    }
+
+    llvm::Expected<std::string> source = ExtractSource(*function, target);
+    if (!source) {
+      result.AppendError(llvm::toString(source.takeError()));
+      return;
+    }
+
+    // Renamed, because the clone lives alongside the original rather than
+    // replacing its symbol, and two definitions of one name would collide.
+    llvm::StringRef name = function->GetNameNoArguments().GetStringRef();
+    const std::string clone_name = ("$__lldb_deopt_" + name).str();
+    std::string clone_source = *source;
+    const size_t at = clone_source.find(name.str());
+    if (at == std::string::npos) {
+      result.AppendError("the extracted text does not name the function, so it "
+                         "cannot be renamed for the clone");
+      return;
+    }
+    clone_source.replace(at, name.size(), clone_name);
+
+    EvaluateExpressionOptions options;
+    options.SetExecutionPolicy(eExecutionPolicyTopLevel);
+    options.SetGenerateDebugInfo(true);
+    // The clone outlives the command, so its code and the debug info describing
+    // it both have to survive the expression that produced them. Without this
+    // the clone still runs, since the entry branches to it, but its frame does
+    // not symbolicate and the locals it exists to expose read as nothing.
+    options.SetKeepInMemory(true);
+    options.SetUnwindOnError(true);
+    options.SetIgnoreBreakpoints(true);
+
+    ValueObjectSP unused;
+    if (target.EvaluateExpression(clone_source, frame, unused, options) !=
+        eExpressionCompleted) {
+      result.AppendError("couldn't compile the function without optimisation");
+      // Shown because extracting a function's text from the line table is
+      // approximate, so the likeliest reason to be here is that what came out
+      // is not what the user would call the function.
+      result.AppendMessageWithFormatv("as extracted:\n{0}",
+                                      llvm::StringRef(*source).rtrim());
+      return;
+    }
+
+    // Asked for as a pointer rather than looked up by name: a function compiled
+    // by the expression parser is not in the target's symbol tables.
+    ValueObjectSP clone_sp;
+    if (target.EvaluateExpression(("(void *)" + clone_name).c_str(), frame,
+                                  clone_sp) != eExpressionCompleted ||
+        !clone_sp) {
+      result.AppendError(
+          "compiled the clone but couldn't find where it landed");
+      return;
+    }
+    const addr_t clone = clone_sp->GetValueAsUnsigned(LLDB_INVALID_ADDRESS);
+    const addr_t entry = function->GetAddress().GetCallableLoadAddress(&target);
+    if (clone == LLDB_INVALID_ADDRESS || entry == LLDB_INVALID_ADDRESS) {
+      result.AppendError("couldn't resolve both the function's entry and its "
+                         "clone to addresses");
+      return;
+    }
+
+    llvm::SmallVector<uint8_t, 8> branch;
+    if (llvm::Error error = abi_sp->EncodeBranchTo(entry, clone, branch)) {
+      result.AppendError(llvm::toString(std::move(error)));
+      return;
+    }
+
+    Status error;
+    if (process_sp->WriteMemory(entry, branch.data(), branch.size(), error) !=
+            branch.size() ||
+        error.Fail()) {
+      result.AppendErrorWithFormatv(
+          "couldn't redirect the entry at {0:x}: {1}", entry,
+          llvm::StringRef(error.AsCString("unknown error")).rtrim("\n."));
+      return;
+    }
+
+    result.AppendMessageWithFormatv(
+        "'{0}' now runs a clone compiled without optimisation, at {1:x}", name,
+        clone);
+    result.AppendNote(
+        "the current call is unaffected, since its frame was laid out by the "
+        "optimiser and cannot be replaced; the next call runs the clone");
+    // Said out loud because the point of the command is the variables, and this
+    // is the one part of it that does not work yet: nothing in the target
+    // covers the clone's address, so a frame in it has nothing to symbolicate
+    // against.
+    result.AppendWarning(
+        "the clone's frame does not symbolicate yet, so stopping in it reports "
+        "a bare address and its locals do not read");
+    result.SetStatus(eReturnStatusSuccessFinishResult);
+  }
+};
+
 #pragma mark CommandObjectMultiwordFrame
 
 // CommandObjectMultiwordFrame
@@ -1368,6 +1588,8 @@ CommandObjectMultiwordFrame::CommandObjectMultiwordFrame(
                              "examining the current "
                              "thread's stack frames.",
                              "frame <subcommand> [<subcommand-options>]") {
+  LoadSubCommand("deoptimize", CommandObjectSP(new CommandObjectFrameDeoptimize(
+                                   interpreter)));
   LoadSubCommand("diagnose",
                  CommandObjectSP(new CommandObjectFrameDiagnose(interpreter)));
   LoadSubCommand("info",

@@ -232,6 +232,21 @@ static lldb::offset_t FindTrampolineNopSlots(llvm::ArrayRef<uint8_t> buffer,
   return LLDB_INVALID_OFFSET;
 }
 
+llvm::Error
+ABIMacOSX_arm64::EncodeBranchTo(lldb::addr_t from, lldb::addr_t to,
+                                llvm::SmallVectorImpl<uint8_t> &code) {
+  const int64_t offset = static_cast<int64_t>(to) - static_cast<int64_t>(from);
+  if (!IsBranchInRange(offset))
+    return llvm::createStringError(llvm::formatv(
+        "{0:x} is {1} bytes from {2:x}, which a direct branch cannot reach", to,
+        offset, from));
+
+  uint8_t branch[aarch64_instr_size];
+  EncodeBranch(offset, branch);
+  code.append(branch, branch + aarch64_instr_size);
+  return llvm::Error::success();
+}
+
 llvm::Error ABIMacOSX_arm64::ReserveFastConditionalBreakpointTrampoline(
     BreakpointInjectedSite *bp_injected_site) {
   TargetSP target_sp = bp_injected_site->GetTargetSP();
