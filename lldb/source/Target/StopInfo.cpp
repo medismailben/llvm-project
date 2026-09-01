@@ -148,6 +148,16 @@ public:
 
   ~StopInfoBreakpoint() override = default;
 
+  /// Whether what trapped was an injected condition's own trap, rather than a
+  /// trap lldb wrote at a breakpoint site.
+  ///
+  /// That is the only thing that proves the condition was already evaluated, in
+  /// the inferior, and came out true. Neither the location's option nor the
+  /// kind of site installed by now can stand in for it: the option records what
+  /// was asked for, and the site can be built, taken down and built again while
+  /// a stop is being processed.
+  virtual bool WasInjectedTrap() const { return false; }
+
   void StoreBPInfo() {
     ThreadSP thread_sp(m_thread_wp.lock());
     if (thread_sp) {
@@ -556,8 +566,8 @@ protected:
               actually_hit_any_locations = true;
             else {
               Status condition_error;
-              bool condition_says_stop =
-                  bp_loc_sp->ConditionSaysStop(exe_ctx, condition_error);
+              bool condition_says_stop = bp_loc_sp->ConditionSaysStop(
+                  exe_ctx, WasInjectedTrap(), condition_error);
 
               if (!condition_error.Success()) {
                 // If the condition fails to evaluate, we are going to stop 
@@ -773,6 +783,8 @@ public:
 
   ~StopInfoInjectedBreakpoint() override = default;
 
+  bool WasInjectedTrap() const override { return true; }
+
   void WillResume(lldb::StateType resume_state) override {
     if (resume_state == eStateSuspended)
       return;
@@ -782,14 +794,40 @@ public:
       return;
 
     RegisterContextSP reg_ctx_sp(thread_sp->GetRegisterContext());
-    if (!reg_ctx_sp || !m_trap_size)
+    if (!reg_ctx_sp)
       return;
+
+    Log *log = GetLog(LLDBLog::Breakpoints);
+    const lldb::addr_t pc = reg_ctx_sp->GetPC();
+
+    // The trap is a permanent instruction in JIT-ed code: there is nothing to
+    // lift and put back, so stepping over it means moving the pc across it. A
+    // thread left sitting on it executes it again and stops again, forever, so
+    // say why whenever that is about to happen.
+    if (!m_trap_size) {
+      LLDB_LOG(
+          log,
+          "FCB: the site of the injected trap at {0:x} reports no size, so "
+          "the pc at {1:x} cannot be moved across it",
+          m_trap_addr, pc);
+      return;
+    }
 
     // Only when the thread is still sitting on the trap. Anything that moved the
     // pc in the meantime, a jump or a register write, meant to go where it
     // points.
-    if (reg_ctx_sp->GetPC() == m_trap_addr)
-      reg_ctx_sp->SetPC(m_trap_addr + m_trap_size);
+    if (pc != m_trap_addr) {
+      LLDB_LOG(log,
+               "FCB: not stepping over the injected trap at {0:x}, the pc has "
+               "moved to {1:x}",
+               m_trap_addr, pc);
+      return;
+    }
+
+    LLDB_LOG(log,
+             "FCB: stepping the pc across the injected trap at {0:x} to {1:x}",
+             m_trap_addr, m_trap_addr + m_trap_size);
+    reg_ctx_sp->SetPC(m_trap_addr + m_trap_size);
   }
 
 private:

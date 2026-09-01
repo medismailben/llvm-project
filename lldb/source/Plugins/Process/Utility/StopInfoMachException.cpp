@@ -783,6 +783,13 @@ StopInfoSP StopInfoMachException::CreateStopReasonWithMachException(
         if (bp_site_sp)
           injected_trap_addr = trap_addr;
       }
+
+      LLDB_LOG(GetLog(LLDBLog::Breakpoints),
+               "FCB: breakpoint stop, pc {0:x}, exception address {1:x}, site "
+               "{2:x} size {3}, injected trap {4:x}",
+               pc, address ? *address : LLDB_INVALID_ADDRESS,
+               bp_site_sp ? bp_site_sp->GetLoadAddress() : LLDB_INVALID_ADDRESS,
+               bp_site_sp ? bp_site_sp->GetByteSize() : 0, injected_trap_addr);
       if (bp_site_sp &&
           process_sp->IsBreakpointSitePhysicallyEnabled(*bp_site_sp)) {
         // We've hit this breakpoint, whether it was intended for this thread
@@ -800,10 +807,21 @@ StopInfoSP StopInfoMachException::CreateStopReasonWithMachException(
           // is a permanent instruction in JIT-ed code, so there is nothing to
           // lift and put back, and the step-over-breakpoint machinery looks for
           // a site at the pc, where an injected site is not registered.
-          if (injected_trap_addr != LLDB_INVALID_ADDRESS)
+          if (injected_trap_addr != LLDB_INVALID_ADDRESS) {
+            LLDB_LOG(GetLog(LLDBLog::Breakpoints),
+                     "FCB: stop on the injected trap at {0:x} of the site at "
+                     "{1:x}, which reports a size of {2}",
+                     injected_trap_addr, bp_site_sp->GetLoadAddress(),
+                     bp_site_sp->GetByteSize());
             return StopInfo::CreateStopReasonWithInjectedBreakpointSiteID(
                 thread, bp_site_sp->GetID(), injected_trap_addr,
                 bp_site_sp->GetByteSize());
+          }
+
+          LLDB_LOG(GetLog(LLDBLog::Breakpoints),
+                   "FCB: stop matched to the site at {0:x} by address, so the "
+                   "trap is one lldb installed rather than an injected one",
+                   bp_site_sp->GetLoadAddress());
 
           return StopInfo::CreateStopReasonWithBreakpointSiteID(
               thread, bp_site_sp->GetID());

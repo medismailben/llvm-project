@@ -184,7 +184,16 @@ public:
   /// debugger.
   void RebuildSiteIfInjectionChanged();
 
-  bool ConditionSaysStop(ExecutionContext &exe_ctx, Status &error);
+  /// Whether this location's condition allows the stop.
+  ///
+  /// \param[in] trapped_in_inferior
+  ///     Whether what brought the thread here was an injected condition's own
+  ///     trap. That trap only executes when the condition came out true, so
+  ///     evaluating it again here would cost the round trip this feature exists
+  ///     to avoid and could disagree with the answer the inferior reached,
+  ///     since by now the variables it read may have moved on.
+  bool ConditionSaysStop(ExecutionContext &exe_ctx, bool trapped_in_inferior,
+                         Status &error);
 
   /// Set the valid thread to be checked when the breakpoint is hit.
   ///

@@ -255,6 +255,7 @@ void BreakpointLocation::RebuildSiteIfInjectionChanged() {
 }
 
 bool BreakpointLocation::ConditionSaysStop(ExecutionContext &exe_ctx,
+                                           bool trapped_in_inferior,
                                            Status &error) {
   Log *log = GetLog(LLDBLog::Breakpoints);
 
@@ -270,14 +271,22 @@ bool BreakpointLocation::ConditionSaysStop(ExecutionContext &exe_ctx,
   // An injected condition has already been evaluated, in the inferior, and the
   // only reason control got here is that it came out true and trapped.
   // Evaluating it again out of process would cost the round trip this feature
-  // exists to avoid, and could disagree with the answer the inferior reached: by
-  // now the variables it read may have moved on.
+  // exists to avoid, and could disagree with the answer the inferior reached:
+  // by now the variables it read may have moved on.
+  //
+  // Keyed on the trap that fired, which is the only thing that proves the
+  // inferior did the work. Neither the option nor the site can stand in for it:
+  // the option records what was asked for, and a location can have an injected
+  // site by the time this runs while what trapped was the plain one that site
+  // replaced, since resolving a breakpoint can take a site down and build it
+  // again in the middle of processing a stop. Trusting either of those turns a
+  // conditional breakpoint into an unconditional one.
   //
   // FIXME: A site with several locations folds all their conditions into one
   // expression, so the trap says that some condition was true rather than which
-  // one, and every location at the site reports a hit. Stopping too often is the
-  // safe direction, but it is still wrong.
-  if (GetInjectCondition())
+  // one, and every location at the site reports a hit. Stopping too often is
+  // the safe direction, but it is still wrong.
+  if (trapped_in_inferior)
     return true;
 
   error.Clear();
