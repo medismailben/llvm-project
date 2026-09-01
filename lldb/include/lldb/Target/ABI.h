@@ -223,6 +223,26 @@ public:
         "the {0} ABI does not implement injected conditions", GetPluginName()));
   }
 
+  /// Set aside the memory a trampoline for \a bp_inject_site will need, before
+  /// anything else is allocated in the inferior on its behalf.
+  ///
+  /// The trampoline and the JIT-ed condition both land in inferior memory, and
+  /// the JIT asks for pages without caring where they are, so whichever is
+  /// allocated first takes the holes nearest the site. The trampoline is the
+  /// one that has to be near: the patch branches to it, and an instruction
+  /// displaced into it may be pc relative with a much shorter reach than the
+  /// patch's branch, so a nearer trampoline is one more of those can be
+  /// re-encoded rather than refused.
+  ///
+  /// Reserving is separate from building because the two happen either side of
+  /// compiling the condition. An ABI that does not care may leave this alone;
+  /// SetupFastConditionalBreakpointTrampoline() is then responsible for its own
+  /// allocation.
+  virtual llvm::Error
+  ReserveFastConditionalBreakpointTrampoline(BreakpointInjectedSite *) {
+    return llvm::Error::success();
+  }
+
   /// Log the disassembly of a freshly built trampoline.
   ///
   /// The trampoline is only registered as a module once it is installed, so

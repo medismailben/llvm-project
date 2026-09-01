@@ -214,6 +214,10 @@ public:
     m_trampoline_addr = address;
   }
 
+  /// Where this site's trampoline was reserved, or LLDB_INVALID_ADDRESS when
+  /// nothing has been reserved for it yet.
+  lldb::addr_t GetTrampolineAllocation() const { return m_trampoline_addr; }
+
   /// Take ownership of the module describing the trampoline, which is what
   /// makes its addresses symbolicate and its unwind plan reachable.
   void SetTrampolineModule(lldb::ModuleSP module_sp) {

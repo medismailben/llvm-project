@@ -192,6 +192,9 @@ public:
   llvm::Error SetupFastConditionalBreakpointTrampoline(
       lldb_private::BreakpointInjectedSite *bp_inject_site) override;
 
+  llvm::Error ReserveFastConditionalBreakpointTrampoline(
+      lldb_private::BreakpointInjectedSite *bp_inject_site) override;
+
   bool RegisterIsPureTemporary(llvm::StringRef reg_name) override;
 
   size_t GetJumpSize() override { return aarch64_instr_size; };

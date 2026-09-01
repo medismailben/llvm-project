@@ -232,7 +232,7 @@ static lldb::offset_t FindTrampolineNopSlots(llvm::ArrayRef<uint8_t> buffer,
   return LLDB_INVALID_OFFSET;
 }
 
-llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
+llvm::Error ABIMacOSX_arm64::ReserveFastConditionalBreakpointTrampoline(
     BreakpointInjectedSite *bp_injected_site) {
   TargetSP target_sp = bp_injected_site->GetTargetSP();
   if (!target_sp)
@@ -242,14 +242,14 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   if (!process_sp)
     return llvm::createStringError("there is no live process to patch");
 
-  Address &bp_addr = bp_injected_site->GetRealAddress();
-  const addr_t bp_load_addr = bp_addr.GetLoadAddress(target_sp.get());
+  const addr_t bp_load_addr =
+      bp_injected_site->GetRealAddress().GetLoadAddress(target_sp.get());
 
-  // Allocate the trampoline before building it. How far it lands from the site
-  // decides which form the patch takes, and that decides how many instructions
-  // the patch displaces, which decides how much room the trampoline needs at
-  // its end. Asking the other way round means guessing at the answer and
-  // refusing when the guess turns out wrong.
+  // A page, rather than the trampoline's real size, which is not known until it
+  // has been assembled: how far it lands decides which patch form to use, which
+  // decides how many instructions are displaced, which decides how much room
+  // the trampoline needs at its end. The allocator deals in pages anyway, and
+  // the assembled trampoline is checked against this.
   Status error;
   const uint32_t permission = ePermissionsReadable | ePermissionsExecutable;
   const addr_t trampoline_addr = process_sp->AllocateFCBTrampoline(
@@ -264,9 +264,35 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
     return llvm::createStringError(
         "Allocated trampoline address already in use");
 
-  // The site owns the reservation from here on, so any failure below releases
+  // The site owns the reservation from here on, so any failure later releases
   // it by destroying the site.
   bp_injected_site->SetTrampolineAllocation(trampoline_addr);
+  return llvm::Error::success();
+}
+
+llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
+    BreakpointInjectedSite *bp_injected_site) {
+  TargetSP target_sp = bp_injected_site->GetTargetSP();
+  if (!target_sp)
+    return llvm::createStringError("the breakpoint site has no target");
+
+  ProcessSP process_sp = target_sp->GetProcessSP();
+  if (!process_sp)
+    return llvm::createStringError("there is no live process to patch");
+
+  Address &bp_addr = bp_injected_site->GetRealAddress();
+  const addr_t bp_load_addr = bp_addr.GetLoadAddress(target_sp.get());
+
+  // Normally reserved before the condition was compiled, so that the JIT could
+  // not take the holes nearest the site. Reserve now if that did not happen, so
+  // that building a trampoline does not depend on having been asked to reserve
+  // one first.
+  if (bp_injected_site->GetTrampolineAllocation() == LLDB_INVALID_ADDRESS)
+    if (llvm::Error error =
+            ReserveFastConditionalBreakpointTrampoline(bp_injected_site))
+      return error;
+
+  const addr_t trampoline_addr = bp_injected_site->GetTrampolineAllocation();
 
   // The narrowest patch that reaches what was allocated. Measured to the far
   // end of the reservation, because the branch back to the site is emitted near
@@ -586,6 +612,7 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   // succeeds, so this is the one chance to see what was built.
   LogTrampolineDisassembly(trampoline_buffer, trampoline_addr);
 
+  Status error;
   size_t written_bytes = process_sp->WriteMemory(
       trampoline_addr, trampoline_buffer.data(), trampoline_size, error);
   if (written_bytes != trampoline_size || error.Fail()) {

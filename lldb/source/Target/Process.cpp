@@ -2078,6 +2078,16 @@ Process::CreateBreakpointSite(const BreakpointLocationSP &constituent,
     llvm::scope_exit done_building(
         [this, load_addr] { m_building_injected_sites.erase(load_addr); });
 
+    // Set the trampoline's memory aside before the condition is compiled. Both
+    // land in the inferior, and the JIT asks for pages without caring where
+    // they are, so whichever goes first takes the holes nearest the site. The
+    // trampoline is the one that has to be near, so it goes first.
+    if (llvm::Error error = abi_sp->ReserveFastConditionalBreakpointTrampoline(
+            bp_injected_site.get())) {
+      bp_injected_site.reset();
+      return fallback_with_error(llvm::toString(std::move(error)));
+    }
+
     // Setup a call before the copied instructions
     if (!bp_injected_site->BuildConditionExpression()) {
       bp_injected_site.reset();
