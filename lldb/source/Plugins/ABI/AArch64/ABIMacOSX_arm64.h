@@ -50,6 +50,36 @@ public:
   /// truncated.
   static constexpr const std::size_t aarch64_trampoline_reservation = 4096;
 
+  /// Whether a `b` can reach \a byte_offset bytes from itself.
+  static bool IsBranchInRange(int64_t byte_offset);
+
+  /// Encode an unconditional `b` to \a byte_offset bytes from itself, little
+  /// endian. The offset has to be in range, see IsBranchInRange().
+  static void EncodeBranch(int64_t byte_offset,
+                           uint8_t out[aarch64_instr_size]);
+
+  /// Encode `adrp reg, page(to)` / `add reg, reg, offset(to)` / `br reg` at
+  /// \a from, which is how a patch reaches a trampoline a direct branch cannot.
+  ///
+  /// \return
+  ///     Success, or the reason \a to is out of reach of a pc relative address
+  ///     at \a from.
+  static llvm::Error EncodeFarBranch(lldb::addr_t from, lldb::addr_t to,
+                                     uint32_t reg,
+                                     uint8_t out[aarch64_far_patch_size]);
+
+  /// Encode four `movz`/`movk` building \a value in \a reg, then `br reg`,
+  /// which is how the trampoline gets back to a site a direct branch cannot
+  /// reach.
+  ///
+  /// Absolute rather than pc relative, unlike the patch: the trampoline has
+  /// room for the extra instructions, and an absolute address cannot be out of
+  /// range, so where the allocator put the trampoline stops mattering once the
+  /// site can reach it at all.
+  static void EncodeFarBranchAbsolute(
+      lldb::addr_t value, uint32_t reg,
+      uint8_t out[aarch64_far_branch_slots * aarch64_instr_size]);
+
   /// Stack the trampoline reserves for the `register_context` struct below. The
   /// generated prologue subtracts this from sp, so the unwind plan has to agree
   /// with it.

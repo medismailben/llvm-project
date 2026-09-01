@@ -83,7 +83,7 @@ static const uint8_t g_aarch64_nop_bytes[] = {0x1f, 0x20, 0x03, 0xd5};
 
 /// `b` encodes a signed 26 bit immediate scaled by the instruction size, which
 /// gives it a reach of +/-128MiB.
-static bool IsBranchInRange(int64_t byte_offset) {
+bool ABIMacOSX_arm64::IsBranchInRange(int64_t byte_offset) {
   // Signed arithmetic throughout: aarch64_instr_size is unsigned, so dividing a
   // negative offset by it directly would convert the offset to a huge unsigned
   // value and report every backward branch as unreachable.
@@ -94,19 +94,13 @@ static bool IsBranchInRange(int64_t byte_offset) {
   return llvm::isInt<26>(byte_offset / instr_size);
 }
 
-/// Encode an unconditional `b` to \a byte_offset bytes from itself, little
-/// endian.
-///
 /// Assembling a single branch by handing text to clang and JIT-ing the result
 /// costs a full parse of the expression prefix, an IR pass and an allocation in
 /// the inferior, all to produce four bytes. Doing it directly is what the
 /// x86_64 builder already does, and it keeps the cost of arming a breakpoint
 /// proportional to the work that actually has to happen.
-///
-/// \a byte_offset has to be in range, see IsBranchInRange().
-static void
-EncodeAArch64Branch(int64_t byte_offset,
-                    uint8_t out[ABIMacOSX_arm64::aarch64_instr_size]) {
+void ABIMacOSX_arm64::EncodeBranch(
+    int64_t byte_offset, uint8_t out[ABIMacOSX_arm64::aarch64_instr_size]) {
   constexpr uint32_t b_opcode = 0x14000000;
   constexpr uint32_t imm26_mask = 0x03ffffff;
 
@@ -153,16 +147,13 @@ static constexpr AArch64ScratchRegister g_aarch64_scratch_registers[] = {
     {"x16", 16}, {"x17", 17}, {"x9", 9},   {"x10", 10}, {"x11", 11},
     {"x12", 12}, {"x13", 13}, {"x14", 14}, {"x15", 15}};
 
-/// Encode `adrp reg, page(to)` / `add reg, reg, offset(to)` / `br reg` at
-/// \a from, which is how a patch reaches a trampoline a direct branch cannot.
-///
 /// Three instructions rather than a literal load and a branch, which would be
 /// four: every extra instruction the patch displaces is another one that has to
 /// be safe to run out of line, and another place nothing in the function may
 /// branch into.
-static llvm::Error
-EncodeAArch64FarBranch(lldb::addr_t from, lldb::addr_t to, uint32_t reg,
-                       uint8_t out[ABIMacOSX_arm64::aarch64_far_patch_size]) {
+llvm::Error ABIMacOSX_arm64::EncodeFarBranch(
+    lldb::addr_t from, lldb::addr_t to, uint32_t reg,
+    uint8_t out[ABIMacOSX_arm64::aarch64_far_patch_size]) {
   constexpr uint32_t adrp_opcode = 0x90000000;
   constexpr uint32_t add_imm64_opcode = 0x91000000;
   constexpr uint32_t br_opcode = 0xd61f0000;
@@ -193,14 +184,7 @@ EncodeAArch64FarBranch(lldb::addr_t from, lldb::addr_t to, uint32_t reg,
   return llvm::Error::success();
 }
 
-/// Encode four `movz`/`movk` building \a value in \a reg, then `br reg`, which
-/// is how the trampoline gets back to a site a direct branch cannot reach.
-///
-/// Absolute rather than pc relative, unlike the patch: the trampoline has room
-/// for the extra two instructions, and an absolute address cannot be out of
-/// range, so where the allocator happened to put the trampoline stops mattering
-/// once it is reachable from the site at all.
-static void EncodeAArch64FarBranchAbsolute(
+void ABIMacOSX_arm64::EncodeFarBranchAbsolute(
     lldb::addr_t value, uint32_t reg,
     uint8_t out[ABIMacOSX_arm64::aarch64_far_branch_slots *
                 ABIMacOSX_arm64::aarch64_instr_size]) {
@@ -593,10 +577,10 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
   uint8_t *branch_back =
       &trampoline_buffer[copied_instr_offset + relocated.size()];
   if (direct)
-    EncodeAArch64Branch(source_branch_target, branch_back);
+    EncodeBranch(source_branch_target, branch_back);
   else
-    EncodeAArch64FarBranchAbsolute(static_cast<addr_t>(source_resume_addr),
-                                   scratch->number, branch_back);
+    EncodeFarBranchAbsolute(static_cast<addr_t>(source_resume_addr),
+                            scratch->number, branch_back);
 
   // The trampoline is only registered as a module once everything below
   // succeeds, so this is the one chance to see what was built.
@@ -615,10 +599,10 @@ llvm::Error ABIMacOSX_arm64::SetupFastConditionalBreakpointTrampoline(
     const int64_t trampoline_branch_target =
         static_cast<int64_t>(trampoline_addr) -
         static_cast<int64_t>(bp_load_addr);
-    EncodeAArch64Branch(trampoline_branch_target, trampoline_branch);
+    EncodeBranch(trampoline_branch_target, trampoline_branch);
   } else if (llvm::Error error =
-                 EncodeAArch64FarBranch(bp_load_addr, trampoline_addr,
-                                        scratch->number, trampoline_branch)) {
+                 EncodeFarBranch(bp_load_addr, trampoline_addr, scratch->number,
+                                 trampoline_branch)) {
     return error;
   }
 
