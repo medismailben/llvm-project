@@ -7,8 +7,12 @@
 //===----------------------------------------------------------------------===//
 #include "CommandObjectFrame.h"
 #include "lldb/Core/Debugger.h"
+#include "lldb/Core/Module.h"
+#include "lldb/Core/ModuleList.h"
 #include "lldb/DataFormatters/DataVisualization.h"
 #include "lldb/DataFormatters/ValueObjectPrinter.h"
+#include "lldb/Expression/DiagnosticManager.h"
+#include "lldb/Expression/UserExpression.h"
 #include "lldb/Host/Config.h"
 #include "lldb/Host/FileSystem.h"
 #include "lldb/Host/OptionParser.h"
@@ -1385,6 +1389,15 @@ public:
 /// address afterwards for a top level expression.
 class CommandObjectFrameDeoptimize : public CommandObjectParsed {
 public:
+  /// Every clone compiled so far.
+  ///
+  /// Held because the module describing a JIT-ed expression is removed when the
+  /// expression is destroyed, so dropping these would leave functions running
+  /// in the inferior that nothing can symbolicate. The command object lives as
+  /// long as the interpreter, which is long enough; a clone that outlives its
+  /// target is a leak of inferior memory that the target teardown reclaims.
+  std::vector<lldb::UserExpressionSP> m_clones;
+
   CommandObjectFrameDeoptimize(CommandInterpreter &interpreter)
       : CommandObjectParsed(
             interpreter, "frame deoptimize",
@@ -1514,9 +1527,31 @@ protected:
     options.SetUnwindOnError(true);
     options.SetIgnoreBreakpoints(true);
 
-    ValueObjectSP unused;
-    if (target.EvaluateExpression(clone_source, frame, unused, options) !=
-        eExpressionCompleted) {
+    // Parsed directly, and the expression kept, rather than going through
+    // Target::EvaluateExpression. That builds an expression, parses it and
+    // destroys it on return, and ~LLVMUserExpression removes the module
+    // describing the code it compiled. For an ordinary expression that is
+    // right, since the code goes too, but a top level definition's code
+    // outlives the call: it registers its execution unit with the persistent
+    // state. Letting the expression die takes the debug info with it and leaves
+    // a function nothing can symbolicate.
+    Status expr_error;
+    lldb::UserExpressionSP clone_expr_sp(target.GetUserExpressionForLanguage(
+        clone_source, llvm::StringRef(), SourceLanguage(eLanguageTypeC),
+        Expression::eResultTypeAny, options, /*ctx_obj=*/nullptr, expr_error));
+    if (!clone_expr_sp || expr_error.Fail()) {
+      result.AppendErrorWithFormatv(
+          "couldn't create an expression for the clone: {0}",
+          llvm::StringRef(expr_error.AsCString("unknown error")).rtrim("\n."));
+      return;
+    }
+
+    ExecutionContext exe_ctx;
+    frame->CalculateExecutionContext(exe_ctx);
+    DiagnosticManager diagnostics;
+    if (!clone_expr_sp->Parse(diagnostics, exe_ctx, eExecutionPolicyTopLevel,
+                              /*keep_result_in_memory=*/true,
+                              /*generate_debug_info=*/true)) {
       result.AppendError("couldn't compile the function without optimisation");
       // Shown because extracting a function's text from the line table is
       // approximate, so the likeliest reason to be here is that what came out
@@ -1526,21 +1561,54 @@ protected:
       return;
     }
 
-    // Asked for as a pointer rather than looked up by name: a function compiled
-    // by the expression parser is not in the target's symbol tables.
-    ValueObjectSP clone_sp;
-    if (target.EvaluateExpression(("(void *)" + clone_name).c_str(), frame,
-                                  clone_sp) != eExpressionCompleted ||
-        !clone_sp) {
+    // Looked up in the module the parse produced, and deliberately not by
+    // evaluating `(void *)<name>`: referencing the function from a second
+    // expression re-emits it, and the copy that comes back is byte identical
+    // but sits outside the module's text, so nothing describes it. Branching
+    // there gives a clone that runs and cannot be symbolicated.
+    //
+    // By base name, because an expression is compiled as C++, so the clone has
+    // a linkage name, and a function that has one is indexed under its mangled
+    // name as its full name.
+    ModuleFunctionSearchOptions search;
+    search.include_symbols = false;
+    search.include_inlines = false;
+    SymbolContextList found;
+    target.GetImages().FindFunctions(ConstString(clone_name),
+                                     eFunctionNameTypeBase, search, found);
+    // Widened to symbols only if nothing in the debug info described it, so a
+    // clone that would run correctly is not refused for want of the
+    // information that makes it useful. The warning below says what was lost.
+    if (found.IsEmpty()) {
+      search.include_symbols = true;
+      target.GetImages().FindFunctions(ConstString(clone_name),
+                                       eFunctionNameTypeBase, search, found);
+    }
+
+    addr_t clone = LLDB_INVALID_ADDRESS;
+    bool clone_is_described = false;
+    for (const SymbolContext &sc : found) {
+      Address address;
+      if (sc.function) {
+        address = sc.function->GetAddress();
+        clone_is_described = true;
+      } else if (sc.symbol) {
+        address = sc.symbol->GetAddress();
+      }
+      if (!address.IsValid())
+        continue;
+      clone = address.GetCallableLoadAddress(&target);
+      break;
+    }
+    if (clone == LLDB_INVALID_ADDRESS) {
       result.AppendError(
           "compiled the clone but couldn't find where it landed");
       return;
     }
-    const addr_t clone = clone_sp->GetValueAsUnsigned(LLDB_INVALID_ADDRESS);
+
     const addr_t entry = function->GetAddress().GetCallableLoadAddress(&target);
-    if (clone == LLDB_INVALID_ADDRESS || entry == LLDB_INVALID_ADDRESS) {
-      result.AppendError("couldn't resolve both the function's entry and its "
-                         "clone to addresses");
+    if (entry == LLDB_INVALID_ADDRESS) {
+      result.AppendError("couldn't resolve the function's entry to an address");
       return;
     }
 
@@ -1560,19 +1628,23 @@ protected:
       return;
     }
 
+    // Only once the entry actually branches to it: a clone nothing reaches is
+    // not worth keeping a module alive for.
+    m_clones.push_back(clone_expr_sp);
+
     result.AppendMessageWithFormatv(
         "'{0}' now runs a clone compiled without optimisation, at {1:x}", name,
         clone);
     result.AppendNote(
         "the current call is unaffected, since its frame was laid out by the "
         "optimiser and cannot be replaced; the next call runs the clone");
-    // Said out loud because the point of the command is the variables, and this
-    // is the one part of it that does not work yet: nothing in the target
-    // covers the clone's address, so a frame in it has nothing to symbolicate
-    // against.
-    result.AppendWarning(
-        "the clone's frame does not symbolicate yet, so stopping in it reports "
-        "a bare address and its locals do not read");
+    // Checked rather than asserted: a clone nothing describes runs perfectly
+    // well and gives the user nothing, so that is the case worth naming out
+    // loud.
+    if (!clone_is_described)
+      result.AppendWarning(
+          "no debug info describes the clone, so stopping in it reports a bare "
+          "address and its locals do not read");
     result.SetStatus(eReturnStatusSuccessFinishResult);
   }
 };

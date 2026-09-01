@@ -152,32 +152,65 @@ class FrameDeoptimizeTestCase(TestBase):
         self.assertTrue(target, VALID_TARGET)
         self.expect("frame deoptimize", error=True)
 
-    @expectedFailureAll(
-        bugnumber="the clone's frame does not symbolicate, so its locals do not "
-                  "read; this is the point of the command and the test that will "
-                  "start passing when it works"
-    )
     @skipUnlessDarwin
     @skipIf(archs=no_match(["arm64", "arm64e"]))
     @add_test_categories(["pyapi"])
     def test_locals_read_in_the_clone(self):
-        """The locals the optimiser discarded are readable in the clone."""
+        """The locals the optimiser discarded are readable in the clone.
+
+        Stopped inside the loop rather than at the clone's entry. At the entry
+        the prologue has not run, so the parameter is still in its argument
+        register while the debug info already describes it at the stack slot the
+        prologue will spill it to, and reading it gives whatever that slot
+        happened to hold.
+        """
         process, target, entry = self.arm()
         self.expect("frame deoptimize", substrs=["now runs a clone"])
 
-        clone = self.branch_target(process, entry)
-        target.BreakpointCreateByAddress(clone)
+        contexts = target.FindFunctions("$__lldb_deopt_hot")
+        self.assertEqual(contexts.GetSize(), 1,
+                         "expected exactly one clone, found %d" %
+                         contexts.GetSize())
+        clone_function = contexts.GetContextAtIndex(0).GetFunction()
+        self.assertTrue(clone_function,
+                        "the clone has no debug info, so it is a bare address "
+                        "and none of what follows can work")
+
+        # The clone's text is the original's from its signature down, so the
+        # line holding 'acc += tmp;' is that far below the signature in both.
+        signature = line_number("main.c", "int hot(int n) {")
+        wanted = line_number("main.c", "// break here") - signature + 1
+        source = clone_function.GetStartAddress().GetLineEntry().GetFileSpec()
+        in_the_loop = target.BreakpointCreateByLocation(source, wanted)
+        self.assertEqual(in_the_loop.GetNumLocations(), 1,
+                         "no code at line %d of the clone" % wanted)
+
+        # Reaches the clone on the second call. The first is already running and
+        # keeps the optimised body; the breakpoint that stopped us is in that
+        # body, which nothing enters again now that the entry branches away.
         process.Continue()
         self.assertState(process.GetState(), lldb.eStateStopped)
-
         frame = process.GetSelectedThread().GetFrameAtIndex(0)
-        self.assertEqual(frame.GetFunctionName(), "$__lldb_deopt_hot",
-                         "the clone's frame does not symbolicate")
+        self.assertIn("$__lldb_deopt_hot", frame.GetFunctionName(),
+                      "the clone's frame does not symbolicate")
 
-        # The parameter, not a local: this stops at the clone's entry, where its
-        # prologue has not run and `int acc = 0;` has not executed, so the locals
-        # have slots but no meaningful contents yet. What this asserts is that the
-        # clone carries usable debug info at all, which is what does not work.
         n = frame.FindVariable("n")
         self.assertTrue(n.IsValid(), "'n' is not readable in the clone")
         self.assertEqual(n.GetValueAsSigned(), 10)
+
+        # The payoff: 'tmp' is the variable the optimiser discarded, which
+        # test_variables_are_unavailable_without_it asserts cannot be read in
+        # the original. Two iterations rather than one, because 'tmp' is 0 on
+        # the first and a slot of zeroed stack would read the same.
+        tmp = frame.FindVariable("tmp")
+        self.assertTrue(tmp.IsValid(),
+                        "'tmp' is not readable in the clone either, so the "
+                        "clone bought nothing")
+        self.assertEqual(tmp.GetValueAsSigned(), 0)
+
+        process.Continue()
+        self.assertState(process.GetState(), lldb.eStateStopped)
+        frame = process.GetSelectedThread().GetFrameAtIndex(0)
+        self.assertEqual(frame.FindVariable("tmp").GetValueAsSigned(), 3,
+                         "'tmp' does not track the loop, so what was read is "
+                         "not really it")
