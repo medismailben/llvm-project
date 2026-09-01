@@ -8,10 +8,14 @@
 
 #include "lldb/Breakpoint/BreakpointInjectedSite.h"
 
+#include "lldb/Core/Module.h"
 #include "lldb/Expression/ExpressionVariable.h"
+#include "lldb/Symbol/FuncUnwinders.h"
+#include "lldb/Symbol/UnwindTable.h"
 #include "lldb/Target/ABI.h"
 #include "lldb/Target/Language.h"
 #include "lldb/Target/Platform.h"
+#include "lldb/Target/RegisterContext.h"
 
 #include "lldb/Utility/DataBufferHeap.h"
 
@@ -706,6 +710,20 @@ private:
   llvm::Error ResolveOperands();
 
   llvm::Expected<std::string> ResolveFrameBase();
+
+  /// The canonical frame address at this site, as a C expression over the
+  /// register context.
+  ///
+  /// What DW_OP_call_frame_cfa pushes, and what GCC emits for DW_AT_frame_base,
+  /// so every variable in a GCC-compiled function is relative to it.
+  ///
+  /// The value differs per call, but the rule that produces it does not: at a
+  /// given pc the unwind plan says the CFA is some register plus some offset,
+  /// and the trampoline has already saved that register. So this reads the rule
+  /// once, here, and emits arithmetic that recomputes the value on every hit,
+  /// which is the same thing the rest of this pass does with a location.
+  llvm::Expected<std::string> ResolveCallFrameCFA() const;
+
   llvm::Expected<std::string> RegisterField(uint64_t dwarf_regnum) const;
 
   void EmitOperation(llvm::raw_ostream &os, const Op &op) const;
@@ -829,6 +847,9 @@ DWARFLocationEmitter::GetEffect(const llvm::DWARFExpression::Operation &op) {
   case llvm::dwarf::DW_OP_consts:
   case llvm::dwarf::DW_OP_fbreg:
   case llvm::dwarf::DW_OP_bregx:
+  // The canonical frame address, which is a register plus an offset read out of
+  // the unwind plan, so it pushes a value like any other register expression.
+  case llvm::dwarf::DW_OP_call_frame_cfa:
     return Effect{0, 1};
 
   case llvm::dwarf::DW_OP_regx:
@@ -1392,6 +1413,14 @@ llvm::Error DWARFLocationEmitter::ResolveOperands() {
       break;
     }
 
+    case llvm::dwarf::DW_OP_call_frame_cfa: {
+      llvm::Expected<std::string> cfa = ResolveCallFrameCFA();
+      if (!cfa)
+        return cfa.takeError();
+      op.value = std::move(*cfa);
+      break;
+    }
+
     case llvm::dwarf::DW_OP_deref_size: {
       // Emitted as a load through a pointer, so the size has to be one C has a
       // type for. DWARF permits 3, 5, 6 and 7; no compiler emits them.
@@ -1410,6 +1439,103 @@ llvm::Error DWARFLocationEmitter::ResolveOperands() {
   }
 
   return llvm::Error::success();
+}
+
+llvm::Expected<std::string> DWARFLocationEmitter::ResolveCallFrameCFA() const {
+  Address site_addr;
+  if (!m_target.ResolveLoadAddress(m_site_load_addr, site_addr))
+    return Refuse("is relative to the canonical frame address, and this site's "
+                  "address does not resolve to a section to find the unwind "
+                  "information in");
+
+  ModuleSP module_sp = site_addr.GetModule();
+  if (!module_sp)
+    return Refuse("is relative to the canonical frame address, and no module "
+                  "covers this site to describe how to compute it");
+
+  ProcessSP process_sp = m_target.GetProcessSP();
+  if (!process_sp)
+    return Refuse("is relative to the canonical frame address, which needs a "
+                  "live process to ask for the unwind information");
+
+  // The plan is chosen for a thread because how to unwind can depend on the
+  // language runtime, and the same thread the condition is compiled against is
+  // the one to ask.
+  ThreadSP thread_sp =
+      process_sp->GetThreadList().GetExpressionExecutionThread();
+  if (!thread_sp)
+    return Refuse("is relative to the canonical frame address, which needs a "
+                  "thread to select the unwind information for");
+
+  SymbolContext sc;
+  site_addr.CalculateSymbolContext(&sc);
+  FuncUnwindersSP unwinders_sp =
+      module_sp->GetUnwindTable().GetFuncUnwindersContainingAddress(site_addr,
+                                                                    sc);
+  if (!unwinders_sp)
+    return Refuse("is relative to the canonical frame address, and nothing "
+                  "describes how to unwind out of this function");
+
+  // The non-call-site plan, because the site is in the middle of a function
+  // rather than at a call: the call-site plan only has to be right where a call
+  // can return to, and a patch can be anywhere.
+  std::shared_ptr<const UnwindPlan> plan_sp =
+      unwinders_sp->GetUnwindPlanAtNonCallSite(m_target, *thread_sp);
+  if (!plan_sp)
+    return Refuse("is relative to the canonical frame address, and this "
+                  "function has no unwind plan that covers its whole body");
+
+  const lldb::addr_t func_start =
+      unwinders_sp->GetFunctionStartAddress().GetLoadAddress(&m_target);
+  if (func_start == LLDB_INVALID_ADDRESS || func_start > m_site_load_addr)
+    return Refuse("is relative to the canonical frame address, and where the "
+                  "function containing this site starts is not known");
+
+  const UnwindPlan::Row *row = plan_sp->GetRowForFunctionOffset(
+      static_cast<int64_t>(m_site_load_addr - func_start));
+  if (!row)
+    return Refuse("is relative to the canonical frame address, and the unwind "
+                  "plan says nothing about this point in the function");
+
+  // Only a register plus an offset can be turned into arithmetic here. A CFA
+  // given as its own DWARF expression would need this pass to run over that
+  // expression too, and one found by searching the stack for a return address
+  // is a runtime search rather than a formula.
+  const UnwindPlan::Row::FAValue &cfa = row->GetCFAValue();
+  if (!cfa.IsRegisterPlusOffset())
+    return Refuse("is relative to a canonical frame address that is not a "
+                  "register plus an offset, so there is no arithmetic that "
+                  "computes it");
+
+  // The plan numbers its registers in its own scheme, which is eh_frame's on
+  // some architectures and DWARF's on others, and they disagree on x86_64. Go
+  // through the register context, which is what knows both.
+  RegisterContextSP reg_ctx_sp = thread_sp->GetRegisterContext();
+  if (!reg_ctx_sp)
+    return Refuse("is relative to the canonical frame address, and the thread "
+                  "has no register context to name its register with");
+
+  const uint32_t lldb_regnum = reg_ctx_sp->ConvertRegisterKindToRegisterNumber(
+      plan_sp->GetRegisterKind(), cfa.GetRegisterNumber());
+  const RegisterInfo *reg_info =
+      lldb_regnum == LLDB_INVALID_REGNUM
+          ? nullptr
+          : reg_ctx_sp->GetRegisterInfoAtIndex(lldb_regnum);
+  if (!reg_info)
+    return Refuse("is relative to a canonical frame address computed from a "
+                  "register this target cannot name");
+
+  const uint32_t dwarf_regnum = reg_info->kinds[lldb::eRegisterKindDWARF];
+  if (dwarf_regnum == LLDB_INVALID_REGNUM)
+    return Refuse("is relative to a canonical frame address computed from a "
+                  "register with no DWARF number, so the trampoline's register "
+                  "context has no field for it");
+
+  llvm::Expected<std::string> field = RegisterField(dwarf_regnum);
+  if (!field)
+    return field.takeError();
+
+  return "(" + *field + " + (" + std::to_string(cfa.GetOffset()) + "))";
 }
 
 llvm::Expected<std::string> DWARFLocationEmitter::ResolveFrameBase() {
@@ -1446,10 +1572,10 @@ llvm::Expected<std::string> DWARFLocationEmitter::ResolveFrameBase() {
       code >= llvm::dwarf::DW_OP_reg0 && code <= llvm::dwarf::DW_OP_reg31;
 
   if (!has_offset && !is_register) {
+    // A frame base of DW_OP_call_frame_cfa is what GCC emits, so this is the
+    // path every variable in a GCC-compiled function takes.
     if (code == llvm::dwarf::DW_OP_call_frame_cfa)
-      return Refuse("is relative to DW_OP_call_frame_cfa, which GCC emits and "
-                    "which needs the function's CFA rule from its unwind plan, "
-                    "and that is not supported yet");
+      return ResolveCallFrameCFA();
     return Refuse(
         llvm::formatv("is relative to a frame base computed with {0}, which "
                       "has no equivalent that can run in the inferior",
