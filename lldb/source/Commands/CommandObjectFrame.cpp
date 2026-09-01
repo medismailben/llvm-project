@@ -1618,6 +1618,19 @@ protected:
       return;
     }
 
+    // Refused rather than warned about, and checked here because how many bytes
+    // the branch takes is known only once it is encoded. A frame whose pc is
+    // inside those bytes resumes into the tail of a branch sequence rather than
+    // into an instruction.
+    const addr_t pc = frame->GetFrameCodeAddress().GetLoadAddress(&target);
+    if (pc > entry && pc < entry + branch.size()) {
+      result.AppendErrorWithFormatv(
+          "the frame resumes {0} bytes into the {1} the branch needs, so "
+          "installing it would corrupt the instruction it resumes at",
+          pc - entry, branch.size());
+      return;
+    }
+
     Status error;
     if (process_sp->WriteMemory(entry, branch.data(), branch.size(), error) !=
             branch.size() ||
@@ -1635,9 +1648,19 @@ protected:
     result.AppendMessageWithFormatv(
         "'{0}' now runs a clone compiled without optimisation, at {1:x}", name,
         clone);
-    result.AppendNote(
-        "the current call is unaffected, since its frame was laid out by the "
-        "optimiser and cannot be replaced; the next call runs the clone");
+    // Stopping at the entry is the one case where the current call is replaced
+    // too, and safely: nothing of the function has run, so there is no frame
+    // laid out by the optimiser to carry over and the arguments are still where
+    // the calling convention left them. That is also where breaking by name on
+    // an optimised function lands, when it has no prologue to skip, so it is
+    // the common case rather than a curiosity.
+    if (frame->GetFrameIndex() == 0 && pc == entry)
+      result.AppendNote("this call runs the clone too, since it is stopped at "
+                        "the entry and none of the function has run yet");
+    else
+      result.AppendNote(
+          "the current call is unaffected, since its frame was laid out by the "
+          "optimiser and cannot be replaced; the next call runs the clone");
     // Checked rather than asserted: a clone nothing describes runs perfectly
     // well and gives the user nothing, so that is the case worth naming out
     // loud.
