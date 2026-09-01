@@ -277,6 +277,21 @@ class FastConditionalBreakpointPatchTestCase(TestBase):
             "exercised",
         )
 
+        # The flag above only says what was asked for. What proves the call was
+        # displaced is that the call is no longer there: a site whose injection
+        # was refused, or undone by a later resolution, still reads as the `bl`
+        # it started as, and this test would then pass while exercising nothing.
+        # The patch is a branch, or the first instruction of the wider form when
+        # nothing was free within a branch's reach.
+        mnemonic = self.branch_instruction(
+            target, location.GetLoadAddress()).GetMnemonic(target)
+        self.assertIn(
+            mnemonic,
+            ["b", "jmp", "adrp"],
+            "the call site should hold a patch to the trampoline, got "
+            + mnemonic,
+        )
+
         # The remaining iterations all run through the trampoline, where the
         # relocated call has to reach the same function it did before.
         process.Continue()
