@@ -2451,6 +2451,17 @@ public:
                                      uint32_t permissions,
                                      lldb::addr_t max_distance, Status &error);
 
+  /// Whether an injected site for \a load_addr is being built right now, so a
+  /// resolution reaching this address has a site on the way and nothing to do.
+  ///
+  /// Building one runs the module-load path, which resolves breakpoints again
+  /// while the site being built is not yet recorded anywhere. A second site
+  /// made for the same address in that window is a plain one, and enabling it
+  /// writes a trap over the branch the first build is installing.
+  bool IsBuildingInjectedSiteAt(lldb::addr_t load_addr) const {
+    return m_building_injected_sites.count(load_addr) != 0;
+  }
+
   /// The injected site whose condition traps at \a trap_addr, if any.
   ///
   /// An injected site is registered in the site list under the address it
@@ -3687,6 +3698,16 @@ protected:
   /// Whether FlushDeferredInjections() is already running, so that the module
   /// it registers for a trampoline does not start the flush over again.
   bool m_flushing_injections = false;
+  /// Addresses an injected site is being built for right now.
+  ///
+  /// A location records its site only once the site is finished, so a
+  /// resolution that starts underneath one, which building an injected site
+  /// provokes by JIT-ing code and registering a module, finds the location
+  /// without a site and sets about making a second one for the same address.
+  /// Being a nested resolution it makes a plain site, and enabling that writes
+  /// a trap over the branch the outer build is installing, which nothing owns
+  /// afterwards. See IsBuildingInjectedSiteAt().
+  std::unordered_set<lldb::addr_t> m_building_injected_sites;
   std::map<lldb::addr_t, size_t> m_fcb_allocations; ///< A map holding the fixed
                                                     /// trampoline allocations'
                                                     /// address / size

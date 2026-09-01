@@ -2063,6 +2063,21 @@ Process::CreateBreakpointSite(const BreakpointLocationSP &constituent,
     std::unique_ptr<BreakpointInjectedSite> bp_injected_site(
         new BreakpointInjectedSite(constituent, load_addr));
 
+    // Building the site JIT-es code and registers the trampoline as a module,
+    // and both of those run the module-load path, which re-resolves this very
+    // location. Its site is only recorded once everything below succeeds, so a
+    // nested resolution finds it without one and sets about making a second
+    // site for the same address. That second site is a plain one, since
+    // injection defers while the loader is settling, and enabling it writes a
+    // trap over the branch this is in the middle of installing. Nothing owns
+    // that trap afterwards, so the inferior stops on it forever.
+    //
+    // Announce the address for as long as that window is open, so a nested
+    // resolution can wait for this one rather than compete with it.
+    m_building_injected_sites.insert(load_addr);
+    llvm::scope_exit done_building(
+        [this, load_addr] { m_building_injected_sites.erase(load_addr); });
+
     // Setup a call before the copied instructions
     if (!bp_injected_site->BuildConditionExpression()) {
       bp_injected_site.reset();
@@ -2601,6 +2616,28 @@ Status Process::EnableSoftwareBreakpoint(BreakpointSite *bp_site) {
   assert(bp_site != nullptr);
   Log *log = GetLog(LLDBLog::Breakpoints);
   const addr_t bp_addr = bp_site->GetLoadAddress();
+
+  // An injected site is installed by the branch to its trampoline, and writing
+  // a trap over that branch defeats the feature completely: the inferior stops
+  // on every hit, has its condition evaluated out of process, and only reaches
+  // the trampoline through the single step that steps over the trap. Worse, the
+  // stub then shadows this address, so the branch the ABI wrote lands in the
+  // stub's saved copy while the trap stays live.
+  //
+  // ExecuteBreakpointSiteAction() routes these away from here, so arriving with
+  // one means a caller went around it. Refuse rather than corrupt the patch,
+  // and say so, because the symptom otherwise appears far from the cause.
+  if (llvm::isa<BreakpointInjectedSite>(bp_site)) {
+    LLDB_LOG(log,
+             "FCB: refusing to write a software breakpoint over the branch at "
+             "{0:x}; this site is installed by its patch, not by a trap",
+             bp_addr);
+    return Status::FromErrorStringWithFormat(
+        "site %d at 0x%" PRIx64 " is patched rather than trapped, so it has no "
+        "software breakpoint to enable",
+        bp_site->GetID(), (uint64_t)bp_addr);
+  }
+
   LLDB_LOGF(
       log, "Process::EnableSoftwareBreakpoint (site_id = %d) addr = 0x%" PRIx64,
       bp_site->GetID(), (uint64_t)bp_addr);

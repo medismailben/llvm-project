@@ -561,6 +561,16 @@ llvm::Error BreakpointLocation::ResolveBreakpointSite() {
   if (process == nullptr)
     return llvm::createStringError("no process");
 
+  // A site for this address is already being built, and this resolution is one
+  // that build provoked: JIT-ing an injected condition and registering its
+  // trampoline as a module run the module-load path, which resolves breakpoints
+  // again before the site is recorded here. Making a second site now would put
+  // a trap over the branch the first build is installing, so leave it to
+  // finish.
+  if (process->IsBuildingInjectedSiteAt(
+          m_address.GetOpcodeLoadAddress(&m_owner.GetTarget())))
+    return llvm::Error::success();
+
   lldb::break_id_t new_id =
       process->CreateBreakpointSite(shared_from_this(), m_owner.IsHardware());
 

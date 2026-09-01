@@ -962,7 +962,9 @@ void ThreadList::ThreadFinishedSteppingOverBreakpoint(addr_t breakpoint_addr,
               __FUNCTION__, tid, breakpoint_addr);
     if (BreakpointSiteSP bp_site_sp =
             m_process.GetBreakpointSiteList().FindByAddress(breakpoint_addr))
-      m_process.EnableBreakpointSite(bp_site_sp.get());
+      llvm::consumeError(m_process.ExecuteBreakpointSiteAction(
+          *bp_site_sp, Process::BreakpointAction::Enable,
+          /*forbid_delay=*/false));
     return;
   }
 
@@ -985,7 +987,9 @@ void ThreadList::ThreadFinishedSteppingOverBreakpoint(addr_t breakpoint_addr,
 
     if (BreakpointSiteSP bp_site_sp =
             m_process.GetBreakpointSiteList().FindByAddress(breakpoint_addr))
-      m_process.EnableBreakpointSite(bp_site_sp.get());
+      llvm::consumeError(m_process.ExecuteBreakpointSiteAction(
+          *bp_site_sp, Process::BreakpointAction::Enable,
+          /*forbid_delay=*/false));
 
     // Clean up the entry.
     m_threads_stepping_over_bp.erase(it);
