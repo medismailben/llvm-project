@@ -797,7 +797,19 @@ bool ClangUserExpression::Parse(DiagnosticManager &diagnostic_manager,
       jit_module_sp->SetFileSpecAndObjectName(jit_file, ConstString());
       m_jit_module_wp = jit_module_sp;
       target->GetImages().Append(jit_module_sp);
+      LLDB_LOG(log, "registered a module for the JIT-ed expression '{0}'",
+               const_func_name);
+    } else {
+      // Not an error for an expression that is evaluated and forgotten, but
+      // anything whose code outlives this call, a top level definition for
+      // instance, has just lost the only thing that would let its frames
+      // symbolicate and its variables read.
+      LLDB_LOG(log, "no module for the JIT-ed expression, so its code will not "
+                    "symbolicate");
     }
+  } else {
+    LLDB_LOG(log, "debug info was not requested, so the JIT-ed expression will "
+                  "not symbolicate");
   }
 
   Process *process = exe_ctx.GetProcessPtr();
