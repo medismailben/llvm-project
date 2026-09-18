@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <array>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -200,6 +201,12 @@ ProcessProperties::ProcessProperties(lldb_private::Process *process)
     m_collection_sp->SetValueChangedCallback(
         ePropertyDisableLangRuntimeUnwindPlans,
         [this] { DisableLanguageRuntimeUnwindPlansCallback(); });
+    m_collection_sp->SetValueChangedCallback(
+        ePropertyVirtualAddressableBits,
+        [this] { AddressMaskChangedCallback(); });
+    m_collection_sp->SetValueChangedCallback(
+        ePropertyHighmemVirtualAddressableBits,
+        [this] { AddressMaskChangedCallback(); });
   }
 }
 
@@ -262,6 +269,16 @@ uint32_t ProcessProperties::GetHighmemVirtualAddressableBits() const {
 void ProcessProperties::SetHighmemVirtualAddressableBits(uint32_t bits) {
   const uint32_t idx = ePropertyHighmemVirtualAddressableBits;
   SetPropertyAtIndex(idx, static_cast<uint64_t>(bits));
+}
+
+void ProcessProperties::AddressMaskChangedCallback() {
+  if (!m_process)
+    return;
+  // A frame's PC is fixed through the address masks when the frame is built,
+  // so the frames cached for this stop have to be rebuilt.  Never call this
+  // from address-fixing code: that runs while frames are being constructed.
+  for (ThreadSP thread_sp : m_process->Threads())
+    thread_sp->ClearStackFrames();
 }
 
 void ProcessProperties::SetPythonOSPluginPath(const FileSpec &file) {
@@ -7136,6 +7153,10 @@ void Process::SetAddressableBitMasks(AddressableBits bit_masks) {
   if (low_memory_addr_bits == 0 && high_memory_addr_bits == 0)
     return;
 
+  const std::array<addr_t, 4> orig_masks = {
+      m_code_address_mask, m_data_address_mask, m_highmem_code_address_mask,
+      m_highmem_data_address_mask};
+
   if (low_memory_addr_bits != 0) {
     addr_t low_addr_mask =
         AddressableBits::AddressableBitToMask(low_memory_addr_bits);
@@ -7149,6 +7170,14 @@ void Process::SetAddressableBitMasks(AddressableBits bit_masks) {
     SetHighmemCodeAddressMask(high_addr_mask);
     SetHighmemDataAddressMask(high_addr_mask);
   }
+
+  // A live process re-reports its masks on every stop, so only pay for
+  // rebuilding the frames when they would actually come out different.
+  const std::array<addr_t, 4> new_masks = {
+      m_code_address_mask, m_data_address_mask, m_highmem_code_address_mask,
+      m_highmem_data_address_mask};
+  if (new_masks != orig_masks)
+    AddressMaskChangedCallback();
 }
 
 llvm::Expected<AddressSpaceInfo>

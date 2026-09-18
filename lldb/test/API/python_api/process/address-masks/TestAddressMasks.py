@@ -111,6 +111,33 @@ class AddressMasksTestCase(TestBase):
         self.assertEqual(0x000002950001F694, process.FixAddress(0x00265E950001F694))
         self.reset_all_masks(process)
 
+    # A StackFrame resolves its PC with the address mask that was in effect
+    # when the frame was built, so changing the mask has to invalidate the
+    # frames that are already cached for this stop.
+    @skipIf(archs=no_match(["arm64", "arm64e", "aarch64"]))
+    def test_changing_mask_invalidates_stack_frames(self):
+        self.build()
+        (target, process, thread, bp) = lldbutil.run_to_source_breakpoint(
+            self, "break here", lldb.SBFileSpec("main.c")
+        )
+
+        pc = thread.GetFrameAtIndex(0).GetPC()
+        self.assertNotEqual(pc & ~0x7FFF, 0)
+
+        # The process is never resumed between setting a mask and reading the
+        # frame back, so the frames have to be recomputed in place.
+        process.SetAddressableBits(lldb.eAddressMaskTypeAll, 15)
+        self.assertEqual(thread.GetFrameAtIndex(0).GetPC(), pc & 0x7FFF)
+
+        process.SetAddressableBits(lldb.eAddressMaskTypeAll, 64)
+        self.assertEqual(thread.GetFrameAtIndex(0).GetPC(), pc)
+
+        self.runCmd("settings set target.process.virtual-addressable-bits 15")
+        self.assertEqual(thread.GetFrameAtIndex(0).GetPC(), pc & 0x7FFF)
+
+        self.reset_all_masks(process)
+        self.assertEqual(thread.GetFrameAtIndex(0).GetPC(), pc)
+
     # On most targets where we have a single mask for all address range, confirm
     # that the high memory masks are ignored.
     @skipIf(archs=["arm64", "arm64e", "aarch64"])

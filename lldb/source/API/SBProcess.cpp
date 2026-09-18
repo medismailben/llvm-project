@@ -1490,6 +1490,7 @@ void SBProcess::SetAddressMask(AddressMaskType type, addr_t mask,
       }
       break;
     }
+    process_sp->AddressMaskChangedCallback();
   }
 }
 
