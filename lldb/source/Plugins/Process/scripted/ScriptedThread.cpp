@@ -113,7 +113,21 @@ const char *ScriptedThread::GetQueueName() {
 
 void ScriptedThread::WillResume(StateType resume_state) {}
 
-void ScriptedThread::ClearStackFrames() { Thread::ClearStackFrames(); }
+void ScriptedThread::ClearStackFrames() {
+  m_artificial_frames_loaded = false;
+  Thread::ClearStackFrames();
+}
+
+void ScriptedThread::DidCreateStackFrameList() {
+  // RefreshStateAfterStop already did this for the stop the process is in, but
+  // anything that clears the frames in between (a changed address mask,
+  // Process::Flush) would otherwise drop what the script reported and silently
+  // fall back to the unwinder. Reloading as the list is built rather than as it
+  // is cleared keeps the script off the resume path, where the frames are
+  // cleared and nobody asks for them again.
+  if (!m_artificial_frames_loaded)
+    LoadArtificialStackFrames();
+}
 
 RegisterContextSP ScriptedThread::GetRegisterContext() {
   if (!m_reg_context_sp)
@@ -168,6 +182,11 @@ ScriptedThread::CreateRegisterContextForFrame(StackFrame *frame) {
 }
 
 bool ScriptedThread::LoadArtificialStackFrames() {
+  // Set this before asking for anything: the frame list this populates is
+  // fetched through GetStackFrameList(), which calls back into
+  // DidCreateStackFrameList().
+  m_artificial_frames_loaded = true;
+
   StructuredData::ArraySP arr_sp = GetInterface()->GetStackFrames();
 
   Status error;

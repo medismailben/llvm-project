@@ -322,3 +322,44 @@ class ScriptedProcesTestCase(TestBase):
             "ScriptedFrame.thread should be valid after thread " "registration",
         )
         self.assertEqual(post_launch_frame.thread.GetThreadID(), tid)
+
+    @skipUnlessDarwin
+    def test_scripted_frames_survive_a_mask_change(self):
+        """Test that clearing the stack frames outside of a stop, as changing an
+        address mask does, doesn't drop the frames the script reported."""
+        self.build()
+        target = self.dbg.CreateTarget(self.getBuildArtifact("a.out"))
+        self.assertTrue(target, VALID_TARGET)
+
+        os.environ["SKIP_SCRIPTED_PROCESS_LAUNCH"] = "1"
+
+        def cleanup():
+            del os.environ["SKIP_SCRIPTED_PROCESS_LAUNCH"]
+
+        self.addTearDownHook(cleanup)
+
+        self.runCmd(
+            "command script import "
+            + os.path.join(self.getSourceDir(), "dummy_scripted_process.py")
+        )
+
+        launch_info = lldb.SBLaunchInfo(None)
+        launch_info.SetProcessPluginName("ScriptedProcess")
+        launch_info.SetScriptedProcessClassName(
+            "dummy_scripted_process.DummyScriptedProcess"
+        )
+
+        error = lldb.SBError()
+        process = target.Launch(launch_info, error)
+        self.assertSuccess(error)
+
+        thread = process.GetThreadAtIndex(0)
+        num_frames = thread.GetNumFrames()
+        self.assertGreater(num_frames, 1)
+        pc = thread.GetFrameAtIndex(0).GetPC()
+
+        # 42 addressable bits leaves the frame PCs alone, so only losing the
+        # scripted frames can change what the thread reports here.
+        process.SetAddressableBits(lldb.eAddressMaskTypeAll, 42)
+        self.assertEqual(thread.GetNumFrames(), num_frames)
+        self.assertEqual(thread.GetFrameAtIndex(0).GetPC(), pc)

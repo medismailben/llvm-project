@@ -1637,6 +1637,8 @@ StackFrameListSP Thread::GetStackFrameList() {
         {m_curr_frames_sp->GetIdentifier(), m_curr_frames_sp});
   }
 
+  DidCreateStackFrameList();
+
   return m_curr_frames_sp;
 }
 

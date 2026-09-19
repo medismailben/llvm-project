@@ -499,6 +499,11 @@ public:
 
   virtual void ClearStackFrames();
 
+  /// Called once a fresh stack frame list has been built for this thread.
+  /// Threads that report their own frames use this to fill the list on
+  /// demand, so that clearing the frames outside of a stop doesn't lose them.
+  virtual void DidCreateStackFrameList() {}
+
   /// Sets the thread that is backed by this thread.
   /// If backed_thread.GetBackedThread() is null, this method also calls
   /// backed_thread.SetBackingThread(this).

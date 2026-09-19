@@ -59,6 +59,8 @@ public:
 
   void ClearStackFrames() override;
 
+  void DidCreateStackFrameList() override;
+
   StructuredData::ObjectSP FetchThreadExtendedInfo() override;
 
 private:
@@ -75,6 +77,7 @@ private:
   const ScriptedProcess &m_scripted_process;
   lldb::ScriptedThreadInterfaceSP m_scripted_thread_interface_sp = nullptr;
   lldb_private::StructuredData::GenericSP m_script_object_sp = nullptr;
+  bool m_artificial_frames_loaded = false;
 };
 
 } // namespace lldb_private
