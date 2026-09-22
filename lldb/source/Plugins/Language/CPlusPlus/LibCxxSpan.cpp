@@ -30,7 +30,7 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
   /// Determines properties of the std::span<> associated with this object
   //
@@ -54,7 +54,7 @@ public:
   // This function checks for a '__size' member to determine the number
   // of elements in the span. If no such member exists, we get the size
   // from the only other place it can be: the template argument.
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -69,7 +69,7 @@ lldb_private::formatters::LibcxxStdSpanSyntheticFrontEnd::
     LibcxxStdSpanSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp) {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 llvm::Expected<uint32_t> lldb_private::formatters::
@@ -77,11 +77,11 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return m_num_elements;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::LibcxxStdSpanSyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   if (!m_start)
-    return {};
+    return lldb::ValueObjectSP();
 
   uint64_t offset = idx * m_element_size;
   offset = offset + m_start->GetValueAsUnsigned(0);
@@ -92,7 +92,7 @@ lldb_private::formatters::LibcxxStdSpanSyntheticFrontEnd::GetChildAtIndex(
                                            m_element_type);
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::LibcxxStdSpanSyntheticFrontEnd::Update() {
   // Get element type.
   ValueObjectSP data_type_finder_sp = GetChildMemberWithName(

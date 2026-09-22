@@ -31,9 +31,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -58,9 +58,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -79,7 +79,7 @@ lldb_private::formatters::LibcxxStdVectorSyntheticFrontEnd::
     LibcxxStdVectorSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp), m_element_type() {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 lldb_private::formatters::LibcxxStdVectorSyntheticFrontEnd::
@@ -142,7 +142,7 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return llvm::createStringError("invalid vector layout");
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::LibcxxStdVectorSyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   if (!m_start || !m_finish)
@@ -157,7 +157,7 @@ lldb_private::formatters::LibcxxStdVectorSyntheticFrontEnd::GetChildAtIndex(
                                            m_element_type);
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::LibcxxStdVectorSyntheticFrontEnd::Update() {
   m_start = m_finish = nullptr;
 
@@ -217,7 +217,7 @@ lldb_private::formatters::LibcxxVectorBoolSyntheticFrontEnd::
     : SyntheticChildrenFrontEnd(*valobj_sp), m_bool_type(), m_exe_ctx_ref(),
       m_children() {
   if (valobj_sp) {
-    Update();
+    UpdateIgnoringErrors();
     m_bool_type =
         valobj_sp->GetCompilerType().GetBasicTypeFromAST(lldb::eBasicTypeBool);
   }
@@ -228,36 +228,36 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return m_count;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::LibcxxVectorBoolSyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   auto iter = m_children.find(idx), end = m_children.end();
   if (iter != end)
     return iter->second;
   if (idx >= m_count)
-    return {};
+    return lldb::ValueObjectSP();
   if (m_base_data_address == 0 || m_count == 0)
-    return {};
+    return lldb::ValueObjectSP();
   if (!m_bool_type)
-    return {};
+    return lldb::ValueObjectSP();
   size_t byte_idx = (idx >> 3); // divide by 8 to get byte index
   size_t bit_index = (idx & 7); // efficient idx % 8 for bit index
   lldb::addr_t byte_location = m_base_data_address + byte_idx;
   ProcessSP process_sp(m_exe_ctx_ref.GetProcessSP());
   if (!process_sp)
-    return {};
+    return lldb::ValueObjectSP();
   uint8_t byte = 0;
   uint8_t mask = 0;
   Status err;
   size_t bytes_read = process_sp->ReadMemory(byte_location, &byte, 1, err);
   if (err.Fail() || bytes_read == 0)
-    return {};
+    return lldb::ValueObjectSP();
   mask = 1 << bit_index;
   bool bit_set = ((byte & mask) != 0);
   std::optional<uint64_t> size =
       llvm::expectedToOptional(m_bool_type.GetByteSize(nullptr));
   if (!size)
-    return {};
+    return lldb::ValueObjectSP();
   WritableDataBufferSP buffer_sp(new DataBufferHeap(*size, 0));
   if (bit_set && buffer_sp && buffer_sp->GetBytes()) {
     // regardless of endianness, anything non-zero is true
@@ -275,7 +275,7 @@ lldb_private::formatters::LibcxxVectorBoolSyntheticFrontEnd::GetChildAtIndex(
   return retval_sp;
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::LibcxxVectorBoolSyntheticFrontEnd::Update() {
   m_children.clear();
   ValueObjectSP valobj_sp = m_backend.GetSP();

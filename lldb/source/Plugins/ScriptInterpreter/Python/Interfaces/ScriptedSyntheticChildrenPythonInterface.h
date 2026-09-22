@@ -35,22 +35,23 @@ public:
   }
 
   llvm::SmallVector<llvm::StringLiteral> GetOptionalMethods() const override {
-    return {"num_children", "get_child_index"};
+    return {"num_children", "get_child_index", "get_child_at_index", "update",
+            "has_children", "get_value",       "get_type_name"};
   }
 
   llvm::Expected<uint32_t> CalculateNumChildren(uint32_t max) override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
   llvm::Expected<uint32_t> GetIndexOfChildWithName(ConstString name) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
-  bool MightHaveChildren() override;
+  llvm::Expected<bool> MightHaveChildren() override;
 
-  lldb::ValueObjectSP GetSyntheticValue() override;
+  llvm::Expected<lldb::ValueObjectSP> GetSyntheticValue() override;
 
-  ConstString GetSyntheticTypeName() override;
+  llvm::Expected<ConstString> GetSyntheticTypeName() override;
 
   static void Initialize();
 

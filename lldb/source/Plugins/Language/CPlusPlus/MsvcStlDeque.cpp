@@ -24,9 +24,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -51,7 +51,7 @@ lldb_private::formatters::MsvcStlDequeSyntheticFrontEnd::
     MsvcStlDequeSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp) {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 llvm::Expected<uint32_t> lldb_private::formatters::
@@ -61,7 +61,7 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return m_size;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::MsvcStlDequeSyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   if (idx >= m_size || !m_map)
@@ -93,7 +93,7 @@ lldb_private::formatters::MsvcStlDequeSyntheticFrontEnd::GetChildAtIndex(
                                            m_element_type);
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::MsvcStlDequeSyntheticFrontEnd::Update() {
   m_size = 0;
   m_map = nullptr;

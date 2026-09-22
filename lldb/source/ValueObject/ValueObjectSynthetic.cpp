@@ -17,6 +17,7 @@
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/Status.h"
 #include "lldb/ValueObject/ValueObject.h"
+#include "lldb/ValueObject/ValueObjectConstResult.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Error.h"
@@ -38,7 +39,7 @@ public:
     return m_backend.GetNumChildren();
   }
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override {
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
     return m_backend.GetChildAtIndex(idx);
   }
 
@@ -46,9 +47,11 @@ public:
     return m_backend.GetIndexOfChildWithName(name);
   }
 
-  bool MightHaveChildren() override { return m_backend.MightHaveChildren(); }
+  llvm::Expected<bool> MightHaveChildren() override {
+    return m_backend.MightHaveChildren();
+  }
 
-  lldb::ChildCacheState Update() override {
+  llvm::Expected<lldb::ChildCacheState> Update() override {
     return lldb::ChildCacheState::eRefetch;
   }
 };
@@ -83,8 +86,10 @@ ConstString ValueObjectSynthetic::GetQualifiedTypeName() {
 }
 
 ConstString ValueObjectSynthetic::GetDisplayTypeName() {
-  if (ConstString synth_name = m_synth_filter_up->GetSyntheticTypeName())
-    return synth_name;
+  // Resolved by UpdateValue, which unlike this getter can report a failure.
+  UpdateValueIfNeeded();
+  if (m_synthetic_type_name)
+    return m_synthetic_type_name;
 
   return m_parent->GetDisplayTypeName();
 }
@@ -131,9 +136,23 @@ ValueObjectSynthetic::GetDynamicValue(lldb::DynamicValueType valueType) {
 }
 
 bool ValueObjectSynthetic::MightHaveChildren() {
-  if (m_might_have_children == eLazyBoolCalculate)
-    m_might_have_children =
-        (m_synth_filter_up->MightHaveChildren() ? eLazyBoolYes : eLazyBoolNo);
+  if (m_might_have_children == eLazyBoolCalculate) {
+    llvm::Expected<bool> might_have_children =
+        m_synth_filter_up->MightHaveChildren();
+    if (!might_have_children) {
+      // This getter returns a bare bool, and so does ValueObject's, so there
+      // is nowhere to put the error. Default to "yes" as before, which is also
+      // what an unimplemented has_children means. In practice a provider whose
+      // has_children raised will raise from num_children too, and that path
+      // does report - see CalculateNumChildren.
+      LLDB_LOG_ERROR(GetLog(LLDBLog::DataFormatters),
+                     might_have_children.takeError(),
+                     "[ValueObjectSynthetic::MightHaveChildren] {0}");
+      m_might_have_children = eLazyBoolYes;
+    } else {
+      m_might_have_children = *might_have_children ? eLazyBoolYes : eLazyBoolNo;
+    }
+  }
   return (m_might_have_children != eLazyBoolNo);
 }
 
@@ -207,7 +226,18 @@ bool ValueObjectSynthetic::UpdateValue() {
   }
 
   // let our backend do its update
-  if (m_synth_filter_up->Update() == lldb::ChildCacheState::eRefetch) {
+  llvm::Expected<lldb::ChildCacheState> cache_state_or_err =
+      m_synth_filter_up->Update();
+  if (!cache_state_or_err) {
+    // The provider couldn't update, e.g. its `update` raised. Report it: most
+    // providers compute their state here and leave the accessors reading it,
+    // so carrying on would show a value with no children, which reads as a
+    // legitimately empty container.
+    m_error = Status::FromError(cache_state_or_err.takeError());
+    return false;
+  }
+
+  if (*cache_state_or_err == lldb::ChildCacheState::eRefetch) {
     LLDB_LOG(log,
              "[ValueObjectSynthetic::UpdateValue] name={0}, synthetic "
              "filter said caches are stale - clearing",
@@ -238,7 +268,28 @@ bool ValueObjectSynthetic::UpdateValue() {
 
   m_provides_value = eLazyBoolCalculate;
 
-  lldb::ValueObjectSP synth_val(m_synth_filter_up->GetSyntheticValue());
+  // Resolve the synthetic type name here rather than lazily in
+  // GetDisplayTypeName, which returns a bare ConstString and so has nowhere to
+  // report a failure. Doing it during the update also means one Python call
+  // per update instead of one per display.
+  llvm::Expected<ConstString> synth_name_or_err =
+      m_synth_filter_up->GetSyntheticTypeName();
+  if (!synth_name_or_err) {
+    m_error = Status::FromError(synth_name_or_err.takeError());
+    return false;
+  }
+  m_synthetic_type_name = *synth_name_or_err;
+
+  llvm::Expected<lldb::ValueObjectSP> synth_val_or_err =
+      m_synth_filter_up->GetSyntheticValue();
+  if (!synth_val_or_err) {
+    // A provider that can't produce its value must not silently fall through
+    // to the parent's raw bits below: that renders as a plausible-looking but
+    // wrong value, with no hint that anything failed.
+    m_error = Status::FromError(synth_val_or_err.takeError());
+    return false;
+  }
+  lldb::ValueObjectSP synth_val = *synth_val_or_err;
 
   if (synth_val && synth_val->CanProvideValue()) {
     LLDB_LOG(log,
@@ -292,7 +343,19 @@ lldb::ValueObjectSP ValueObjectSynthetic::GetChildAtIndex(uint32_t idx,
                "index {1} not cached and will be created",
                GetName(), idx);
 
-      lldb::ValueObjectSP synth_guy = m_synth_filter_up->GetChildAtIndex(idx);
+      llvm::Expected<lldb::ValueObjectSP> synth_guy_or_err =
+          m_synth_filter_up->GetChildAtIndex(idx);
+      if (!synth_guy_or_err) {
+        // Hand back a child that carries the error rather than nothing at all.
+        // ValueObjectPrinter skips a null child without comment, so a provider
+        // that raised for one element used to make that element silently
+        // vanish from a list whose length came from num_children.
+        ExecutionContext exe_ctx(GetExecutionContextRef());
+        return ValueObjectConstResult::Create(
+            exe_ctx.GetBestExecutionContextScope(),
+            Status::FromError(synth_guy_or_err.takeError()));
+      }
+      lldb::ValueObjectSP synth_guy = *synth_guy_or_err;
 
       LLDB_LOG(
           log,

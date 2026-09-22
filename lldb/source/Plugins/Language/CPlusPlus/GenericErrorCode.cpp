@@ -35,7 +35,7 @@ class GenericErrorCodeFrontend : public SyntheticChildrenFrontEnd {
 public:
   explicit GenericErrorCodeFrontend(ValueObject &valobj)
       : SyntheticChildrenFrontEnd(valobj) {
-    Update();
+    UpdateIgnoringErrors();
   }
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override {
@@ -48,13 +48,13 @@ public:
     return m_category ? 1U : 0U;
   }
 
-  ValueObjectSP GetChildAtIndex(uint32_t idx) override {
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
     if (idx != 0 || !m_category)
-      return {};
+      return lldb::ValueObjectSP();
     return m_category->Clone(ConstString("Category"));
   }
 
-  lldb::ChildCacheState Update() override {
+  llvm::Expected<lldb::ChildCacheState> Update() override {
     m_category = GetCategory(m_backend).get();
     return lldb::ChildCacheState::eRefetch;
   }

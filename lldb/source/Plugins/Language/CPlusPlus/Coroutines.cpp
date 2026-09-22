@@ -103,7 +103,7 @@ lldb_private::formatters::StdlibCoroutineHandleSyntheticFrontEnd::
     StdlibCoroutineHandleSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp) {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 lldb_private::formatters::StdlibCoroutineHandleSyntheticFrontEnd::
@@ -114,12 +114,12 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return m_children.size();
 }
 
-lldb::ValueObjectSP lldb_private::formatters::
+llvm::Expected<lldb::ValueObjectSP> lldb_private::formatters::
     StdlibCoroutineHandleSyntheticFrontEnd::GetChildAtIndex(uint32_t idx) {
   return idx < m_children.size() ? m_children[idx] : lldb::ValueObjectSP();
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::StdlibCoroutineHandleSyntheticFrontEnd::Update() {
   m_children.clear();
 

@@ -193,9 +193,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
 private:
   llvm::Expected<uint32_t>
@@ -230,9 +230,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -248,7 +248,7 @@ lldb_private::formatters::LibcxxStdMapSyntheticFrontEnd::
     LibcxxStdMapSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp) {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 llvm::Expected<uint32_t>
@@ -324,7 +324,7 @@ lldb_private::formatters::LibcxxStdMapSyntheticFrontEnd::GetKeyValuePair(
   return value_type_sp;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::LibcxxStdMapSyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   static ConstString g_cc_("__cc_"), g_cc("__cc");
@@ -372,7 +372,7 @@ lldb_private::formatters::LibcxxStdMapSyntheticFrontEnd::GetChildAtIndex(
   return potential_child_sp;
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::LibcxxStdMapSyntheticFrontEnd::Update() {
   m_count = UINT32_MAX;
   m_tree = m_root_node = nullptr;
@@ -398,10 +398,10 @@ lldb_private::formatters::LibCxxMapIteratorSyntheticFrontEnd::
     LibCxxMapIteratorSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp) {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::LibCxxMapIteratorSyntheticFrontEnd::Update() {
   m_pair_sp.reset();
 
@@ -469,7 +469,7 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return 2;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::LibCxxMapIteratorSyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   if (!m_pair_sp)

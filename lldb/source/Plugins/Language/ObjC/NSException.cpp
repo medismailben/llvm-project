@@ -138,7 +138,7 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override { return 4; }
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override {
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
     switch (idx) {
       case 0: return m_name_sp;
       case 1: return m_reason_sp;
@@ -148,7 +148,7 @@ public:
     return lldb::ValueObjectSP();
   }
 
-  lldb::ChildCacheState Update() override {
+  llvm::Expected<lldb::ChildCacheState> Update() override {
     m_name_sp.reset();
     m_reason_sp.reset();
     m_userinfo_sp.reset();

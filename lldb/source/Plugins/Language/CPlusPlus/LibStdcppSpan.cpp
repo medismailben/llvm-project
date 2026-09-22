@@ -26,7 +26,7 @@ public:
   LibStdcppSpanSyntheticFrontEnd(const lldb::ValueObjectSP &valobj_sp)
       : SyntheticChildrenFrontEnd(*valobj_sp) {
     if (valobj_sp)
-      Update();
+      UpdateIgnoringErrors();
   }
 
   ~LibStdcppSpanSyntheticFrontEnd() override = default;
@@ -35,9 +35,9 @@ public:
     return m_num_elements;
   }
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override {
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
     if (!m_start)
-      return {};
+      return lldb::ValueObjectSP();
 
     uint64_t offset = (static_cast<uint64_t>(idx) * m_element_size);
     offset += m_start->GetValueAsUnsigned(0);
@@ -46,7 +46,7 @@ public:
         name, offset, m_backend.GetExecutionContextRef(), m_element_type);
   }
 
-  lldb::ChildCacheState Update() override {
+  llvm::Expected<lldb::ChildCacheState> Update() override {
     const ValueObjectSP data_ptr = m_backend.GetChildMemberWithName("_M_ptr");
     if (!data_ptr)
       return lldb::ChildCacheState::eRefetch;

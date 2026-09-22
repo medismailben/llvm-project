@@ -32,13 +32,13 @@ public:
     return 1;
   }
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override {
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
     // Since we only have a single child, return it
     assert(idx == 0);
     return m_range_sp;
   }
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override {
     // We only have a single child
@@ -54,10 +54,10 @@ lldb_private::formatters::LibcxxStdRangesRefViewSyntheticFrontEnd::
     LibcxxStdRangesRefViewSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp) {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::LibcxxStdRangesRefViewSyntheticFrontEnd::Update() {
   ValueObjectSP range_ptr =
       GetChildMemberWithName(m_backend, {ConstString("__range_")});

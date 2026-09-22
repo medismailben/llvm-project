@@ -72,10 +72,18 @@ ScriptedSyntheticChildrenPythonInterface::CalculateNumChildren(uint32_t max) {
   return std::min<uint32_t>(obj->GetUnsignedIntegerValue(), max);
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 ScriptedSyntheticChildrenPythonInterface::GetChildAtIndex(uint32_t idx) {
-  return LogAndDefault(Dispatch<lldb::ValueObjectSP>("get_child_at_index", idx),
-                       LLVM_PRETTY_FUNCTION);
+  // A provider that doesn't implement `get_child_at_index` has no children to
+  // hand out - legitimate for a value-only provider. An exception raised
+  // inside it means one specific child couldn't be produced, which the caller
+  // needs to be able to tell apart from "there is no such child".
+  llvm::Expected<std::optional<lldb::ValueObjectSP>> child_or_err =
+      DispatchToOptional<lldb::ValueObjectSP>("get_child_at_index", idx);
+  if (!child_or_err)
+    return child_or_err.takeError();
+
+  return child_or_err->value_or(nullptr);
 }
 
 llvm::Expected<uint32_t>
@@ -101,35 +109,62 @@ ScriptedSyntheticChildrenPythonInterface::GetIndexOfChildWithName(
   return static_cast<uint32_t>(obj->GetUnsignedIntegerValue());
 }
 
-lldb::ChildCacheState ScriptedSyntheticChildrenPythonInterface::Update() {
-  // update() is optional; a missing method means "always refetch".
-  StructuredData::ObjectSP obj =
-      LogAndDefault(Dispatch("update"), LLVM_PRETTY_FUNCTION);
-  if (!obj)
+llvm::Expected<lldb::ChildCacheState>
+ScriptedSyntheticChildrenPythonInterface::Update() {
+  // update() is optional; a missing method means "always refetch". Anything
+  // else that went wrong - in particular an exception raised inside update() -
+  // is propagated: providers typically do their real work here and leave the
+  // accessors reading cached state, so swallowing this shows the user an
+  // empty container instead of a broken formatter.
+  llvm::Expected<std::optional<StructuredData::ObjectSP>> obj_or_err =
+      DispatchToOptional("update");
+  if (!obj_or_err)
+    return obj_or_err.takeError();
+
+  StructuredData::ObjectSP obj = obj_or_err->value_or(nullptr);
+  if (!obj || !obj->IsValid())
     return lldb::eRefetch;
   return obj->GetBooleanValue() ? lldb::eReuse : lldb::eRefetch;
 }
 
-bool ScriptedSyntheticChildrenPythonInterface::MightHaveChildren() {
+llvm::Expected<bool>
+ScriptedSyntheticChildrenPythonInterface::MightHaveChildren() {
   // has_children() is optional and defaults to True when missing.
-  StructuredData::ObjectSP obj =
-      LogAndDefault(Dispatch("has_children"), LLVM_PRETTY_FUNCTION);
-  if (!obj)
+  llvm::Expected<std::optional<StructuredData::ObjectSP>> obj_or_err =
+      DispatchToOptional("has_children");
+  if (!obj_or_err)
+    return obj_or_err.takeError();
+
+  StructuredData::ObjectSP obj = obj_or_err->value_or(nullptr);
+  if (!obj || !obj->IsValid())
     return true;
   return obj->GetBooleanValue();
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 ScriptedSyntheticChildrenPythonInterface::GetSyntheticValue() {
-  return LogAndDefault(Dispatch<lldb::ValueObjectSP>("get_value"),
-                       LLVM_PRETTY_FUNCTION);
+  // get_value() is optional; not implementing it means "I don't vend a
+  // value". An exception raised inside it is a different thing entirely, and
+  // must not read as the same answer.
+  llvm::Expected<std::optional<lldb::ValueObjectSP>> value_or_err =
+      DispatchToOptional<lldb::ValueObjectSP>("get_value");
+  if (!value_or_err)
+    return value_or_err.takeError();
+
+  return value_or_err->value_or(nullptr);
 }
 
-ConstString ScriptedSyntheticChildrenPythonInterface::GetSyntheticTypeName() {
-  StructuredData::ObjectSP obj =
-      LogAndDefault(Dispatch("get_type_name"), LLVM_PRETTY_FUNCTION);
-  if (!obj)
-    return {};
+llvm::Expected<ConstString>
+ScriptedSyntheticChildrenPythonInterface::GetSyntheticTypeName() {
+  // get_type_name() is optional; not implementing it means "no opinion".
+  llvm::Expected<std::optional<StructuredData::ObjectSP>> obj_or_err =
+      DispatchToOptional("get_type_name");
+  if (!obj_or_err)
+    return obj_or_err.takeError();
+
+  StructuredData::ObjectSP obj = obj_or_err->value_or(nullptr);
+  if (!obj || !obj->IsValid())
+    return ConstString();
 
   return ConstString(obj->GetStringValue());
 }

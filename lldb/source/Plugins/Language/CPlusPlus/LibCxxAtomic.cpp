@@ -93,9 +93,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -109,7 +109,7 @@ lldb_private::formatters::LibcxxStdAtomicSyntheticFrontEnd::
     LibcxxStdAtomicSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp) {}
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::LibcxxStdAtomicSyntheticFrontEnd::Update() {
   ValueObjectSP atomic_value = GetLibCxxAtomicValue(m_backend);
   if (atomic_value)
@@ -123,7 +123,7 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return m_real_child ? 1 : 0;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::LibcxxStdAtomicSyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   if (idx == 0)

@@ -107,9 +107,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
 private:
   struct DataDescriptor_32 {
@@ -144,9 +144,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
 private:
   ExecutionContextRef m_exe_ctx_ref;
@@ -172,9 +172,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
 private:
   struct DictionaryItemDescriptor {
@@ -201,9 +201,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -220,9 +220,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
 private:
   struct DictionaryItemDescriptor {
@@ -249,9 +249,9 @@ namespace Foundation1100 {
 
     llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-    lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+    llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-    lldb::ChildCacheState Update() override;
+    llvm::Expected<lldb::ChildCacheState> Update() override;
 
   private:
     struct DataDescriptor_32 {
@@ -598,7 +598,7 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return (m_data_32 ? m_data_32->_used : m_data_64->_used);
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::NSDictionaryISyntheticFrontEnd::Update() {
   m_children.clear();
   delete m_data_32;
@@ -633,7 +633,7 @@ lldb_private::formatters::NSDictionaryISyntheticFrontEnd::Update() {
   return lldb::ChildCacheState::eRefetch;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::NSDictionaryISyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   uint32_t num_children = CalculateNumChildrenIgnoringErrors();
@@ -729,7 +729,7 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return m_hashtable.GetCount();
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::NSCFDictionarySyntheticFrontEnd::Update() {
   m_children.clear();
   ValueObjectSP valobj_sp = m_backend.GetSP();
@@ -748,7 +748,7 @@ lldb_private::formatters::NSCFDictionarySyntheticFrontEnd::Update() {
              : lldb::ChildCacheState::eRefetch;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::NSCFDictionarySyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   lldb::addr_t m_keys_ptr = m_hashtable.GetKeyPointer();
@@ -856,7 +856,7 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return m_size;
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::NSConstantDictionarySyntheticFrontEnd::Update() {
   ValueObjectSP valobj_sp = m_backend.GetSP();
   if (!valobj_sp)
@@ -892,7 +892,7 @@ lldb_private::formatters::NSConstantDictionarySyntheticFrontEnd::Update() {
   return lldb::ChildCacheState::eReuse;
 }
 
-lldb::ValueObjectSP lldb_private::formatters::
+llvm::Expected<lldb::ValueObjectSP> lldb_private::formatters::
     NSConstantDictionarySyntheticFrontEnd::GetChildAtIndex(uint32_t idx) {
   uint32_t num_children = CalculateNumChildrenIgnoringErrors();
 
@@ -979,13 +979,13 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return 1;
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::NSDictionary1SyntheticFrontEnd::Update() {
   m_pair.reset();
   return lldb::ChildCacheState::eRefetch;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::NSDictionary1SyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   if (idx != 0)
@@ -1065,7 +1065,7 @@ lldb_private::formatters::GenericNSDictionaryMSyntheticFrontEnd<
 }
 
 template <typename D32, typename D64>
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::GenericNSDictionaryMSyntheticFrontEnd<D32,
                                                                 D64>::Update() {
   m_children.clear();
@@ -1101,7 +1101,7 @@ lldb_private::formatters::GenericNSDictionaryMSyntheticFrontEnd<D32,
 }
 
 template <typename D32, typename D64>
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::GenericNSDictionaryMSyntheticFrontEnd<
     D32, D64>::GetChildAtIndex(uint32_t idx) {
   lldb::addr_t m_keys_ptr;
@@ -1217,7 +1217,7 @@ llvm::Expected<uint32_t> lldb_private::formatters::Foundation1100::
   return (m_data_32 ? m_data_32->_used : m_data_64->_used);
 }
 
-lldb::ChildCacheState lldb_private::formatters::Foundation1100::
+llvm::Expected<lldb::ChildCacheState> lldb_private::formatters::Foundation1100::
     NSDictionaryMSyntheticFrontEnd::Update() {
   m_children.clear();
   ValueObjectSP valobj_sp = m_backend.GetSP();
@@ -1251,9 +1251,8 @@ lldb::ChildCacheState lldb_private::formatters::Foundation1100::
                          : lldb::ChildCacheState::eRefetch;
 }
 
-lldb::ValueObjectSP
-lldb_private::formatters::Foundation1100::
-  NSDictionaryMSyntheticFrontEnd::GetChildAtIndex(uint32_t idx) {
+llvm::Expected<lldb::ValueObjectSP> lldb_private::formatters::Foundation1100::
+    NSDictionaryMSyntheticFrontEnd::GetChildAtIndex(uint32_t idx) {
   lldb::addr_t m_keys_ptr =
       (m_data_32 ? m_data_32->_keys_addr : m_data_64->_keys_addr);
   lldb::addr_t m_values_ptr =

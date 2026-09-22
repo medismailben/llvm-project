@@ -49,9 +49,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
 private:
   struct DataDescriptor_32 {
@@ -83,9 +83,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
 private:
   struct SetItemDescriptor {
@@ -112,9 +112,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
 private:
 
@@ -373,7 +373,7 @@ lldb_private::formatters::NSSetISyntheticFrontEnd::NSSetISyntheticFrontEnd(
     lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp), m_exe_ctx_ref() {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 lldb_private::formatters::NSSetISyntheticFrontEnd::~NSSetISyntheticFrontEnd() {
@@ -390,7 +390,7 @@ lldb_private::formatters::NSSetISyntheticFrontEnd::CalculateNumChildren() {
   return (m_data_32 ? m_data_32->_used : m_data_64->_used);
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::NSSetISyntheticFrontEnd::Update() {
   m_children.clear();
   delete m_data_32;
@@ -423,7 +423,7 @@ lldb_private::formatters::NSSetISyntheticFrontEnd::Update() {
   return lldb::ChildCacheState::eReuse;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::NSSetISyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   uint32_t num_children = CalculateNumChildrenIgnoringErrors();
@@ -514,7 +514,7 @@ lldb_private::formatters::NSCFSetSyntheticFrontEnd::CalculateNumChildren() {
   return m_hashtable.GetCount();
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::NSCFSetSyntheticFrontEnd::Update() {
   m_children.clear();
   ValueObjectSP valobj_sp = m_backend.GetSP();
@@ -533,7 +533,7 @@ lldb_private::formatters::NSCFSetSyntheticFrontEnd::Update() {
              : lldb::ChildCacheState::eRefetch;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::NSCFSetSyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   lldb::addr_t m_values_ptr = m_hashtable.GetValuePointer();
@@ -622,7 +622,7 @@ lldb_private::formatters::GenericNSSetMSyntheticFrontEnd<
     : SyntheticChildrenFrontEnd(*valobj_sp), m_exe_ctx_ref(),
       m_data_32(nullptr), m_data_64(nullptr) {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 template <typename D32, typename D64>
@@ -644,7 +644,7 @@ lldb_private::formatters::GenericNSSetMSyntheticFrontEnd<
 }
 
 template <typename D32, typename D64>
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::GenericNSSetMSyntheticFrontEnd<D32, D64>::Update() {
   m_children.clear();
   ValueObjectSP valobj_sp = m_backend.GetSP();
@@ -678,9 +678,9 @@ lldb_private::formatters::GenericNSSetMSyntheticFrontEnd<D32, D64>::Update() {
 }
 
 template <typename D32, typename D64>
-lldb::ValueObjectSP
-lldb_private::formatters::
-  GenericNSSetMSyntheticFrontEnd<D32, D64>::GetChildAtIndex(uint32_t idx) {
+llvm::Expected<lldb::ValueObjectSP>
+lldb_private::formatters::GenericNSSetMSyntheticFrontEnd<
+    D32, D64>::GetChildAtIndex(uint32_t idx) {
   lldb::addr_t m_objs_addr =
       (m_data_32 ? m_data_32->_objs_addr : m_data_64->_objs_addr);
 

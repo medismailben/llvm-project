@@ -23,7 +23,7 @@ public:
     return 0;
   }
 
-  virtual lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) {
+  virtual llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) {
     return lldb::ValueObjectSP();
   }
 
@@ -31,13 +31,19 @@ public:
     return llvm::createStringErrorV("type has no child named '{0}'", name);
   }
 
-  virtual lldb::ChildCacheState Update() { return lldb::eRefetch; }
+  virtual llvm::Expected<lldb::ChildCacheState> Update() {
+    return lldb::eRefetch;
+  }
 
-  virtual bool MightHaveChildren() { return true; }
+  virtual llvm::Expected<bool> MightHaveChildren() { return true; }
 
-  virtual lldb::ValueObjectSP GetSyntheticValue() { return nullptr; }
+  virtual llvm::Expected<lldb::ValueObjectSP> GetSyntheticValue() {
+    return lldb::ValueObjectSP();
+  }
 
-  virtual ConstString GetSyntheticTypeName() { return ConstString(); }
+  virtual llvm::Expected<ConstString> GetSyntheticTypeName() {
+    return ConstString();
+  }
 };
 } // namespace lldb_private
 

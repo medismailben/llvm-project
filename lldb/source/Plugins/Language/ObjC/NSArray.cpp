@@ -52,9 +52,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override = 0;
+  llvm::Expected<lldb::ChildCacheState> Update() override = 0;
 
 protected:
   virtual lldb::addr_t GetDataAddress() = 0;
@@ -77,7 +77,7 @@ public:
 
   ~GenericNSArrayMSyntheticFrontEnd() override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
 protected:
   lldb::addr_t GetDataAddress() override;
@@ -212,9 +212,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
 private:
   ExecutionContextRef m_exe_ctx_ref;
@@ -296,11 +296,11 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
-  bool MightHaveChildren() override;
+  llvm::Expected<bool> MightHaveChildren() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 };
@@ -313,9 +313,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 };
@@ -476,7 +476,7 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return GetUsedCount();
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::NSArrayMSyntheticFrontEndBase::GetChildAtIndex(
     uint32_t idx) {
   if (idx >= CalculateNumChildrenIgnoringErrors())
@@ -494,7 +494,7 @@ lldb_private::formatters::NSArrayMSyntheticFrontEndBase::GetChildAtIndex(
 }
 
 template <typename D32, typename D64>
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::GenericNSArrayMSyntheticFrontEnd<D32, D64>::Update() {
   ValueObjectSP valobj_sp = m_backend.GetSP();
   m_ptr_size = 0;
@@ -609,7 +609,7 @@ lldb_private::formatters::GenericNSArrayISyntheticFrontEnd<
 }
 
 template <typename D32, typename D64, bool Inline>
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::GenericNSArrayISyntheticFrontEnd<D32, D64,
                                                            Inline>::Update() {
   ValueObjectSP valobj_sp = m_backend.GetSP();
@@ -643,9 +643,9 @@ lldb_private::formatters::GenericNSArrayISyntheticFrontEnd<D32, D64,
 }
 
 template <typename D32, typename D64, bool Inline>
-lldb::ValueObjectSP
-lldb_private::formatters::GenericNSArrayISyntheticFrontEnd<D32, D64, Inline>::
-  GetChildAtIndex(uint32_t idx) {
+llvm::Expected<lldb::ValueObjectSP>
+lldb_private::formatters::GenericNSArrayISyntheticFrontEnd<
+    D32, D64, Inline>::GetChildAtIndex(uint32_t idx) {
   if (idx >= CalculateNumChildrenIgnoringErrors())
     return lldb::ValueObjectSP();
   lldb::addr_t object_at_idx;
@@ -685,16 +685,17 @@ lldb_private::formatters::NSArray0SyntheticFrontEnd::CalculateNumChildren() {
   return 0;
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::NSArray0SyntheticFrontEnd::Update() {
   return lldb::ChildCacheState::eRefetch;
 }
 
-bool lldb_private::formatters::NSArray0SyntheticFrontEnd::MightHaveChildren() {
+llvm::Expected<bool>
+lldb_private::formatters::NSArray0SyntheticFrontEnd::MightHaveChildren() {
   return false;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::NSArray0SyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   return lldb::ValueObjectSP();
@@ -720,12 +721,12 @@ lldb_private::formatters::NSArray1SyntheticFrontEnd::CalculateNumChildren() {
   return 1;
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::NSArray1SyntheticFrontEnd::Update() {
   return lldb::ChildCacheState::eRefetch;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::NSArray1SyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   static const ConstString g_zero("[0]");

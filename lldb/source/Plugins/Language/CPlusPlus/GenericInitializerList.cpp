@@ -62,7 +62,7 @@ public:
   GenericInitializerListSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
       : SyntheticChildrenFrontEnd(*valobj_sp), m_element_type() {
     if (valobj_sp)
-      Update();
+      UpdateIgnoringErrors();
   }
 
   ~GenericInitializerListSyntheticFrontEnd() override {
@@ -80,9 +80,9 @@ public:
     return m_num_elements;
   }
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override {
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
     if (!m_start)
-      return {};
+      return lldb::ValueObjectSP();
 
     uint64_t offset = static_cast<uint64_t>(idx) * m_element_size;
     offset = offset + m_start->GetValueAsUnsigned(0);
@@ -93,7 +93,7 @@ public:
                                              m_element_type);
   }
 
-  lldb::ChildCacheState Update() override {
+  llvm::Expected<lldb::ChildCacheState> Update() override {
     m_start = nullptr;
     m_num_elements = 0;
     m_element_type = m_backend.GetCompilerType().GetTypeTemplateArgument(0);

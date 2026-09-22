@@ -48,8 +48,8 @@ public:
     return m_has_value ? 1U : 0U;
   }
 
-  ValueObjectSP GetChildAtIndex(uint32_t idx) override;
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
 private:
   bool m_has_value = false;
@@ -62,11 +62,11 @@ GenericOptionalFrontend::GenericOptionalFrontend(ValueObject &valobj,
                                                  StdLib stdlib)
     : SyntheticChildrenFrontEnd(valobj), m_stdlib(stdlib) {
   if (auto target_sp = m_backend.GetTargetSP()) {
-    Update();
+    UpdateIgnoringErrors();
   }
 }
 
-lldb::ChildCacheState GenericOptionalFrontend::Update() {
+llvm::Expected<lldb::ChildCacheState> GenericOptionalFrontend::Update() {
   ValueObjectSP engaged_sp;
 
   if (m_stdlib == StdLib::LibCxx)
@@ -88,7 +88,8 @@ lldb::ChildCacheState GenericOptionalFrontend::Update() {
   return lldb::ChildCacheState::eRefetch;
 }
 
-ValueObjectSP GenericOptionalFrontend::GetChildAtIndex(uint32_t _idx) {
+llvm::Expected<lldb::ValueObjectSP>
+GenericOptionalFrontend::GetChildAtIndex(uint32_t _idx) {
   if (!m_has_value)
     return ValueObjectSP();
 

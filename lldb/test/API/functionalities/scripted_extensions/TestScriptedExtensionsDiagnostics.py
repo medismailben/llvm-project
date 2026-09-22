@@ -19,6 +19,11 @@ Entry points that already return an `llvm::Expected` / `Status` all the way
 to a user-visible surface (`ScriptedFrameProvider::CreateInstance`,
 `StopHookScripted::SetScriptCallback`) propagate the detailed error through
 their return type; tests for those are tracked as follow-up.
+
+The data formatter entry points (synthetic child providers and summary
+providers) report differently again: a ValueObject already knows how to
+render its own error, so those failures appear inline where the value or the
+summary would have been, and the tests just assert on command output.
 """
 
 import os
@@ -225,3 +230,154 @@ class TestScriptedExtensionsDiagnostics(TestBase):
     @expectedFailureAll(bugnumber="ScriptedPlatform has no plugin implementation yet")
     def test_scripted_platform_missing_methods(self):
         self.assert_diagnostic("list_processes")
+
+    # ------------------------------------------------------------------
+    # Data formatters - reported inline, in place of the value or the
+    # summary, the way every other ValueObject error is rendered.
+    #
+    # Formatter registrations are global and outlive the debugger, so each of
+    # these clears them again on the way out.
+    # ------------------------------------------------------------------
+
+    def run_to_breakpoint_with_formatters(self):
+        self.build()
+        lldbutil.run_to_source_breakpoint(self, "break here", lldb.SBFileSpec("main.c"))
+
+        def cleanup():
+            self.runCmd("type summary clear", check=False)
+            self.runCmd("type synth clear", check=False)
+
+        self.addTearDownHook(cleanup)
+
+    def test_synth_provider_init_exception(self):
+        """A provider whose `__init__` raises used to silently fall back to the
+        raw children, which is indistinguishable from no formatter at all."""
+        self.run_to_breakpoint_with_formatters()
+        self.runCmd(
+            "type synthetic add -l "
+            "malformed_scripted_extensions.ExceptionInitSynthProvider Pair"
+        )
+        self.expect(
+            "frame variable pair",
+            substrs=["RuntimeError", "intentional exception from __init__()"],
+        )
+        # And must not present the unformatted children as if all were well.
+        self.expect("frame variable pair", matching=False, substrs=["first = 11"])
+
+    def test_synth_provider_update_exception(self):
+        """`update` raising used to be logged and nothing more, leaving an
+        empty aggregate that reads as a legitimately empty container."""
+        self.run_to_breakpoint_with_formatters()
+        self.runCmd(
+            "type synthetic add -l "
+            "malformed_scripted_extensions.ExceptionUpdateSynthProvider Pair"
+        )
+        self.expect(
+            "frame variable pair",
+            substrs=["update", "intentional exception from update()"],
+        )
+
+    def test_synth_provider_without_update(self):
+        """Not implementing the optional `update` is not a failure, and must
+        stay distinguishable from one that raised."""
+        self.run_to_breakpoint_with_formatters()
+        self.runCmd(
+            "type synthetic add -l "
+            "malformed_scripted_extensions.NoUpdateSynthProvider Pair"
+        )
+        self.expect("frame variable pair", substrs=["first = 11"])
+        self.expect(
+            "frame variable pair", matching=False, substrs=["error", "Traceback"]
+        )
+
+    def test_synth_provider_num_children_exception(self):
+        self.run_to_breakpoint_with_formatters()
+        self.runCmd(
+            "type synthetic add -l "
+            "malformed_scripted_extensions.ExceptionNumChildrenSynthProvider Pair"
+        )
+        self.expect(
+            "frame variable pair",
+            substrs=["intentional exception from num_children()"],
+        )
+
+    def test_synth_provider_one_child_exception(self):
+        """A child that can't be produced must be reported in place, not
+        skipped. ValueObjectPrinter drops a null child without comment, so this
+        used to show two children out of the three num_children promised."""
+        self.run_to_breakpoint_with_formatters()
+        self.runCmd(
+            "type synthetic add -l "
+            "malformed_scripted_extensions.ExceptionOneChildSynthProvider Pair"
+        )
+        self.expect(
+            "frame variable pair",
+            substrs=["intentional exception from get_child_at_index"],
+        )
+        # The children that *can* be produced are still shown.
+        self.expect("frame variable pair", substrs=["first = 11"])
+
+    def test_synth_provider_num_children_error_not_cached(self):
+        """A failed child count must not be cached as a successful zero.
+
+        `SBValue.GetNumChildren()` (no max) is the path that used to do that,
+        after which the error was gone for the rest of the stop and
+        `frame variable` printed an empty aggregate with no diagnostic."""
+        self.run_to_breakpoint_with_formatters()
+        self.runCmd(
+            "type synthetic add -l "
+            "malformed_scripted_extensions.ExceptionNumChildrenSynthProvider Pair"
+        )
+        pair = self.frame().FindVariable("pair")
+        self.assertTrue(pair.IsValid(), "valid SBValue")
+        self.assertEqual(pair.GetNumChildren(), 0)
+        self.expect(
+            "frame variable pair",
+            substrs=["intentional exception from num_children()"],
+        )
+
+    def test_summary_function_exception(self):
+        """An exception from a `-F` summary function used to produce no summary
+        and no error, with only a bare traceback on stderr."""
+        self.run_to_breakpoint_with_formatters()
+        self.runCmd(
+            "type summary add -F malformed_scripted_extensions.exception_summary Pair"
+        )
+        self.expect(
+            "frame variable pair",
+            substrs=["RuntimeError", "intentional exception from summary()"],
+        )
+
+    def test_summary_function_returning_none(self):
+        """Returning None is a value here, not a failure."""
+        self.run_to_breakpoint_with_formatters()
+        self.runCmd(
+            "type summary add -F malformed_scripted_extensions.none_summary Pair"
+        )
+        self.expect("frame variable pair", substrs=["None"])
+
+    def test_summary_function_not_found(self):
+        self.run_to_breakpoint_with_formatters()
+        self.runCmd(
+            "type summary add -F malformed_scripted_extensions.no_such_summary Pair"
+        )
+        self.expect("frame variable pair", substrs=["could not find summary function"])
+
+    def test_class_summary_get_summary_exception(self):
+        """The class-based path already reported this; pin it down so the two
+        summary flavors don't drift apart again.
+
+        There's no `type summary add` flag for a class-based provider yet, so
+        register it through the API."""
+        self.run_to_breakpoint_with_formatters()
+        summary = lldb.SBTypeSummary.CreateWithClassName(
+            "malformed_scripted_extensions.ExceptionGetSummaryProvider"
+        )
+        self.assertTrue(summary.IsValid(), "valid SBTypeSummary")
+        self.dbg.GetDefaultCategory().AddTypeSummary(
+            lldb.SBTypeNameSpecifier("Pair"), summary
+        )
+        self.expect(
+            "frame variable pair",
+            substrs=["intentional exception from get_summary()"],
+        )

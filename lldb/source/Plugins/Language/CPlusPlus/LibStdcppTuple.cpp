@@ -28,9 +28,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
 private:
   // The lifetime of a ValueObject and all its derivative ValueObjects
@@ -46,10 +46,11 @@ private:
 LibStdcppTupleSyntheticFrontEnd::LibStdcppTupleSyntheticFrontEnd(
     lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp) {
-  Update();
+  UpdateIgnoringErrors();
 }
 
-lldb::ChildCacheState LibStdcppTupleSyntheticFrontEnd::Update() {
+llvm::Expected<lldb::ChildCacheState>
+LibStdcppTupleSyntheticFrontEnd::Update() {
   m_members.clear();
 
   ValueObjectSP valobj_backend_sp = m_backend.GetSP();
@@ -84,7 +85,7 @@ lldb::ChildCacheState LibStdcppTupleSyntheticFrontEnd::Update() {
   return lldb::ChildCacheState::eRefetch;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 LibStdcppTupleSyntheticFrontEnd::GetChildAtIndex(uint32_t idx) {
   if (idx < m_members.size() && m_members[idx])
     return m_members[idx]->GetSP();

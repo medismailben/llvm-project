@@ -36,9 +36,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
 private:
   CompilerType GetNodeType();
@@ -62,9 +62,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -82,7 +82,7 @@ lldb_private::formatters::LibcxxStdUnorderedMapSyntheticFrontEnd::
     : SyntheticChildrenFrontEnd(*valobj_sp), m_element_type(),
       m_elements_cache() {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 llvm::Expected<uint32_t> lldb_private::formatters::
@@ -144,7 +144,7 @@ CompilerType lldb_private::formatters::LibcxxStdUnorderedMapSyntheticFrontEnd::
   return node_sp->GetCompilerType().GetTypeTemplateArgument(0).GetPointeeType();
 }
 
-lldb::ValueObjectSP lldb_private::formatters::
+llvm::Expected<lldb::ValueObjectSP> lldb_private::formatters::
     LibcxxStdUnorderedMapSyntheticFrontEnd::GetChildAtIndex(uint32_t idx) {
   if (idx >= CalculateNumChildrenIgnoringErrors())
     return lldb::ValueObjectSP();
@@ -246,7 +246,7 @@ static ValueObjectSP GetTreePointer(ValueObject &table) {
   return tree_sp->GetChildMemberWithName("__next_");
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::LibcxxStdUnorderedMapSyntheticFrontEnd::Update() {
   m_num_elements = 0;
   m_next_element = nullptr;
@@ -294,10 +294,10 @@ lldb_private::formatters::LibCxxUnorderedMapIteratorSyntheticFrontEnd::
     LibCxxUnorderedMapIteratorSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp) {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
-lldb::ChildCacheState lldb_private::formatters::
+llvm::Expected<lldb::ChildCacheState> lldb_private::formatters::
     LibCxxUnorderedMapIteratorSyntheticFrontEnd::Update() {
   m_pair_sp.reset();
 
@@ -378,7 +378,7 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return 2;
 }
 
-lldb::ValueObjectSP lldb_private::formatters::
+llvm::Expected<lldb::ValueObjectSP> lldb_private::formatters::
     LibCxxUnorderedMapIteratorSyntheticFrontEnd::GetChildAtIndex(uint32_t idx) {
   if (m_pair_sp)
     return m_pair_sp->GetChildAtIndex(idx);

@@ -46,7 +46,7 @@ public:
 
   uint32_t CalculateNumChildrenIgnoringErrors(uint32_t max = UINT32_MAX);
 
-  virtual lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) = 0;
+  virtual llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) = 0;
 
   /// Determine the index of a named child. Subscript names ("[N]") are, by
   /// default, handled automatically. For data types which need custom
@@ -56,32 +56,55 @@ public:
     return llvm::createStringErrorV("type has no child named '{0}'", name);
   }
 
-  /// This function is assumed to always succeed and if it fails, the front-end
-  /// should know to deal with it in the correct way (most probably, by refusing
-  /// to return any children). The return value of \ref Update should actually
-  /// be interpreted as "ValueObjectSynthetic cache is good/bad". If this
-  /// function returns \ref lldb::ChildCacheState::eReuse, \ref
-  /// ValueObjectSynthetic is allowed to use the children it fetched
-  /// previously and cached. Otherwise, \ref ValueObjectSynthetic must
-  /// throw away its cache, and query again for children.
-  virtual lldb::ChildCacheState Update() = 0;
+  /// Bring the front end up to date with the current state of the target, and
+  /// report whether \ref ValueObjectSynthetic may keep the children it already
+  /// fetched and cached. If this returns \ref
+  /// lldb::ChildCacheState::eReuse, \ref ValueObjectSynthetic is allowed to
+  /// use them. Otherwise it must throw away its cache and query again.
+  ///
+  /// Fails if the front end could not update at all - in particular, if a
+  /// scripted provider's `update` raised. Most providers do their real work
+  /// here and leave the accessors reading cached state, so an update that
+  /// failed silently shows up as a value with no children, which is
+  /// indistinguishable from an empty container. Callers must surface the
+  /// error rather than assume a cache state.
+  virtual llvm::Expected<lldb::ChildCacheState> Update() = 0;
+
+  /// Call \ref Update and discard both the cache-state answer and any error,
+  /// beyond logging it.
+  ///
+  /// For front ends that call \ref Update from their own constructor, where
+  /// there is no caller to propagate to. Prefer \ref Update anywhere the
+  /// failure can be reported.
+  void UpdateIgnoringErrors();
 
   // if this function returns false, then CalculateNumChildren() MUST return 0
   // since UI frontends might validly decide not to inquire for children given
   // a false return value from this call if it returns true, then
   // CalculateNumChildren() can return any number >= 0 (0 being valid) it
   // should if at all possible be more efficient than CalculateNumChildren()
-  virtual bool MightHaveChildren() { return true; }
+  virtual llvm::Expected<bool> MightHaveChildren() { return true; }
 
-  // if this function returns a non-null ValueObject, then the returned
-  // ValueObject will stand for this ValueObject whenever a "value" request is
-  // made to this ValueObject
-  virtual lldb::ValueObjectSP GetSyntheticValue() { return nullptr; }
+  /// If this returns a non-null ValueObject, it stands for this ValueObject
+  /// whenever a "value" request is made.
+  ///
+  /// A successful null return means "this front end doesn't vend a value",
+  /// which is the common case. That has to stay distinguishable from a
+  /// failure: a scripted provider whose `get_value` raised also can't produce
+  /// one, and treating the two alike shows the user the underlying raw value
+  /// as though it were the right answer.
+  virtual llvm::Expected<lldb::ValueObjectSP> GetSyntheticValue() {
+    return lldb::ValueObjectSP();
+  }
 
-  // if this function returns a non-empty ConstString, then clients are
-  // expected to use the return as the name of the type of this ValueObject for
-  // display purposes
-  virtual ConstString GetSyntheticTypeName() { return ConstString(); }
+  /// If this returns a non-empty ConstString, clients use it as the name of
+  /// this ValueObject's type for display purposes.
+  ///
+  /// As with \ref GetSyntheticValue, a successful empty return ("no opinion")
+  /// must stay distinguishable from a failure.
+  virtual llvm::Expected<ConstString> GetSyntheticTypeName() {
+    return ConstString();
+  }
 
   virtual void *GetImplementation() { return nullptr; }
 
@@ -118,19 +141,21 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override { return 0; }
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override { return nullptr; }
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
+    return lldb::ValueObjectSP();
+  }
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override {
     return llvm::createStringErrorV("type has no child named '{0}'", name);
   }
 
-  lldb::ChildCacheState Update() override {
+  llvm::Expected<lldb::ChildCacheState> Update() override {
     return lldb::ChildCacheState::eRefetch;
   }
 
-  bool MightHaveChildren() override { return false; }
+  llvm::Expected<bool> MightHaveChildren() override { return false; }
 
-  lldb::ValueObjectSP GetSyntheticValue() override = 0;
+  llvm::Expected<lldb::ValueObjectSP> GetSyntheticValue() override = 0;
 
 private:
   SyntheticValueProviderFrontEnd(const SyntheticValueProviderFrontEnd &) =
@@ -262,7 +287,9 @@ public:
 
   bool NonCacheable() const { return m_flags.GetNonCacheable(); }
 
-  bool WantsDereference() const { return m_flags.GetFrontEndWantsDereference();}
+  bool WantsDereference() const {
+    return m_flags.GetFrontEndWantsDereference();
+  }
 
   bool CustomSubscripting() const { return m_flags.GetCustomSubscripting(); }
 
@@ -365,18 +392,20 @@ public:
       return filter->GetCount();
     }
 
-    lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override {
+    llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
       if (idx >= filter->GetCount())
         return lldb::ValueObjectSP();
       return m_backend.GetSyntheticExpressionPathChild(
           filter->GetExpressionPathAtIndex(idx), true);
     }
 
-    lldb::ChildCacheState Update() override {
+    llvm::Expected<lldb::ChildCacheState> Update() override {
       return lldb::ChildCacheState::eRefetch;
     }
 
-    bool MightHaveChildren() override { return filter->GetCount() > 0; }
+    llvm::Expected<bool> MightHaveChildren() override {
+      return filter->GetCount() > 0;
+    }
 
     llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -408,7 +437,8 @@ public:
                                                     lldb::ValueObjectSP)>
       CreateFrontEndCallback;
   CXXSyntheticChildren(const SyntheticChildren::Flags &flags,
-                       const char *description, CreateFrontEndCallback callback);
+                       const char *description,
+                       CreateFrontEndCallback callback);
 
   virtual ~CXXSyntheticChildren();
 
@@ -479,17 +509,17 @@ public:
 
     llvm::Expected<uint32_t> CalculateNumChildren(uint32_t max) override;
 
-    lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+    llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-    lldb::ChildCacheState Update() override;
+    llvm::Expected<lldb::ChildCacheState> Update() override;
 
-    bool MightHaveChildren() override;
+    llvm::Expected<bool> MightHaveChildren() override;
 
     llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
-    lldb::ValueObjectSP GetSyntheticValue() override;
+    llvm::Expected<lldb::ValueObjectSP> GetSyntheticValue() override;
 
-    ConstString GetSyntheticTypeName() override;
+    llvm::Expected<ConstString> GetSyntheticTypeName() override;
 
     void *GetImplementation() override;
 
@@ -549,9 +579,9 @@ private:
   public:
     FrontEnd(ValueObject &backend, SyntheticBytecodeImplementation &impl);
 
-    lldb::ChildCacheState Update() override;
+    llvm::Expected<lldb::ChildCacheState> Update() override;
     llvm::Expected<uint32_t> CalculateNumChildren() override;
-    lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+    llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
     llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
   private:

@@ -183,9 +183,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
 private:
   /// Returns the ValueObject for the _Tree_node at index \ref idx.
@@ -217,13 +217,13 @@ public:
     return m_inner_sp->GetNumChildren();
   }
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override {
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
     if (!m_inner_sp)
       return nullptr;
     return m_inner_sp->GetChildAtIndex(idx);
   }
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override {
     if (!m_inner_sp)
@@ -231,7 +231,9 @@ public:
     return m_inner_sp->GetIndexOfChildWithName(name);
   }
 
-  lldb::ValueObjectSP GetSyntheticValue() override { return m_inner_sp; }
+  llvm::Expected<lldb::ValueObjectSP> GetSyntheticValue() override {
+    return m_inner_sp;
+  }
 
 private:
   ValueObjectSP m_inner_sp;
@@ -244,7 +246,7 @@ lldb_private::formatters::MsvcStlTreeSyntheticFrontEnd::
     MsvcStlTreeSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp) {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 llvm::Expected<uint32_t>
@@ -293,7 +295,7 @@ lldb_private::formatters::MsvcStlTreeSyntheticFrontEnd::GetValueAt(
   return value_sp;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::MsvcStlTreeSyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   uint32_t num_children = CalculateNumChildrenIgnoringErrors();
@@ -318,7 +320,7 @@ lldb_private::formatters::MsvcStlTreeSyntheticFrontEnd::GetChildAtIndex(
   return val_sp->Clone(name.GetString());
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::MsvcStlTreeSyntheticFrontEnd::Update() {
   m_count = UINT32_MAX;
   m_tree = m_begin_node = nullptr;
@@ -333,7 +335,8 @@ lldb_private::formatters::MsvcStlTreeSyntheticFrontEnd::Update() {
   return lldb::ChildCacheState::eRefetch;
 }
 
-lldb::ChildCacheState MsvcStlTreeIterSyntheticFrontEnd::Update() {
+llvm::Expected<lldb::ChildCacheState>
+MsvcStlTreeIterSyntheticFrontEnd::Update() {
   m_inner_sp = nullptr;
   ValueObjectSP node_sp = m_backend.GetChildMemberWithName("_Ptr");
   if (!node_sp)

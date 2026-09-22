@@ -171,6 +171,10 @@ protected:
   uint32_t m_synthetic_children_count;
 
   ConstString m_parent_type_name;
+  /// The provider's answer to `get_type_name`, resolved by UpdateValue.
+  /// Empty means "the provider has no opinion"; GetDisplayTypeName has no way
+  /// to report a failure, so the call is made where one can be reported.
+  ConstString m_synthetic_type_name;
 
   LazyBool m_might_have_children;
 

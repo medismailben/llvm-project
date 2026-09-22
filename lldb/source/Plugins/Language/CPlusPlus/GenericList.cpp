@@ -124,7 +124,7 @@ private:
 template <StlType Stl>
 class AbstractListFrontEnd : public SyntheticChildrenFrontEnd {
 public:
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
 protected:
   AbstractListFrontEnd(ValueObject &valobj)
@@ -152,8 +152,8 @@ public:
   LibCxxForwardListFrontEnd(ValueObject &valobj);
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
-  ValueObjectSP GetChildAtIndex(uint32_t idx) override;
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 };
 
 class LibCxxListFrontEnd : public AbstractListFrontEnd<StlType::LibCxx> {
@@ -162,9 +162,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
 private:
   lldb::addr_t m_node_address = 0;
@@ -177,8 +177,8 @@ public:
   MsvcStlForwardListFrontEnd(ValueObject &valobj);
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
-  ValueObjectSP GetChildAtIndex(uint32_t idx) override;
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 };
 
 class MsvcStlListFrontEnd : public AbstractListFrontEnd<StlType::MsvcStl> {
@@ -187,9 +187,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
 private:
   ValueObject *m_tail = nullptr;
@@ -208,7 +208,7 @@ CompilerType GetMsvcStlElementTypeFromHead(ValueObject &head) {
 } // end anonymous namespace
 
 template <StlType Stl>
-lldb::ChildCacheState AbstractListFrontEnd<Stl>::Update() {
+llvm::Expected<lldb::ChildCacheState> AbstractListFrontEnd<Stl>::Update() {
   m_loop_detected = 0;
   m_count = UINT32_MAX;
   m_head = nullptr;
@@ -286,7 +286,7 @@ ValueObjectSP AbstractListFrontEnd<Stl>::GetItem(size_t idx) {
 
 LibCxxForwardListFrontEnd::LibCxxForwardListFrontEnd(ValueObject &valobj)
     : AbstractListFrontEnd(valobj) {
-  Update();
+  UpdateIgnoringErrors();
 }
 
 llvm::Expected<uint32_t> LibCxxForwardListFrontEnd::CalculateNumChildren() {
@@ -302,7 +302,8 @@ llvm::Expected<uint32_t> LibCxxForwardListFrontEnd::CalculateNumChildren() {
   return m_count;
 }
 
-ValueObjectSP LibCxxForwardListFrontEnd::GetChildAtIndex(uint32_t idx) {
+llvm::Expected<lldb::ValueObjectSP>
+LibCxxForwardListFrontEnd::GetChildAtIndex(uint32_t idx) {
   if (idx >= CalculateNumChildrenIgnoringErrors())
     return nullptr;
 
@@ -333,8 +334,11 @@ ValueObjectSP LibCxxForwardListFrontEnd::GetChildAtIndex(uint32_t idx) {
                                         m_element_type);
 }
 
-lldb::ChildCacheState LibCxxForwardListFrontEnd::Update() {
-  AbstractListFrontEnd::Update();
+llvm::Expected<lldb::ChildCacheState> LibCxxForwardListFrontEnd::Update() {
+  // The shared work can fail in principle; don't drop it on the floor.
+  llvm::Expected<lldb::ChildCacheState> base = AbstractListFrontEnd::Update();
+  if (!base)
+    return base.takeError();
 
   Status err;
   ValueObjectSP backend_addr(m_backend.AddressOf(err));
@@ -365,7 +369,7 @@ lldb::ChildCacheState LibCxxForwardListFrontEnd::Update() {
 LibCxxListFrontEnd::LibCxxListFrontEnd(lldb::ValueObjectSP valobj_sp)
     : AbstractListFrontEnd(*valobj_sp) {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 llvm::Expected<uint32_t> LibCxxListFrontEnd::CalculateNumChildren() {
@@ -404,7 +408,8 @@ llvm::Expected<uint32_t> LibCxxListFrontEnd::CalculateNumChildren() {
   return m_count = (size - 1);
 }
 
-lldb::ValueObjectSP LibCxxListFrontEnd::GetChildAtIndex(uint32_t idx) {
+llvm::Expected<lldb::ValueObjectSP>
+LibCxxListFrontEnd::GetChildAtIndex(uint32_t idx) {
   static ConstString g_value("__value_");
   static ConstString g_next("__next_");
 
@@ -455,8 +460,11 @@ lldb::ValueObjectSP LibCxxListFrontEnd::GetChildAtIndex(uint32_t idx) {
                                         m_element_type);
 }
 
-lldb::ChildCacheState LibCxxListFrontEnd::Update() {
-  AbstractListFrontEnd::Update();
+llvm::Expected<lldb::ChildCacheState> LibCxxListFrontEnd::Update() {
+  // The shared work can fail in principle; don't drop it on the floor.
+  llvm::Expected<lldb::ChildCacheState> base = AbstractListFrontEnd::Update();
+  if (!base)
+    return base.takeError();
   m_tail = nullptr;
   m_node_address = 0;
 
@@ -477,7 +485,7 @@ lldb::ChildCacheState LibCxxListFrontEnd::Update() {
 
 MsvcStlForwardListFrontEnd::MsvcStlForwardListFrontEnd(ValueObject &valobj)
     : AbstractListFrontEnd(valobj) {
-  Update();
+  UpdateIgnoringErrors();
 }
 
 llvm::Expected<uint32_t> MsvcStlForwardListFrontEnd::CalculateNumChildren() {
@@ -493,7 +501,8 @@ llvm::Expected<uint32_t> MsvcStlForwardListFrontEnd::CalculateNumChildren() {
   return m_count;
 }
 
-ValueObjectSP MsvcStlForwardListFrontEnd::GetChildAtIndex(uint32_t idx) {
+llvm::Expected<lldb::ValueObjectSP>
+MsvcStlForwardListFrontEnd::GetChildAtIndex(uint32_t idx) {
   if (idx >= CalculateNumChildrenIgnoringErrors())
     return nullptr;
 
@@ -524,8 +533,11 @@ ValueObjectSP MsvcStlForwardListFrontEnd::GetChildAtIndex(uint32_t idx) {
                                         m_element_type);
 }
 
-lldb::ChildCacheState MsvcStlForwardListFrontEnd::Update() {
-  AbstractListFrontEnd::Update();
+llvm::Expected<lldb::ChildCacheState> MsvcStlForwardListFrontEnd::Update() {
+  // The shared work can fail in principle; don't drop it on the floor.
+  llvm::Expected<lldb::ChildCacheState> base = AbstractListFrontEnd::Update();
+  if (!base)
+    return base.takeError();
 
   if (auto head_sp =
           m_backend.GetChildAtNamePath({"_Mypair", "_Myval2", "_Myhead"}))
@@ -541,7 +553,7 @@ lldb::ChildCacheState MsvcStlForwardListFrontEnd::Update() {
 MsvcStlListFrontEnd::MsvcStlListFrontEnd(lldb::ValueObjectSP valobj_sp)
     : AbstractListFrontEnd(*valobj_sp) {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 llvm::Expected<uint32_t> MsvcStlListFrontEnd::CalculateNumChildren() {
@@ -562,7 +574,8 @@ llvm::Expected<uint32_t> MsvcStlListFrontEnd::CalculateNumChildren() {
   return m_count;
 }
 
-lldb::ValueObjectSP MsvcStlListFrontEnd::GetChildAtIndex(uint32_t idx) {
+llvm::Expected<lldb::ValueObjectSP>
+MsvcStlListFrontEnd::GetChildAtIndex(uint32_t idx) {
   if (idx >= CalculateNumChildrenIgnoringErrors())
     return lldb::ValueObjectSP();
 
@@ -595,8 +608,11 @@ lldb::ValueObjectSP MsvcStlListFrontEnd::GetChildAtIndex(uint32_t idx) {
                                         m_element_type);
 }
 
-lldb::ChildCacheState MsvcStlListFrontEnd::Update() {
-  AbstractListFrontEnd::Update();
+llvm::Expected<lldb::ChildCacheState> MsvcStlListFrontEnd::Update() {
+  // The shared work can fail in principle; don't drop it on the floor.
+  llvm::Expected<lldb::ChildCacheState> base = AbstractListFrontEnd::Update();
+  if (!base)
+    return base.takeError();
   m_tail = nullptr;
   m_head = nullptr;
 

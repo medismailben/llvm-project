@@ -81,7 +81,7 @@ public:
     return m_block_struct_type.GetNumChildren(omit_empty_base_classes, nullptr);
   }
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override {
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
     if (!m_block_struct_type.IsValid()) {
       return lldb::ValueObjectSP();
     }
@@ -140,7 +140,7 @@ public:
 
   // return true if this object is now safe to use forever without ever
   // updating again; the typical (and tested) answer here is 'false'
-  lldb::ChildCacheState Update() override {
+  llvm::Expected<lldb::ChildCacheState> Update() override {
     return lldb::ChildCacheState::eRefetch;
   }
 
@@ -168,7 +168,12 @@ bool lldb_private::formatters::BlockPointerSummaryProvider(
     return false;
   }
 
-  synthetic_children->Update();
+  llvm::Expected<lldb::ChildCacheState> cache_state =
+      synthetic_children->Update();
+  if (!cache_state) {
+    s << '<' << llvm::toString(cache_state.takeError()) << '>';
+    return true;
+  }
 
   static const ConstString s_FuncPtr_name("__FuncPtr");
 
@@ -181,8 +186,13 @@ bool lldb_private::formatters::BlockPointerSummaryProvider(
     return false;
   }
 
-  lldb::ValueObjectSP child_sp =
+  llvm::Expected<lldb::ValueObjectSP> child_or_err =
       synthetic_children->GetChildAtIndex(*index_or_err);
+  if (!child_or_err) {
+    s << '<' << llvm::toString(child_or_err.takeError()) << '>';
+    return true;
+  }
+  lldb::ValueObjectSP child_sp = *child_or_err;
 
   if (!child_sp) {
     return false;

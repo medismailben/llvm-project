@@ -1040,15 +1040,15 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override { return 0; }
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override {
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
     return lldb::ValueObjectSP();
   }
 
-  lldb::ChildCacheState Update() override {
+  llvm::Expected<lldb::ChildCacheState> Update() override {
     return lldb::ChildCacheState::eRefetch;
   }
 
-  bool MightHaveChildren() override { return false; }
+  llvm::Expected<bool> MightHaveChildren() override { return false; }
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override {
     return llvm::createStringErrorV("type has no child named '{0}'", name);

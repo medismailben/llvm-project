@@ -73,9 +73,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -91,9 +91,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -109,7 +109,7 @@ lldb_private::formatters::MsvcStlSmartPointerSyntheticFrontEnd::
     MsvcStlSmartPointerSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp) {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 llvm::Expected<uint32_t> lldb_private::formatters::
@@ -117,7 +117,7 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return (m_ptr_obj ? 1 : 0);
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::MsvcStlSmartPointerSyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   if (!m_ptr_obj)
@@ -140,7 +140,7 @@ lldb_private::formatters::MsvcStlSmartPointerSyntheticFrontEnd::GetChildAtIndex(
   return lldb::ValueObjectSP();
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::MsvcStlSmartPointerSyntheticFrontEnd::Update() {
   m_ptr_obj = nullptr;
 
@@ -208,7 +208,7 @@ lldb_private::formatters::MsvcStlUniquePtrSyntheticFrontEnd::
     MsvcStlUniquePtrSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp) {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 llvm::Expected<uint32_t> lldb_private::formatters::
@@ -218,7 +218,7 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return 0;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::MsvcStlUniquePtrSyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   if (!m_value_ptr_sp)
@@ -241,7 +241,7 @@ lldb_private::formatters::MsvcStlUniquePtrSyntheticFrontEnd::GetChildAtIndex(
   return lldb::ValueObjectSP();
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::MsvcStlUniquePtrSyntheticFrontEnd::Update() {
   ValueObjectSP valobj_sp = m_backend.GetSP();
   if (!valobj_sp)

@@ -17,7 +17,7 @@ namespace {
 class UnorderedFrontEnd : public SyntheticChildrenFrontEnd {
 public:
   UnorderedFrontEnd(ValueObject &valobj) : SyntheticChildrenFrontEnd(valobj) {
-    Update();
+    UpdateIgnoringErrors();
   }
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override {
@@ -26,7 +26,7 @@ public:
     return m_list_sp->GetIndexOfChildWithName(name);
   }
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<uint32_t> CalculateNumChildren() override {
     if (!m_list_sp)
@@ -34,7 +34,7 @@ public:
     return m_list_sp->GetNumChildren();
   }
 
-  ValueObjectSP GetChildAtIndex(uint32_t idx) override {
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
     if (!m_list_sp)
       return nullptr;
     return m_list_sp->GetChildAtIndex(idx);
@@ -46,7 +46,7 @@ private:
 
 } // namespace
 
-lldb::ChildCacheState UnorderedFrontEnd::Update() {
+llvm::Expected<lldb::ChildCacheState> UnorderedFrontEnd::Update() {
   m_list_sp = nullptr;
   ValueObjectSP list_sp = m_backend.GetChildMemberWithName("_List");
   if (!list_sp)

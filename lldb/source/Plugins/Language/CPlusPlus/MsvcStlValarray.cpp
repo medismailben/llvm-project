@@ -25,7 +25,7 @@ public:
   MsvcStlValarraySyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
       : SyntheticChildrenFrontEnd(*valobj_sp) {
     if (valobj_sp)
-      Update();
+      UpdateIgnoringErrors();
   }
 
   llvm::Expected<uint32_t> CalculateNumChildren() override {
@@ -34,9 +34,9 @@ public:
     return m_count;
   }
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override {
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
     if (!m_start || idx >= m_count)
-      return {};
+      return lldb::ValueObjectSP();
 
     uint64_t offset = m_start->GetValueAsUnsigned(0) +
                       static_cast<uint64_t>(idx) * m_element_size;
@@ -47,7 +47,7 @@ public:
                                              m_element_type);
   }
 
-  lldb::ChildCacheState Update() override {
+  llvm::Expected<lldb::ChildCacheState> Update() override {
     m_start = nullptr;
     m_count = 0;
     m_element_size = 0;

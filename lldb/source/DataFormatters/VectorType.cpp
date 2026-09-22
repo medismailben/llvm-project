@@ -231,13 +231,13 @@ public:
     return m_num_children;
   }
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override {
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
     auto num_children_or_err = CalculateNumChildren();
     if (!num_children_or_err)
       return ValueObjectConstResult::Create(
           nullptr, Status::FromError(num_children_or_err.takeError()));
     if (idx >= *num_children_or_err)
-      return {};
+      return lldb::ValueObjectSP();
     auto size_or_err = m_child_type.GetByteSize(nullptr);
     if (!size_or_err)
       return ValueObjectConstResult::Create(
@@ -255,7 +255,7 @@ public:
     return child_sp;
   }
 
-  lldb::ChildCacheState Update() override {
+  llvm::Expected<lldb::ChildCacheState> Update() override {
     m_parent_format = m_backend.GetFormat();
     CompilerType parent_type(m_backend.GetCompilerType());
     CompilerType element_type;
@@ -288,7 +288,12 @@ bool lldb_private::formatters::VectorTypeSummaryProvider(
   if (!synthetic_children)
     return false;
 
-  synthetic_children->Update();
+  llvm::Expected<lldb::ChildCacheState> cache_state =
+      synthetic_children->Update();
+  if (!cache_state) {
+    s << '<' << llvm::toString(cache_state.takeError()) << '>';
+    return true;
+  }
 
   s.PutChar('(');
   bool first = true;
@@ -297,7 +302,13 @@ bool lldb_private::formatters::VectorTypeSummaryProvider(
          len = synthetic_children->CalculateNumChildrenIgnoringErrors();
 
   for (; idx < len; idx++) {
-    auto child_sp = synthetic_children->GetChildAtIndex(idx);
+    llvm::Expected<lldb::ValueObjectSP> child_or_err =
+        synthetic_children->GetChildAtIndex(idx);
+    if (!child_or_err) {
+      s << '<' << llvm::toString(child_or_err.takeError()) << '>';
+      return true;
+    }
+    lldb::ValueObjectSP child_sp = *child_or_err;
     if (!child_sp)
       continue;
     child_sp = child_sp->GetQualifiedRepresentationIfAvailable(

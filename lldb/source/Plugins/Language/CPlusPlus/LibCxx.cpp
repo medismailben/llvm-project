@@ -343,7 +343,7 @@ lldb_private::formatters::LibcxxSharedPtrSyntheticFrontEnd::
     : SyntheticChildrenFrontEnd(*valobj_sp), m_cntrl(nullptr),
       m_ptr_obj(nullptr) {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 llvm::Expected<uint32_t> lldb_private::formatters::
@@ -351,7 +351,7 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return (m_cntrl ? 1 : 0);
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::LibcxxSharedPtrSyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   if (!m_cntrl || !m_ptr_obj)
@@ -374,7 +374,7 @@ lldb_private::formatters::LibcxxSharedPtrSyntheticFrontEnd::GetChildAtIndex(
   return lldb::ValueObjectSP();
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::LibcxxSharedPtrSyntheticFrontEnd::Update() {
   m_cntrl = nullptr;
   m_ptr_obj = nullptr;
@@ -430,7 +430,7 @@ lldb_private::formatters::LibcxxUniquePtrSyntheticFrontEnd::
     LibcxxUniquePtrSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp) {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 lldb_private::formatters::LibcxxUniquePtrSyntheticFrontEnd::
@@ -450,7 +450,7 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return 0;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::LibcxxUniquePtrSyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   if (!m_value_ptr_sp)
@@ -473,7 +473,7 @@ lldb_private::formatters::LibcxxUniquePtrSyntheticFrontEnd::GetChildAtIndex(
   return lldb::ValueObjectSP();
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::LibcxxUniquePtrSyntheticFrontEnd::Update() {
   ValueObjectSP valobj_sp = m_backend.GetSP();
   if (!valobj_sp)

@@ -20,7 +20,7 @@ class ContainerAdaptorFrontEnd : public SyntheticChildrenFrontEnd {
 public:
   ContainerAdaptorFrontEnd(ValueObject &valobj)
       : SyntheticChildrenFrontEnd(valobj) {
-    Update();
+    UpdateIgnoringErrors();
   }
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override {
@@ -29,13 +29,13 @@ public:
     return llvm::createStringErrorV("type has no child named '{0}'", name);
   }
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<uint32_t> CalculateNumChildren() override {
     return m_container_sp ? m_container_sp->GetNumChildren() : 0;
   }
 
-  ValueObjectSP GetChildAtIndex(uint32_t idx) override {
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
     return m_container_sp ? m_container_sp->GetChildAtIndex(idx) : nullptr;
   }
 
@@ -49,7 +49,7 @@ private:
 };
 } // namespace
 
-lldb::ChildCacheState ContainerAdaptorFrontEnd::Update() {
+llvm::Expected<lldb::ChildCacheState> ContainerAdaptorFrontEnd::Update() {
   m_container_sp = nullptr;
   ValueObjectSP c_sp = m_backend.GetChildMemberWithName("c");
   if (!c_sp)

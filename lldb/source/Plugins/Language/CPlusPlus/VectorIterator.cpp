@@ -23,10 +23,11 @@ VectorIteratorSyntheticFrontEnd::VectorIteratorSyntheticFrontEnd(
     : SyntheticChildrenFrontEnd(*valobj_sp), m_exe_ctx_ref(),
       m_item_names(item_names), m_item_sp() {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
-lldb::ChildCacheState VectorIteratorSyntheticFrontEnd::Update() {
+llvm::Expected<lldb::ChildCacheState>
+VectorIteratorSyntheticFrontEnd::Update() {
   m_item_sp.reset();
 
   ValueObjectSP valobj_sp = m_backend.GetSP();
@@ -54,7 +55,7 @@ VectorIteratorSyntheticFrontEnd::CalculateNumChildren() {
   return 1;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 VectorIteratorSyntheticFrontEnd::GetChildAtIndex(uint32_t idx) {
   if (idx == 0)
     return m_item_sp;

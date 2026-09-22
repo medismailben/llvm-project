@@ -33,9 +33,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -52,9 +52,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -74,7 +74,7 @@ lldb_private::formatters::MsvcStlVectorSyntheticFrontEnd::
     MsvcStlVectorSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp), m_element_type() {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 llvm::Expected<uint32_t> lldb_private::formatters::
@@ -107,7 +107,7 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return num_children / m_element_size;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::MsvcStlVectorSyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   if (!m_start || !m_finish)
@@ -122,7 +122,7 @@ lldb_private::formatters::MsvcStlVectorSyntheticFrontEnd::GetChildAtIndex(
                                            m_element_type);
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::MsvcStlVectorSyntheticFrontEnd::Update() {
   m_start = m_finish = nullptr;
   ValueObjectSP data_sp(m_backend.GetChildAtNamePath({"_Mypair", "_Myval2"}));
@@ -162,7 +162,7 @@ lldb_private::formatters::MsvcStlVectorBoolSyntheticFrontEnd::
     : SyntheticChildrenFrontEnd(*valobj_sp), m_bool_type(), m_exe_ctx_ref(),
       m_children() {
   if (valobj_sp) {
-    Update();
+    UpdateIgnoringErrors();
     m_bool_type =
         valobj_sp->GetCompilerType().GetBasicTypeFromAST(lldb::eBasicTypeBool);
   }
@@ -173,18 +173,18 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return m_count;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::MsvcStlVectorBoolSyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   auto iter = m_children.find(idx), end = m_children.end();
   if (iter != end)
     return iter->second;
   if (idx >= m_count)
-    return {};
+    return lldb::ValueObjectSP();
   if (m_base_data_address == 0 || m_count == 0)
-    return {};
+    return lldb::ValueObjectSP();
   if (!m_bool_type)
-    return {};
+    return lldb::ValueObjectSP();
 
   // The vector<bool> is represented as a sequence of `int`s.
   // The size of an `int` is in `m_element_bit_size` (most often 32b).
@@ -197,20 +197,20 @@ lldb_private::formatters::MsvcStlVectorBoolSyntheticFrontEnd::GetChildAtIndex(
 
   ProcessSP process_sp(m_exe_ctx_ref.GetProcessSP());
   if (!process_sp)
-    return {};
+    return lldb::ValueObjectSP();
   Status err;
   Scalar scalar;
   size_t bytes_read = process_sp->ReadScalarIntegerFromMemory(
       byte_location, m_element_bit_size / 8, false, scalar, err);
   if (err.Fail() || bytes_read == 0 || !scalar.IsValid())
-    return {};
+    return lldb::ValueObjectSP();
 
   size_t bit_index = idx % m_element_bit_size;
   bool bit_set = scalar.GetAPSInt()[bit_index];
   std::optional<uint64_t> size =
       llvm::expectedToOptional(m_bool_type.GetByteSize(nullptr));
   if (!size)
-    return {};
+    return lldb::ValueObjectSP();
   WritableDataBufferSP buffer_sp(new DataBufferHeap(*size, 0));
   if (bit_set && buffer_sp && buffer_sp->GetBytes()) {
     // regardless of endianness, anything non-zero is true
@@ -228,7 +228,7 @@ lldb_private::formatters::MsvcStlVectorBoolSyntheticFrontEnd::GetChildAtIndex(
   return retval_sp;
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::MsvcStlVectorBoolSyntheticFrontEnd::Update() {
   m_exe_ctx_ref.Clear();
   m_count = 0;

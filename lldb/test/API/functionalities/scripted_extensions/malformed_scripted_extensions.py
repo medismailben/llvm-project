@@ -300,6 +300,103 @@ class ExceptionScriptedStackFrameRecognizer:
 
 
 # ---------------------------------------------------------------------------
+# Synthetic Child Provider
+# ---------------------------------------------------------------------------
+
+
+class ExceptionInitSynthProvider:
+    """`__init__` raises, so the provider never comes into existence."""
+
+    def __init__(self, valobj, internal_dict):
+        raise RuntimeError("intentional exception from __init__()")
+
+
+class ExceptionUpdateSynthProvider:
+    """`update` raises. Deliberately keeps a safe default in `__init__` and
+    computes nothing, which is the shape real providers have: the accessors
+    read state that `update` was supposed to fill in, so a swallowed failure
+    here looks exactly like a legitimately empty container."""
+
+    def __init__(self, valobj, internal_dict):
+        self.valobj = valobj
+        self.count = 0
+
+    def update(self):
+        raise RuntimeError("intentional exception from update()")
+
+    def num_children(self):
+        return self.count
+
+    def get_child_at_index(self, idx):
+        return None
+
+
+class ExceptionNumChildrenSynthProvider:
+    """`num_children` raises."""
+
+    def __init__(self, valobj, internal_dict):
+        self.valobj = valobj
+
+    def num_children(self):
+        raise RuntimeError("intentional exception from num_children()")
+
+    def get_child_at_index(self, idx):
+        return None
+
+
+class ExceptionOneChildSynthProvider:
+    """Reports three children but raises for the middle one. The other two must
+    still show, and the failing one must not silently disappear."""
+
+    def __init__(self, valobj, internal_dict):
+        self.valobj = valobj
+
+    def num_children(self):
+        return 3
+
+    def get_child_at_index(self, idx):
+        if idx == 1:
+            raise RuntimeError("intentional exception from get_child_at_index")
+        return self.valobj.GetChildMemberWithName("first")
+
+
+class NoUpdateSynthProvider:
+    """A valid provider that doesn't implement the optional `update`, to pin
+    down that "unimplemented" stays distinct from "raised"."""
+
+    def __init__(self, valobj, internal_dict):
+        self.valobj = valobj
+
+    def num_children(self):
+        return 1
+
+    def get_child_at_index(self, idx):
+        return self.valobj.GetChildMemberWithName("first")
+
+
+# ---------------------------------------------------------------------------
+# Summary Provider
+# ---------------------------------------------------------------------------
+
+
+def exception_summary(valobj, internal_dict):
+    raise RuntimeError("intentional exception from summary()")
+
+
+def none_summary(valobj, internal_dict):
+    """Returning None is not a failure: it summarizes as "None"."""
+    return None
+
+
+class ExceptionGetSummaryProvider:
+    """Class-based summary provider whose `get_summary` raises. Constructed
+    with no arguments, per `examples/python/templates/scripted_string_summary.py`."""
+
+    def get_summary(self, valobj, options):
+        raise RuntimeError("intentional exception from get_summary()")
+
+
+# ---------------------------------------------------------------------------
 # Operating System
 # ---------------------------------------------------------------------------
 

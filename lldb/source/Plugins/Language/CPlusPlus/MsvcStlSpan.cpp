@@ -30,9 +30,9 @@ public:
     return m_num_elements;
   }
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -47,14 +47,14 @@ lldb_private::formatters::MsvcStlSpanSyntheticFrontEnd::
     MsvcStlSpanSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp) {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::MsvcStlSpanSyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   if (!m_start)
-    return {};
+    return lldb::ValueObjectSP();
 
   uint64_t offset = idx * m_element_size;
   offset = offset + m_start->GetValueAsUnsigned(0);
@@ -65,7 +65,7 @@ lldb_private::formatters::MsvcStlSpanSyntheticFrontEnd::GetChildAtIndex(
                                            m_element_type);
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::MsvcStlSpanSyntheticFrontEnd::Update() {
   m_start = nullptr;
   m_element_type = CompilerType();

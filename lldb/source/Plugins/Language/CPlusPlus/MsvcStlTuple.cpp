@@ -17,14 +17,14 @@ namespace {
 class TupleFrontEnd : public SyntheticChildrenFrontEnd {
 public:
   TupleFrontEnd(ValueObject &valobj) : SyntheticChildrenFrontEnd(valobj) {
-    Update();
+    UpdateIgnoringErrors();
   }
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
   llvm::Expected<uint32_t> CalculateNumChildren() override {
     return m_elements.size();
   }
-  ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
 private:
   // The lifetime of a ValueObject and all its derivative ValueObjects
@@ -37,7 +37,7 @@ private:
 
 } // namespace
 
-lldb::ChildCacheState TupleFrontEnd::Update() {
+llvm::Expected<lldb::ChildCacheState> TupleFrontEnd::Update() {
   m_elements.clear();
 
   size_t n_elements = 0;
@@ -50,7 +50,8 @@ lldb::ChildCacheState TupleFrontEnd::Update() {
   return lldb::ChildCacheState::eRefetch;
 }
 
-ValueObjectSP TupleFrontEnd::GetChildAtIndex(uint32_t idx) {
+llvm::Expected<lldb::ValueObjectSP>
+TupleFrontEnd::GetChildAtIndex(uint32_t idx) {
   if (idx >= m_elements.size())
     return nullptr;
   if (m_elements[idx])

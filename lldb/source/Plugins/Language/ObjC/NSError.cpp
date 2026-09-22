@@ -124,7 +124,7 @@ public:
     return 0;
   }
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override {
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
     if (idx != 0)
       return lldb::ValueObjectSP();
 
@@ -133,7 +133,7 @@ public:
     return m_child_sp;
   }
 
-  lldb::ChildCacheState Update() override {
+  llvm::Expected<lldb::ChildCacheState> Update() override {
     m_child_ptr = nullptr;
     m_child_sp.reset();
 

@@ -29,11 +29,11 @@ public:
 
   GenericBitsetFrontEnd(ValueObject &valobj, StdLib stdlib);
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
   llvm::Expected<uint32_t> CalculateNumChildren() override {
     return m_elements.size();
   }
-  ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
 private:
   llvm::StringRef GetDataContainerMemberName();
@@ -60,7 +60,7 @@ GenericBitsetFrontEnd::GenericBitsetFrontEnd(ValueObject &valobj, StdLib stdlib)
   if (auto target_sp = m_backend.GetTargetSP()) {
     m_byte_order = target_sp->GetArchitecture().GetByteOrder();
     m_byte_size = target_sp->GetArchitecture().GetAddressByteSize();
-    Update();
+    UpdateIgnoringErrors();
   }
 }
 
@@ -79,7 +79,7 @@ llvm::StringRef GenericBitsetFrontEnd::GetDataContainerMemberName() {
   llvm_unreachable("Unknown StdLib enum");
 }
 
-lldb::ChildCacheState GenericBitsetFrontEnd::Update() {
+llvm::Expected<lldb::ChildCacheState> GenericBitsetFrontEnd::Update() {
   m_elements.clear();
   m_first = nullptr;
 
@@ -111,7 +111,8 @@ lldb::ChildCacheState GenericBitsetFrontEnd::Update() {
   return lldb::ChildCacheState::eRefetch;
 }
 
-ValueObjectSP GenericBitsetFrontEnd::GetChildAtIndex(uint32_t idx) {
+llvm::Expected<lldb::ValueObjectSP>
+GenericBitsetFrontEnd::GetChildAtIndex(uint32_t idx) {
   if (idx >= m_elements.size() || !m_first)
     return ValueObjectSP();
 
@@ -126,19 +127,19 @@ ValueObjectSP GenericBitsetFrontEnd::GetChildAtIndex(uint32_t idx) {
     std::optional<uint64_t> bit_size = llvm::expectedToOptional(
         type.GetBitSize(ctx.GetBestExecutionContextScope()));
     if (!bit_size || *bit_size == 0)
-      return {};
+      return lldb::ValueObjectSP();
     chunk = m_first->GetChildAtIndex(idx / *bit_size);
   } else {
     type = m_first->GetCompilerType();
     chunk = m_first->GetSP();
   }
   if (!type || !chunk)
-    return {};
+    return lldb::ValueObjectSP();
 
   std::optional<uint64_t> bit_size = llvm::expectedToOptional(
       type.GetBitSize(ctx.GetBestExecutionContextScope()));
   if (!bit_size || *bit_size == 0)
-    return {};
+    return lldb::ValueObjectSP();
   size_t chunk_idx = idx % *bit_size;
   uint8_t value = !!(chunk->GetValueAsUnsigned(0) & (uint64_t(1) << chunk_idx));
   DataExtractor data(&value, sizeof(value), m_byte_order, m_byte_size);

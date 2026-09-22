@@ -29,9 +29,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -54,7 +54,7 @@ private:
 LibStdcppUniquePtrSyntheticFrontEnd::LibStdcppUniquePtrSyntheticFrontEnd(
     lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp) {
-  Update();
+  UpdateIgnoringErrors();
 }
 
 ValueObjectSP LibStdcppUniquePtrSyntheticFrontEnd::GetTuple() {
@@ -82,7 +82,8 @@ ValueObjectSP LibStdcppUniquePtrSyntheticFrontEnd::GetTuple() {
   return obj_child_sp;
 }
 
-lldb::ChildCacheState LibStdcppUniquePtrSyntheticFrontEnd::Update() {
+llvm::Expected<lldb::ChildCacheState>
+LibStdcppUniquePtrSyntheticFrontEnd::Update() {
   ValueObjectSP tuple_sp = GetTuple();
 
   if (!tuple_sp)
@@ -91,7 +92,11 @@ lldb::ChildCacheState LibStdcppUniquePtrSyntheticFrontEnd::Update() {
   std::unique_ptr<SyntheticChildrenFrontEnd> tuple_frontend(
       LibStdcppTupleSyntheticFrontEndCreator(nullptr, tuple_sp));
 
-  ValueObjectSP ptr_obj = tuple_frontend->GetChildAtIndex(0);
+  llvm::Expected<ValueObjectSP> ptr_obj_or_err =
+      tuple_frontend->GetChildAtIndex(0);
+  if (!ptr_obj_or_err)
+    return ptr_obj_or_err.takeError();
+  ValueObjectSP ptr_obj = *ptr_obj_or_err;
   if (!ptr_obj)
     return lldb::ChildCacheState::eRefetch;
 
@@ -105,15 +110,18 @@ lldb::ChildCacheState LibStdcppUniquePtrSyntheticFrontEnd::Update() {
   // the deleter is empty and should be hidden.
   if (llvm::expectedToOptional(tuple_sp->GetByteSize()).value_or(0) >
       llvm::expectedToOptional(ptr_obj->GetByteSize()).value_or(0)) {
-    ValueObjectSP del_obj = tuple_frontend->GetChildAtIndex(1);
-    if (del_obj)
+    llvm::Expected<ValueObjectSP> del_obj_or_err =
+        tuple_frontend->GetChildAtIndex(1);
+    if (!del_obj_or_err)
+      return del_obj_or_err.takeError();
+    if (ValueObjectSP del_obj = *del_obj_or_err)
       m_del_obj = del_obj->Clone("deleter").get();
   }
 
   return lldb::ChildCacheState::eRefetch;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 LibStdcppUniquePtrSyntheticFrontEnd::GetChildAtIndex(uint32_t idx) {
   if (idx == 0 && m_ptr_obj)
     return m_ptr_obj->GetSP();

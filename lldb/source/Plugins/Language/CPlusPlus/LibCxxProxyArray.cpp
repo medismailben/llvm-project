@@ -38,9 +38,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -69,7 +69,7 @@ lldb_private::formatters::LibcxxStdProxyArraySyntheticFrontEnd::
     LibcxxStdProxyArraySyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp), m_element_type() {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 lldb_private::formatters::LibcxxStdProxyArraySyntheticFrontEnd::
@@ -99,7 +99,7 @@ llvm::Expected<uint32_t> lldb_private::formatters::
   return num_children / m_element_size_size_t;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 lldb_private::formatters::LibcxxStdProxyArraySyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
   if (!m_base)
@@ -127,7 +127,7 @@ lldb_private::formatters::LibcxxStdProxyArraySyntheticFrontEnd::GetChildAtIndex(
                                            m_element_type);
 }
 
-lldb::ChildCacheState
+llvm::Expected<lldb::ChildCacheState>
 lldb_private::formatters::LibcxxStdProxyArraySyntheticFrontEnd::Update() {
   m_base = nullptr;
   m_start = nullptr;

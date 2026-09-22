@@ -52,9 +52,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -71,9 +71,9 @@ public:
 
   llvm::Expected<uint32_t> CalculateNumChildren() override;
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
@@ -93,10 +93,11 @@ LibstdcppMapIteratorSyntheticFrontEnd::LibstdcppMapIteratorSyntheticFrontEnd(
     : SyntheticChildrenFrontEnd(*valobj_sp), m_exe_ctx_ref(), m_pair_type(),
       m_pair_sp() {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
-lldb::ChildCacheState LibstdcppMapIteratorSyntheticFrontEnd::Update() {
+llvm::Expected<lldb::ChildCacheState>
+LibstdcppMapIteratorSyntheticFrontEnd::Update() {
   ValueObjectSP valobj_sp = m_backend.GetSP();
   if (!valobj_sp)
     return lldb::ChildCacheState::eRefetch;
@@ -139,7 +140,7 @@ LibstdcppMapIteratorSyntheticFrontEnd::CalculateNumChildren() {
   return 2;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 LibstdcppMapIteratorSyntheticFrontEnd::GetChildAtIndex(uint32_t idx) {
   if (m_pair_address != 0 && m_pair_type) {
     if (!m_pair_sp)
@@ -283,7 +284,7 @@ LibStdcppSharedPtrSyntheticFrontEnd::LibStdcppSharedPtrSyntheticFrontEnd(
     lldb::ValueObjectSP valobj_sp)
     : SyntheticChildrenFrontEnd(*valobj_sp) {
   if (valobj_sp)
-    Update();
+    UpdateIgnoringErrors();
 }
 
 llvm::Expected<uint32_t>
@@ -291,7 +292,7 @@ LibStdcppSharedPtrSyntheticFrontEnd::CalculateNumChildren() {
   return 1;
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 LibStdcppSharedPtrSyntheticFrontEnd::GetChildAtIndex(uint32_t idx) {
   if (!m_ptr_obj)
     return nullptr;
@@ -312,7 +313,8 @@ LibStdcppSharedPtrSyntheticFrontEnd::GetChildAtIndex(uint32_t idx) {
   return lldb::ValueObjectSP();
 }
 
-lldb::ChildCacheState LibStdcppSharedPtrSyntheticFrontEnd::Update() {
+llvm::Expected<lldb::ChildCacheState>
+LibStdcppSharedPtrSyntheticFrontEnd::Update() {
   auto backend = m_backend.GetSP();
   if (!backend)
     return lldb::ChildCacheState::eRefetch;

@@ -199,19 +199,19 @@ namespace {
 class VariantFrontEnd : public SyntheticChildrenFrontEnd {
 public:
   VariantFrontEnd(ValueObject &valobj) : SyntheticChildrenFrontEnd(valobj) {
-    Update();
+    UpdateIgnoringErrors();
   }
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
   llvm::Expected<uint32_t> CalculateNumChildren() override { return m_size; }
-  ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
 private:
   size_t m_size = 0;
 };
 } // namespace
 
-lldb::ChildCacheState VariantFrontEnd::Update() {
+llvm::Expected<lldb::ChildCacheState> VariantFrontEnd::Update() {
   m_size = 0;
   ValueObjectSP impl_sp = formatters::GetChildMemberWithName(
       m_backend, {ConstString("__impl_"), ConstString("__impl")});
@@ -231,41 +231,42 @@ lldb::ChildCacheState VariantFrontEnd::Update() {
   return lldb::ChildCacheState::eRefetch;
 }
 
-ValueObjectSP VariantFrontEnd::GetChildAtIndex(uint32_t idx) {
+llvm::Expected<lldb::ValueObjectSP>
+VariantFrontEnd::GetChildAtIndex(uint32_t idx) {
   if (idx >= m_size)
-    return {};
+    return lldb::ValueObjectSP();
 
   ValueObjectSP impl_sp = formatters::GetChildMemberWithName(
       m_backend, {ConstString("__impl_"), ConstString("__impl")});
   if (!impl_sp)
-    return {};
+    return lldb::ValueObjectSP();
 
   auto optional_index_value = LibcxxVariantIndexValue(impl_sp);
 
   if (!optional_index_value)
-    return {};
+    return lldb::ValueObjectSP();
 
   uint64_t index_value = *optional_index_value;
 
   ValueObjectSP nth_head = LibcxxVariantGetNthHead(impl_sp, index_value);
 
   if (!nth_head)
-    return {};
+    return lldb::ValueObjectSP();
 
   CompilerType head_type = nth_head->GetCompilerType();
 
   if (!head_type)
-    return {};
+    return lldb::ValueObjectSP();
 
   CompilerType template_type = head_type.GetTypeTemplateArgument(1);
 
   if (!template_type)
-    return {};
+    return lldb::ValueObjectSP();
 
   ValueObjectSP head_value(nth_head->GetChildMemberWithName("__value"));
 
   if (!head_value)
-    return {};
+    return lldb::ValueObjectSP();
 
   return head_value->Clone("Value");
 }

@@ -144,19 +144,19 @@ namespace {
 class VariantFrontEnd : public SyntheticChildrenFrontEnd {
 public:
   VariantFrontEnd(ValueObject &valobj) : SyntheticChildrenFrontEnd(valobj) {
-    Update();
+    UpdateIgnoringErrors();
   }
 
-  lldb::ChildCacheState Update() override;
+  llvm::Expected<lldb::ChildCacheState> Update() override;
   llvm::Expected<uint32_t> CalculateNumChildren() override { return m_size; }
-  ValueObjectSP GetChildAtIndex(uint32_t idx) override;
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override;
 
 private:
   size_t m_size = 0;
 };
 } // namespace
 
-lldb::ChildCacheState VariantFrontEnd::Update() {
+llvm::Expected<lldb::ChildCacheState> VariantFrontEnd::Update() {
   m_size = 0;
 
   auto index = GetIndexValue(m_backend);
@@ -166,7 +166,8 @@ lldb::ChildCacheState VariantFrontEnd::Update() {
   return lldb::ChildCacheState::eRefetch;
 }
 
-ValueObjectSP VariantFrontEnd::GetChildAtIndex(uint32_t idx) {
+llvm::Expected<lldb::ValueObjectSP>
+VariantFrontEnd::GetChildAtIndex(uint32_t idx) {
   if (idx >= m_size)
     return nullptr;
 

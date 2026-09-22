@@ -44,11 +44,11 @@ public:
     return m_impl.GetNumIndexes();
   }
 
-  lldb::ValueObjectSP GetChildAtIndex(uint32_t idx) override {
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
     return m_impl.GetIndexAtIndex(idx, m_uint_star_type, m_backend);
   }
 
-  lldb::ChildCacheState Update() override {
+  llvm::Expected<lldb::ChildCacheState> Update() override {
     m_impl.Clear();
 
     auto type_system = m_backend.GetCompilerType().GetTypeSystem();
@@ -124,9 +124,13 @@ public:
     return lldb::ChildCacheState::eRefetch;
   }
 
-  bool MightHaveChildren() override { return m_impl.m_mode != Mode::Invalid; }
+  llvm::Expected<bool> MightHaveChildren() override {
+    return m_impl.m_mode != Mode::Invalid;
+  }
 
-  lldb::ValueObjectSP GetSyntheticValue() override { return nullptr; }
+  llvm::Expected<lldb::ValueObjectSP> GetSyntheticValue() override {
+    return lldb::ValueObjectSP();
+  }
 
 protected:
   ObjCLanguageRuntime::ClassDescriptorSP m_descriptor_sp;

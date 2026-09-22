@@ -22,7 +22,7 @@ public:
   MsvcStlExpectedFrontend(ValueObject &valobj)
       : SyntheticChildrenFrontEnd(valobj) {
     if (valobj.GetTargetSP())
-      Update();
+      UpdateIgnoringErrors();
   }
 
   llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override {
@@ -41,13 +41,13 @@ public:
     return m_active ? 1U : 0U;
   }
 
-  ValueObjectSP GetChildAtIndex(uint32_t idx) override {
+  llvm::Expected<lldb::ValueObjectSP> GetChildAtIndex(uint32_t idx) override {
     if (!m_active || idx != 0)
-      return {};
+      return lldb::ValueObjectSP();
     return m_active->Clone(m_has_value ? "Value" : "Unexpected");
   }
 
-  lldb::ChildCacheState Update() override {
+  llvm::Expected<lldb::ChildCacheState> Update() override {
     m_active = nullptr;
     m_has_value = false;
     ValueObjectSP ns = m_backend.GetNonSyntheticValue();

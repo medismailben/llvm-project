@@ -130,6 +130,14 @@ SyntheticChildrenFrontEnd::CalculateNumChildrenIgnoringErrors(uint32_t max) {
   return 0;
 }
 
+void SyntheticChildrenFrontEnd::UpdateIgnoringErrors() {
+  llvm::Expected<lldb::ChildCacheState> cache_state_or_err = Update();
+  if (cache_state_or_err)
+    return;
+  LLDB_LOG_ERRORV(GetLog(LLDBLog::DataFormatters),
+                  cache_state_or_err.takeError(), "{0}");
+}
+
 lldb::ValueObjectSP
 SyntheticChildrenFrontEnd::CreateChildValueObjectFromExpression(
     llvm::StringRef name, llvm::StringRef expression,
@@ -202,7 +210,7 @@ llvm::Error ScriptedSyntheticChildren::FrontEnd::TakeConstructionError() {
   return llvm::createStringError(std::move(m_construction_error));
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 ScriptedSyntheticChildren::FrontEnd::GetChildAtIndex(uint32_t idx) {
   if (!m_interface_sp)
     return lldb::ValueObjectSP();
@@ -228,14 +236,15 @@ ScriptedSyntheticChildren::FrontEnd::CalculateNumChildren(uint32_t max) {
   return m_interface_sp->CalculateNumChildren(max);
 }
 
-lldb::ChildCacheState ScriptedSyntheticChildren::FrontEnd::Update() {
+llvm::Expected<lldb::ChildCacheState>
+ScriptedSyntheticChildren::FrontEnd::Update() {
   if (!m_interface_sp)
     return lldb::ChildCacheState::eRefetch;
 
   return m_interface_sp->Update();
 }
 
-bool ScriptedSyntheticChildren::FrontEnd::MightHaveChildren() {
+llvm::Expected<bool> ScriptedSyntheticChildren::FrontEnd::MightHaveChildren() {
   if (!m_interface_sp)
     return false;
 
@@ -249,14 +258,16 @@ ScriptedSyntheticChildren::FrontEnd::GetIndexOfChildWithName(ConstString name) {
   return m_interface_sp->GetIndexOfChildWithName(name);
 }
 
-lldb::ValueObjectSP ScriptedSyntheticChildren::FrontEnd::GetSyntheticValue() {
+llvm::Expected<lldb::ValueObjectSP>
+ScriptedSyntheticChildren::FrontEnd::GetSyntheticValue() {
   if (!m_interface_sp)
-    return nullptr;
+    return lldb::ValueObjectSP();
 
   return m_interface_sp->GetSyntheticValue();
 }
 
-ConstString ScriptedSyntheticChildren::FrontEnd::GetSyntheticTypeName() {
+llvm::Expected<ConstString>
+ScriptedSyntheticChildren::FrontEnd::GetSyntheticTypeName() {
   if (!m_interface_sp)
     return ConstString();
 
@@ -306,7 +317,8 @@ BytecodeSyntheticChildren::FrontEnd::FrontEnd(
     m_init_results = std::move(data);
 }
 
-lldb::ChildCacheState BytecodeSyntheticChildren::FrontEnd::Update() {
+llvm::Expected<lldb::ChildCacheState>
+BytecodeSyntheticChildren::FrontEnd::Update() {
   if (!m_impl.update) {
     m_self = m_init_results;
     return ChildCacheState::eReuse;
@@ -393,10 +405,10 @@ BytecodeSyntheticChildren::FrontEnd::CalculateNumChildren() {
   return llvm::createStringError("@get_num_children returned invalid value");
 }
 
-lldb::ValueObjectSP
+llvm::Expected<lldb::ValueObjectSP>
 BytecodeSyntheticChildren::FrontEnd::GetChildAtIndex(uint32_t idx) {
   if (!m_impl.get_child_at_index)
-    return {};
+    return lldb::ValueObjectSP();
 
   FormatterBytecode::ControlStack control = {
       m_impl.get_child_at_index->getBuffer()};
@@ -404,23 +416,21 @@ BytecodeSyntheticChildren::FrontEnd::GetChildAtIndex(uint32_t idx) {
   data.emplace_back((uint64_t)idx);
   llvm::Error error = FormatterBytecode::Interpret(
       control, data, FormatterBytecode::sig_get_child_at_index);
-  if (error) {
-    LLDB_LOG_ERROR(GetLog(LLDBLog::DataFormatters), std::move(error),
-                   "@get_child_at_index failed: {0}");
-    return {};
-  }
+  if (error)
+    return llvm::joinErrors(
+        llvm::createStringError("@get_child_at_index failed: "),
+        std::move(error));
 
-  if (data.size() == 0) {
-    LLDB_LOG(GetLog(LLDBLog::DataFormatters),
-             "@get_child_at_index returned empty data stack");
-    return {};
-  }
+  if (data.size() == 0)
+    return llvm::createStringError(
+        "@get_child_at_index returned empty data stack");
 
   const FormatterBytecode::DataStackElement &top = data.back();
   if (auto *child = std::get_if<ValueObjectSP>(&top))
     return *child;
 
-  return {};
+  return llvm::createStringError(
+      "@get_child_at_index did not return a value object");
 }
 
 llvm::Expected<size_t>

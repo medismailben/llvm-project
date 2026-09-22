@@ -1,3 +1,9 @@
+struct Pair {
+  int first;
+  int second;
+};
+
 int main() {
-  return 0; // break here
+  struct Pair pair = {11, 22};
+  return pair.first + pair.second - 33; // break here
 }
