@@ -282,7 +282,20 @@ public:
 
   virtual std::string GetDescription() = 0;
 
-  virtual SyntheticChildrenFrontEnd::UniquePointer
+  /// Create a front end for \a backend.
+  ///
+  /// Fails if the front end could not be created - in particular, for a
+  /// scripted provider, if the Python class could not be instantiated (a
+  /// throwing \c __init__, a mismatched signature, a missing class). Callers
+  /// must surface that error: a provider that silently fails to load is
+  /// indistinguishable from no provider being registered at all, which is
+  /// almost impossible to diagnose from the outside.
+  ///
+  /// A *successful* null return is a different thing, and not an error: it
+  /// means there is no scripted front end to be had here (no target, no
+  /// script interpreter), and the caller should fall back to its default
+  /// behavior.
+  virtual llvm::Expected<SyntheticChildrenFrontEnd::UniquePointer>
   GetFrontEnd(ValueObject &backend) = 0;
 
   typedef std::shared_ptr<SyntheticChildren> SharedPointer;
@@ -376,7 +389,7 @@ public:
     const FrontEnd &operator=(const FrontEnd &) = delete;
   };
 
-  SyntheticChildrenFrontEnd::UniquePointer
+  llvm::Expected<SyntheticChildrenFrontEnd::UniquePointer>
   GetFrontEnd(ValueObject &backend) override {
     return SyntheticChildrenFrontEnd::UniquePointer(
         new FrontEnd(this, backend));
@@ -403,7 +416,7 @@ public:
 
   std::string GetDescription() override;
 
-  SyntheticChildrenFrontEnd::UniquePointer
+  llvm::Expected<SyntheticChildrenFrontEnd::UniquePointer>
   GetFrontEnd(ValueObject &backend) override {
     return SyntheticChildrenFrontEnd::UniquePointer(
         m_create_callback(this, backend.GetSP()));
@@ -455,6 +468,13 @@ public:
 
     bool IsValid();
 
+    /// Take the error, if any, from instantiating the Python class.
+    ///
+    /// Empty if construction succeeded, or if there was simply no scripted
+    /// front end to construct (no target, no script interpreter) - use
+    /// \ref IsValid to tell those two apart.
+    llvm::Error TakeConstructionError();
+
     llvm::Expected<uint32_t> CalculateNumChildren() override;
 
     llvm::Expected<uint32_t> CalculateNumChildren(uint32_t max) override;
@@ -478,18 +498,28 @@ public:
   private:
     std::string m_python_class;
     lldb::ScriptedSyntheticChildrenInterfaceSP m_interface_sp;
+    /// Message from a failed `CreatePluginObject`, empty if none. Held as a
+    /// string rather than an `llvm::Error` so that dropping a FrontEnd whose
+    /// error was never taken can't abort.
+    std::string m_construction_error;
 
     FrontEnd(const FrontEnd &) = delete;
     const FrontEnd &operator=(const FrontEnd &) = delete;
   };
 
-  SyntheticChildrenFrontEnd::UniquePointer
+  llvm::Expected<SyntheticChildrenFrontEnd::UniquePointer>
   GetFrontEnd(ValueObject &backend) override {
-    auto synth_ptr = SyntheticChildrenFrontEnd::UniquePointer(
-        new FrontEnd(m_python_class, backend));
-    if (synth_ptr && ((FrontEnd *)synth_ptr.get())->IsValid())
-      return synth_ptr;
-    return nullptr;
+    auto front_end = std::make_unique<FrontEnd>(m_python_class, backend);
+    // Instantiating the Python class failed. Hand the error back so the
+    // caller can show it; falling through to a null front end here is what
+    // used to make a broken provider look like no provider at all.
+    if (llvm::Error error = front_end->TakeConstructionError())
+      return std::move(error);
+    // Nothing went wrong, there just isn't a scripted front end to be had
+    // (no target, or no script interpreter). Not an error.
+    if (!front_end->IsValid())
+      return SyntheticChildrenFrontEnd::UniquePointer(nullptr);
+    return SyntheticChildrenFrontEnd::UniquePointer(std::move(front_end));
   }
 
 private:
@@ -538,7 +568,7 @@ public:
 
   std::string GetDescription() override;
 
-  SyntheticChildrenFrontEnd::UniquePointer
+  llvm::Expected<SyntheticChildrenFrontEnd::UniquePointer>
   GetFrontEnd(ValueObject &backend) override {
     return SyntheticChildrenFrontEnd::UniquePointer(
         new FrontEnd(backend, m_impl));

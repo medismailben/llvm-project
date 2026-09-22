@@ -23,8 +23,40 @@
 #include "llvm/Support/ErrorExtras.h"
 #include "llvm/Support/FormatAdapters.h"
 #include <memory>
+#include <optional>
 
 namespace lldb_private::dil {
+
+/// Bounds-check \a child_idx against \a synthetic's child count.
+///
+/// Returns std::nullopt if the index is in range, otherwise the message to
+/// report. Distinguishes "that index is out of range" from "the child count
+/// could not be obtained at all" - e.g. a synthetic child provider whose
+/// `num_children` raised. Reporting the latter as a bad index blames the user
+/// for a broken formatter and hides the Python backtrace.
+static std::optional<std::string>
+CheckSyntheticChildIndex(ValueObject &synthetic, int64_t child_idx,
+                         ValueObject &base, llvm::StringRef expr_path) {
+  // Only need to know whether there are more than child_idx children.
+  llvm::Expected<uint32_t> num_children =
+      synthetic.GetNumChildren(static_cast<uint32_t>(child_idx) + 1);
+
+  if (!num_children)
+    return llvm::formatv(
+               "could not get the number of children of \"({0}) {1}\": {2}",
+               base.GetTypeName().AsCString("<invalid type>"), expr_path,
+               llvm::toString(num_children.takeError()))
+        .str();
+
+  if (static_cast<uint32_t>(child_idx) >= *num_children)
+    return llvm::formatv("array index {0} is not valid for \"({1}) {2}\"",
+                         child_idx,
+                         base.GetTypeName().AsCString("<invalid type>"),
+                         expr_path)
+        .str();
+
+  return std::nullopt;
+}
 
 static CompilerType GetBasicType(lldb::TypeSystemSP type_system,
                                  lldb::BasicType basic_type) {
@@ -1604,15 +1636,10 @@ Interpreter::Visit(const ArraySubscriptNode &node) {
         return llvm::make_error<DILDiagnosticError>(m_expr, std::move(err_msg),
                                                     node.GetLocation());
       }
-      if (static_cast<uint32_t>(child_idx) >=
-          synthetic->GetNumChildrenIgnoringErrors()) {
-        std::string err_msg = llvm::formatv(
-            "array index {0} is not valid for \"({1}) {2}\"", child_idx,
-            base->GetTypeName().AsCString("<invalid type>"),
-            var_expr_path_strm.GetData());
-        return llvm::make_error<DILDiagnosticError>(m_expr, std::move(err_msg),
-                                                    node.GetLocation());
-      }
+      if (std::optional<std::string> err_msg = CheckSyntheticChildIndex(
+              *synthetic, child_idx, *base, var_expr_path_strm.GetData()))
+        return llvm::make_error<DILDiagnosticError>(m_expr, std::move(*err_msg),
+                                                   node.GetLocation());
       child_valobj_sp = synthetic->GetChildAtIndex(child_idx);
       if (!child_valobj_sp) {
         std::string err_msg = llvm::formatv(
@@ -1673,15 +1700,10 @@ Interpreter::Visit(const ArraySubscriptNode &node) {
       return llvm::make_error<DILDiagnosticError>(m_expr, std::move(err_msg),
                                                   node.GetLocation(), 1);
     }
-    if (static_cast<uint32_t>(child_idx) >=
-        synthetic->GetNumChildrenIgnoringErrors(child_idx + 1)) {
-      std::string err_msg = llvm::formatv(
-          "array index {0} is not valid for \"({1}) {2}\"", child_idx,
-          base->GetTypeName().AsCString("<invalid type>"),
-          var_expr_path_strm.GetData());
-      return llvm::make_error<DILDiagnosticError>(m_expr, std::move(err_msg),
+    if (std::optional<std::string> err_msg = CheckSyntheticChildIndex(
+            *synthetic, child_idx, *base, var_expr_path_strm.GetData()))
+      return llvm::make_error<DILDiagnosticError>(m_expr, std::move(*err_msg),
                                                   node.GetLocation(), 1);
-    }
     child_valobj_sp = synthetic->GetChildAtIndex(child_idx);
     if (!child_valobj_sp) {
       std::string err_msg = llvm::formatv(

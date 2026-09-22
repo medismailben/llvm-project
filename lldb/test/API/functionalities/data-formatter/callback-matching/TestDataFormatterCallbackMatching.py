@@ -16,6 +16,18 @@ class PythonSynthDataFormatterTestCase(TestBase):
         self.line = line_number("main.cpp", "// Set break point at this line.")
         self.runCmd("settings set target.check-vo-ownership 0")
 
+        # Formatter registrations are global, so they outlive the debugger this
+        # test method used and leak into the next one. A leaked callback matcher
+        # still matches `Derived`, but `formatters_with_callback` is no longer
+        # imported, so the provider can't be instantiated - which used to be
+        # silently ignored (falling back to the raw children the "without a
+        # formatter" assertions below expect) and is now reported.
+        def cleanup():
+            self.runCmd("type summary clear", check=False)
+            self.runCmd("type synth clear", check=False)
+
+        self.addTearDownHook(cleanup)
+
     def test_callback_matchers_api_registration(self):
         """Test data formatter commands."""
         self.build()

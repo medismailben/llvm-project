@@ -1032,8 +1032,21 @@ bool FormatEntity::Formatter::DumpValue(Stream &s,
     // let us display items index_lower thru index_higher of this array
     s.PutChar('[');
 
-    if (index_higher < 0)
-      index_higher = valobj->GetNumChildrenIgnoringErrors() - 1;
+    if (index_higher < 0) {
+      llvm::Expected<uint32_t> num_children = valobj->GetNumChildren();
+      if (!num_children) {
+        // Report rather than print an empty list. This also avoids the
+        // `0 - 1` unsigned underflow that used to turn a failed child count
+        // into an index_higher of 4294967295 and a ~4-billion-iteration loop.
+        s << '<' << llvm::toString(num_children.takeError()) << ">]";
+        return false;
+      }
+      if (*num_children == 0) {
+        s.PutChar(']');
+        return true;
+      }
+      index_higher = *num_children - 1;
+    }
 
     uint32_t max_num_children =
         target->GetTargetSP()->GetMaximumNumberOfChildrenToDisplay();
@@ -1047,18 +1060,22 @@ bool FormatEntity::Formatter::DumpValue(Stream &s,
                   "[Debugger::FormatPrompt] ERROR in getting child item at "
                   "index %" PRId64,
                   index);
+        // Do not fall through and dereference `item`: a synthetic provider
+        // that can't produce this child is a routine failure, not a reason to
+        // crash.
+        s.PutCString("<no child>");
+        success = false;
       } else {
         LLDB_LOGF(
             log,
             "[Debugger::FormatPrompt] special_directions for child item: %s",
             special_directions.data() ? special_directions.data() : "");
-      }
 
-      if (special_directions.empty()) {
-        success &= item->DumpPrintableRepresentation(s, val_obj_display,
-                                                     custom_format);
-      } else {
-        success &= FormatStringRef(special_directions, s, item);
+        if (special_directions.empty())
+          success &= item->DumpPrintableRepresentation(s, val_obj_display,
+                                                       custom_format);
+        else
+          success &= FormatStringRef(special_directions, s, item);
       }
 
       if (--max_num_children == 0) {

@@ -105,9 +105,9 @@ bool SyntheticChildren::IsScripted() { return false; }
 
 std::string SyntheticChildren::GetDescription() { return ""; }
 
-SyntheticChildrenFrontEnd::UniquePointer
+llvm::Expected<SyntheticChildrenFrontEnd::UniquePointer>
 SyntheticChildren::GetFrontEnd(ValueObject &backend) {
-  return nullptr;
+  return SyntheticChildrenFrontEnd::UniquePointer(nullptr);
 }
 
 std::string CXXSyntheticChildren::GetDescription() {
@@ -186,12 +186,21 @@ ScriptedSyntheticChildren::FrontEnd::FrontEnd(std::string pclass,
 
   auto obj_or_err = m_interface_sp->CreatePluginObject(m_python_class, backend);
   if (!obj_or_err) {
-    llvm::consumeError(obj_or_err.takeError());
+    // Keep the message (it carries the Python backtrace) so GetFrontEnd can
+    // hand it to the caller. Dropping it here used to leave a broken provider
+    // looking exactly like an unregistered one.
+    m_construction_error = llvm::toString(obj_or_err.takeError());
     m_interface_sp.reset();
   }
 }
 
 ScriptedSyntheticChildren::FrontEnd::~FrontEnd() = default;
+
+llvm::Error ScriptedSyntheticChildren::FrontEnd::TakeConstructionError() {
+  if (m_construction_error.empty())
+    return llvm::Error::success();
+  return llvm::createStringError(std::move(m_construction_error));
+}
 
 lldb::ValueObjectSP
 ScriptedSyntheticChildren::FrontEnd::GetChildAtIndex(uint32_t idx) {

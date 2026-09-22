@@ -141,20 +141,34 @@ bool lldb_private::python::SWIGBridge::LLDBSwigPythonCallTypeScript(
   }
 
   PyObject *py_dict = (PyObject *)session_dictionary;
-  if (!PythonDictionary::Check(py_dict))
-    return true;
+  if (!PythonDictionary::Check(py_dict)) {
+    // Returning `true` here used to claim success while leaving `retval`
+    // empty, i.e. "this value has no summary".
+    retval = "invalid session dictionary";
+    return false;
+  }
 
   PythonDictionary dict(PyRefType::Borrowed, py_dict);
 
-  PyErr_Cleaner pyerr_cleanup(true); // show Python errors
+  // Any Python error still pending when we leave is a bug: every failure path
+  // below drains it into `retval` instead, so the user sees it attributed to
+  // the value being summarized rather than as a bare traceback on stderr.
+  PyErr_Cleaner pyerr_cleanup(true);
 
   PythonCallable pfunc(PyRefType::Borrowed, pfunc_impl);
 
   if (!pfunc.IsAllocated()) {
     pfunc = PythonObject::ResolveNameWithDictionary<PythonCallable>(
         python_function_name, dict);
-    if (!pfunc.IsAllocated())
+    if (!pfunc.IsAllocated()) {
+      if (PyErr_Occurred())
+        retval = PythonException().ReadBacktrace();
+      else
+        retval = llvm::formatv("could not find summary function '{0}'",
+                               python_function_name)
+                     .str();
       return false;
+    }
 
     if (pyfunct_wrapper) {
       *pyfunct_wrapper = pfunc.get();
@@ -165,7 +179,7 @@ bool lldb_private::python::SWIGBridge::LLDBSwigPythonCallTypeScript(
   PythonObject result;
   auto argc = pfunc.GetArgInfo();
   if (!argc) {
-    llvm::consumeError(argc.takeError());
+    retval = llvm::toString(argc.takeError());
     return false;
   }
 
@@ -175,6 +189,16 @@ bool lldb_private::python::SWIGBridge::LLDBSwigPythonCallTypeScript(
     result = pfunc(value_arg, dict);
   else
     result = pfunc(value_arg, dict, SWIGBridge::ToSWIGWrapper(*options_sp));
+
+  // The summary function raised. `result` is unallocated, and `Str()` on it
+  // yields "", which is indistinguishable from a function that legitimately
+  // produced an empty summary - so the caller used to drop the failure
+  // entirely and print no summary at all. Hand the traceback back in `retval`
+  // instead, the way the class-based `-L` providers already do.
+  if (PyErr_Occurred()) {
+    retval = PythonException().ReadBacktrace();
+    return false;
+  }
 
   retval = result.Str().GetString().str();
 

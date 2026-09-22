@@ -578,6 +578,43 @@ ValueObjectSP StackFrame::DILGetValueForVariableExpressionPath(
   return *valobj_or_error;
 }
 
+/// Bounds-check \a child_index against \a synthetic's child count.
+///
+/// Returns true if the index is in range. On failure sets \a error, and
+/// crucially distinguishes the two reasons it can fail: the count itself may
+/// not be obtainable (a synthetic child provider whose `num_children` raised,
+/// say), which is not the user's index being wrong. Reporting "array index N
+/// is not valid" for a *failed* count blames the user for a broken formatter
+/// and buries the Python backtrace.
+static bool SyntheticChildIndexInRange(ValueObject &synthetic,
+                                       int64_t child_index,
+                                       ValueObject &valobj, Status &error) {
+  // Only need to know whether there are more than child_index children.
+  llvm::Expected<uint32_t> num_children =
+      synthetic.GetNumChildren(static_cast<uint32_t>(child_index) + 1);
+
+  StreamString expr_path_strm;
+  if (!num_children) {
+    valobj.GetExpressionPath(expr_path_strm);
+    error = Status::FromErrorStringWithFormatv(
+        "could not get the number of children of \"({0}) {1}\": {2}",
+        valobj.GetTypeName().AsCString("<invalid type>"),
+        expr_path_strm.GetData(), llvm::toString(num_children.takeError()));
+    return false;
+  }
+
+  if (static_cast<uint32_t>(child_index) >= *num_children) {
+    valobj.GetExpressionPath(expr_path_strm);
+    error = Status::FromErrorStringWithFormat(
+        "array index %ld is not valid for \"(%s) %s\"", child_index,
+        valobj.GetTypeName().AsCString("<invalid type>"),
+        expr_path_strm.GetData());
+    return false;
+  }
+
+  return true;
+}
+
 ValueObjectSP StackFrame::LegacyGetValueForVariableExpressionPath(
     llvm::StringRef var_expr, DynamicValueType use_dynamic, uint32_t options,
     VariableSP &var_sp, Status &error) {
@@ -910,16 +947,10 @@ ValueObjectSP StackFrame::LegacyGetValueForVariableExpressionPath(
                   "\"(%s) %s\" is not an array type",
                   valobj_sp->GetTypeName().AsCString("<invalid type>"),
                   var_expr_path_strm.GetData());
-            } else if (static_cast<uint32_t>(child_index) >=
-                       synthetic
-                           ->GetNumChildrenIgnoringErrors() /* synthetic does
-                                                                not have that
-                                                                many values */) {
-              valobj_sp->GetExpressionPath(var_expr_path_strm);
-              error = Status::FromErrorStringWithFormat(
-                  "array index %ld is not valid for \"(%s) %s\"", child_index,
-                  valobj_sp->GetTypeName().AsCString("<invalid type>"),
-                  var_expr_path_strm.GetData());
+            } else if (!SyntheticChildIndexInRange(*synthetic, child_index,
+                                                   *valobj_sp, error)) {
+              // `error` describes why: either the index is out of range, or
+              // the child count could not be obtained at all.
             } else {
               child_valobj_sp = synthetic->GetChildAtIndex(child_index);
               if (!child_valobj_sp) {
@@ -983,14 +1014,10 @@ ValueObjectSP StackFrame::LegacyGetValueForVariableExpressionPath(
                 "\"(%s) %s\" is not an array type",
                 valobj_sp->GetTypeName().AsCString("<invalid type>"),
                 var_expr_path_strm.GetData());
-          } else if (static_cast<uint32_t>(child_index) >=
-                     synthetic->GetNumChildrenIgnoringErrors() /* synthetic
-                                     does not have that many values */) {
-            valobj_sp->GetExpressionPath(var_expr_path_strm);
-            error = Status::FromErrorStringWithFormat(
-                "array index %ld is not valid for \"(%s) %s\"", child_index,
-                valobj_sp->GetTypeName().AsCString("<invalid type>"),
-                var_expr_path_strm.GetData());
+          } else if (!SyntheticChildIndexInRange(*synthetic, child_index,
+                                                 *valobj_sp, error)) {
+            // `error` describes why: either the index is out of range, or the
+            // child count could not be obtained at all.
           } else {
             child_valobj_sp = synthetic->GetChildAtIndex(child_index);
             if (!child_valobj_sp) {

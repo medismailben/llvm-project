@@ -508,6 +508,13 @@ public:
   /// shouldn't be using this function. It exists primarily to ease the
   /// transition to more pervasive error handling while not all APIs
   /// have been updated.
+  ///
+  /// The error is written only to the (off-by-default) DataFormatters log
+  /// channel, so for a synthetic child provider that raised, this turns a
+  /// Python backtrace into a silent "0 children". Do not use it to decide
+  /// something the user will be told about: a caller that reports "array
+  /// index 3 is not valid" off the back of this blames the user's index for
+  /// what is really a broken formatter. Use \ref GetNumChildren and report.
   uint32_t GetNumChildrenIgnoringErrors(uint32_t max = UINT32_MAX);
   bool HasChildren() { return GetNumChildrenIgnoringErrors() > 0; }
 

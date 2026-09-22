@@ -106,10 +106,12 @@ ValueObjectSynthetic::CalculateNumChildren(uint32_t max) {
     return num_children;
   } else {
     auto num_children_or_err = m_synth_filter_up->CalculateNumChildren(max);
-    if (!num_children_or_err) {
-      m_synthetic_children_count = 0;
+    if (!num_children_or_err)
+      // Leave m_synthetic_children_count at UINT32_MAX. Caching 0 here would
+      // make the next caller take the branch above and get a *successful* 0,
+      // so the error would be reported at most once per stop and every
+      // subsequent query would silently claim the value has no children.
       return num_children_or_err;
-    }
     auto num_children = (m_synthetic_children_count = *num_children_or_err);
     LLDB_LOG(log,
              "[ValueObjectSynthetic::CalculateNumChildren] for VO of name "
@@ -154,7 +156,18 @@ void ValueObjectSynthetic::CreateSynthFilter() {
         valobj_for_frontend = deref_sp.get();
     }
   }
-  m_synth_filter_up = (m_synth_sp->GetFrontEnd(*valobj_for_frontend));
+  m_synth_filter_error.Clear();
+  llvm::Expected<std::unique_ptr<SyntheticChildrenFrontEnd>> frontend_or_err =
+      m_synth_sp->GetFrontEnd(*valobj_for_frontend);
+  if (frontend_or_err) {
+    m_synth_filter_up = std::move(*frontend_or_err);
+  } else {
+    // The provider itself is broken (e.g. a Python `__init__` that raised).
+    // Remember why so UpdateValue can report it: silently falling back to the
+    // dummy front end here would show the user the raw, unformatted children
+    // and no indication that their formatter ever failed to load.
+    m_synth_filter_error = Status::FromError(frontend_or_err.takeError());
+  }
   if (!m_synth_filter_up)
     m_synth_filter_up = std::make_unique<DummySyntheticFrontEnd>(*m_parent);
 }
@@ -183,6 +196,14 @@ bool ValueObjectSynthetic::UpdateValue() {
              GetName(), m_parent_type_name, new_parent_type_name);
     m_parent_type_name = new_parent_type_name;
     CreateSynthFilter();
+  }
+
+  // The provider failed to load at all. Report that instead of quietly
+  // showing the unformatted value, which looks identical to having no
+  // formatter registered and gives the user nothing to go on.
+  if (m_synth_filter_error.Fail()) {
+    m_error = m_synth_filter_error.Clone();
+    return false;
   }
 
   // let our backend do its update

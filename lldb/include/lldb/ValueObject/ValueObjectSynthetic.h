@@ -145,6 +145,11 @@ protected:
   // the type binding while we are alive
   lldb::SyntheticChildrenSP m_synth_sp;
   std::unique_ptr<SyntheticChildrenFrontEnd> m_synth_filter_up;
+  /// Failure from the last `CreateSynthFilter`, e.g. a Python provider whose
+  /// `__init__` raised. Recorded here because `CreateSynthFilter` runs from
+  /// the constructor, which has no way to report; `UpdateValue` publishes it
+  /// into `m_error` so it reaches the user.
+  Status m_synth_filter_error;
 
   typedef std::map<uint32_t, ValueObject *> ByIndexMap;
   typedef std::map<const char *, uint32_t> NameToIndexMap;
