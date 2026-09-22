@@ -86,9 +86,23 @@ ScriptedSyntheticChildrenPythonInterface::GetChildAtIndex(uint32_t idx) {
   return child_or_err->value_or(nullptr);
 }
 
-llvm::Expected<uint32_t>
+llvm::Expected<size_t>
 ScriptedSyntheticChildrenPythonInterface::GetIndexOfChildWithName(
     ConstString name) {
+  // Note: deliberately llvm::createStringError and not createStringErrorV.
+  // The latter is a header-inline template, so it instantiates
+  // make_error<StringError> in *this* translation unit, and liblldb carries
+  // its own hidden copy of StringError::ID. The resulting error then fails
+  // ErrorInfoBase::isA in whichever image consumes it, handleErrors leaves it
+  // unhandled, and consumeError/toString abort in cantFail - killing the
+  // debugger on `frame variable <synthetic>.typo`. createStringError is
+  // out-of-line in libLLVMSupport, so the error carries that image's class
+  // identity and stays consumable.
+  auto no_such_child = [&name]() {
+    return llvm::createStringError(
+        llvm::formatv("type has no child named '{0}'", name).str());
+  };
+
   // A provider without `get_child_index` has no child of that name, which is
   // a friendlier answer than "the method is missing".
   llvm::Expected<std::optional<StructuredData::ObjectSP>> obj_or_err =
@@ -98,15 +112,15 @@ ScriptedSyntheticChildrenPythonInterface::GetIndexOfChildWithName(
 
   StructuredData::ObjectSP obj = obj_or_err->value_or(nullptr);
   if (!obj || !obj->IsValid())
-    return llvm::createStringErrorV("type has no child named '{0}'", name);
+    return no_such_child();
 
   // `CreateStructuredObject` only produces a `SignedInteger` for values that
   // don't fit as unsigned, i.e. negative ones; a non-negative index comes
   // back as `UnsignedInteger` instead, so check the sign this way rather
   // than via `GetSignedIntegerValue`, which would misread every valid index.
   if (obj->GetAsSignedInteger())
-    return llvm::createStringErrorV("type has no child named '{0}'", name);
-  return static_cast<uint32_t>(obj->GetUnsignedIntegerValue());
+    return no_such_child();
+  return static_cast<size_t>(obj->GetUnsignedIntegerValue());
 }
 
 llvm::Expected<lldb::ChildCacheState>

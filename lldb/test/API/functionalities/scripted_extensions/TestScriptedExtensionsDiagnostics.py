@@ -336,6 +336,36 @@ class TestScriptedExtensionsDiagnostics(TestBase):
             substrs=["intentional exception from num_children()"],
         )
 
+    def test_synth_provider_child_index_absent(self):
+        """A name the provider doesn't know is an ordinary "no such member",
+        and must not take the debugger down with it: consuming that error used
+        to abort in cantFail."""
+        self.run_to_breakpoint_with_formatters()
+        self.runCmd(
+            "type synthetic add -l "
+            "malformed_scripted_extensions.ChildIndexSynthProvider Pair"
+        )
+        self.expect("frame variable pair.first", substrs=["11"])
+        self.expect(
+            "frame variable pair.nope",
+            error=True,
+            substrs=["is not a member of"],
+        )
+
+    def test_synth_provider_child_index_exception(self):
+        """`get_child_index` raising is a broken provider, not an absent
+        member, and has to say so rather than report "no member named"."""
+        self.run_to_breakpoint_with_formatters()
+        self.runCmd(
+            "type synthetic add -l "
+            "malformed_scripted_extensions.ExceptionChildIndexSynthProvider Pair"
+        )
+        self.expect(
+            "frame variable pair.nope",
+            error=True,
+            substrs=["intentional exception from get_child_index()"],
+        )
+
     def test_summary_function_exception(self):
         """An exception from a `-F` summary function used to produce no summary
         and no error, with only a bare traceback on stderr."""

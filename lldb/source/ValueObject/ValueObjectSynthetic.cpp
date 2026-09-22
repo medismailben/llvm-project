@@ -15,6 +15,7 @@
 #include "lldb/Utility/ConstString.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
+#include "lldb/Utility/ScriptedExtensionError.h"
 #include "lldb/Utility/Status.h"
 #include "lldb/ValueObject/ValueObject.h"
 #include "lldb/ValueObject/ValueObjectConstResult.h"
@@ -416,6 +417,18 @@ ValueObjectSynthetic::GetChildMemberWithName(llvm::StringRef name,
   auto index_or_err = GetIndexOfChildWithName(name);
 
   if (!index_or_err) {
+    // A broken provider is worth reporting; callers otherwise get the same
+    // null they get for a name that genuinely isn't there, and report "no
+    // member named ..." while the Python backtrace goes only to the log.
+    //
+    // Absence still has to stay a null return: a great deal of formatter code
+    // probes for an optional member and keys off null to decide layout.
+    if (index_or_err.errorIsA<ScriptedExtensionError>()) {
+      ExecutionContext exe_ctx(GetExecutionContextRef());
+      return ValueObjectConstResult::Create(
+          exe_ctx.GetBestExecutionContextScope(),
+          Status::FromError(index_or_err.takeError()));
+    }
     LLDB_LOG_ERROR(GetLog(LLDBLog::DataFormatters), index_or_err.takeError(),
                    "{0}");
     return lldb::ValueObjectSP();
@@ -449,13 +462,19 @@ ValueObjectSynthetic::GetIndexOfChildWithName(llvm::StringRef name_ref) {
     if (m_synth_sp->CustomSubscripting())
       return index_or_err.takeError();
 
+    // The provider is broken rather than merely unable to name this child.
+    // Don't paper over that by subscripting: it would silently return some
+    // other child, or a confusing out-of-range error.
+    if (index_or_err.errorIsA<ScriptedExtensionError>())
+      return index_or_err.takeError();
+
     // Provide automatic support for subscript child names ("[N]").
     auto maybe_index = formatters::ExtractIndexFromString(name.GetCString());
     if (!maybe_index)
       // The child name was not of the form "[N]", return the original error.
       return index_or_err.takeError();
 
-    // Subscripting succeeded, ignore the original error.
+    // Subscripting succeeded, and the front end merely didn't know the name.
     llvm::consumeError(index_or_err.takeError());
     index = *maybe_index;
 

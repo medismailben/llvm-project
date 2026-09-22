@@ -360,6 +360,42 @@ class ExceptionOneChildSynthProvider:
         return self.valobj.GetChildMemberWithName("first")
 
 
+class ChildIndexSynthProvider:
+    """`get_child_index` answers "no such child" for anything it doesn't know.
+
+    Exercises the *absence* half of the child-name lookup, which has to stay
+    distinguishable from a provider that raised - and which used to abort the
+    debugger when the resulting error was consumed."""
+
+    def __init__(self, valobj, internal_dict):
+        self.valobj = valobj
+
+    def num_children(self):
+        return 1
+
+    def get_child_at_index(self, idx):
+        return self.valobj.GetChildMemberWithName("first")
+
+    def get_child_index(self, name):
+        return 0 if name == "first" else -1
+
+
+class ExceptionChildIndexSynthProvider:
+    """`get_child_index` raises."""
+
+    def __init__(self, valobj, internal_dict):
+        self.valobj = valobj
+
+    def num_children(self):
+        return 1
+
+    def get_child_at_index(self, idx):
+        return self.valobj.GetChildMemberWithName("first")
+
+    def get_child_index(self, name):
+        raise RuntimeError("intentional exception from get_child_index()")
+
+
 class NoUpdateSynthProvider:
     """A valid provider that doesn't implement the optional `update`, to pin
     down that "unimplemented" stays distinct from "raised"."""

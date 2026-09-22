@@ -27,7 +27,10 @@ public:
     return lldb::ValueObjectSP();
   }
 
-  virtual llvm::Expected<uint32_t> GetIndexOfChildWithName(ConstString name) {
+  // Returns size_t, matching SyntheticChildrenFrontEnd, so the front end can
+  // forward this result without converting between two different
+  // Expected<T> instantiations.
+  virtual llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) {
     return llvm::createStringErrorV("type has no child named '{0}'", name);
   }
 

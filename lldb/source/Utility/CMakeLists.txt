@@ -60,6 +60,7 @@ add_lldb_library(lldbUtility NO_INTERNAL_DEPENDENCIES
   RegularExpression.cpp
   Instrumentation.cpp
   Scalar.cpp
+  ScriptedExtensionError.cpp
   SelectHelper.cpp
   State.cpp
   Status.cpp

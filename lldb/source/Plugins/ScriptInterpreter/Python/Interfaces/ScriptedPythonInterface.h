@@ -19,6 +19,7 @@
 #include "lldb/Interpreter/Interfaces/ScriptedInterface.h"
 #include "lldb/Utility/DataBufferHeap.h"
 #include "lldb/Utility/Policy.h"
+#include "lldb/Utility/ScriptedExtensionError.h"
 
 #include "../PythonDataObjects.h"
 #include "../SWIGPythonBridge.h"
@@ -515,13 +516,17 @@ protected:
   /// The `Expected`-returning counterpart of
   /// `ScriptedInterface::ErrorWithMessage`: it reports the failure instead of
   /// folding it into a default-constructed value.
+  ///
+  /// Typed as a `ScriptedExtensionError` so callers can tell "the script is
+  /// broken" from "the script answered no" - several callbacks express both
+  /// with the same value, and only the latter may be recovered from.
   template <typename... Ts>
   static llvm::Error LogAndError(llvm::StringRef caller_name,
                                  const char *format, Ts &&...ts) {
     std::string message = llvm::formatv(format, std::forward<Ts>(ts)...).str();
     LLDB_LOGF(GetLog(LLDBLog::Script), "%s ERROR = %s", caller_name.data(),
               message.c_str());
-    return llvm::createStringError(message);
+    return llvm::make_error<ScriptedExtensionError>(std::move(message));
   }
 
   /// Log the failure in \a value_or_err and fall back to a default-constructed
