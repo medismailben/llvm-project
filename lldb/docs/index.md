@@ -166,6 +166,7 @@ use/intel_pt
 use/python-reference
 Python API <python_api>
 Python Extensions <python_extensions>
+Python Testing Helpers <python_testing_helpers>
 ```
 
 ```{toctree}

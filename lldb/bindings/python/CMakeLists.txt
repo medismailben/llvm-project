@@ -125,6 +125,30 @@ function(finish_swig_python swig_target lldb_python_bindings_dir lldb_python_tar
     "${LLDB_SOURCE_DIR}/examples/python/templates/scripted_synthetic_children.py"
     )
 
+  # Distribute lldb.testing: a freestanding test-authoring library for lldb
+  # scripting clients (data formatters, ScriptedProcess/ScriptedThread
+  # implementations, scripted frame providers, custom commands). Unlike
+  # lldbsuite.test.*, this has no dependency on a source checkout.
+  create_python_package(
+    ${swig_target}
+    ${lldb_python_target_dir}
+    "testing"
+    FILES
+    "${LLDB_SOURCE_DIR}/examples/python/testing/lldbutil.py"
+    "${LLDB_SOURCE_DIR}/examples/python/testing/run_to_breakpoint.py"
+    "${LLDB_SOURCE_DIR}/examples/python/testing/value_check.py"
+    "${LLDB_SOURCE_DIR}/examples/python/testing/asserts.py"
+    "${LLDB_SOURCE_DIR}/examples/python/testing/expect.py"
+    "${LLDB_SOURCE_DIR}/examples/python/testing/session.py"
+    "${LLDB_SOURCE_DIR}/examples/python/testing/build.py"
+    "${LLDB_SOURCE_DIR}/examples/python/testing/testcase.py"
+    "${LLDB_SOURCE_DIR}/examples/python/testing/command.py"
+    "${LLDB_SOURCE_DIR}/examples/python/testing/runner.py"
+    "${LLDB_SOURCE_DIR}/examples/python/testing/discovery.py"
+    "${LLDB_SOURCE_DIR}/examples/python/testing/gdbremote_case.py"
+    "${LLDB_SOURCE_DIR}/examples/python/testing/pexpect_case.py"
+    )
+
   if(APPLE)
     create_python_package(
       ${swig_target}

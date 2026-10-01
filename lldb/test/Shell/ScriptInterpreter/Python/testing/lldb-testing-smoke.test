@@ -1,0 +1,22 @@
+# REQUIRES: python
+# RUN: %lldb \
+# RUN:   -o "script import lldb.testing; print('LLDB_TESTING_IMPORT_OK')" \
+# RUN:   -o "command script import %S/Inputs/greet_cmd.py" \
+# RUN:   -o "command script import %S/Inputs/test_testing_smoke.py" \
+# RUN:   -o "test_testing_smoke --discover" \
+# RUN:   -o "test_testing_smoke --json" \
+# RUN:   -o q | FileCheck %s
+#
+# Proves lldb.testing is importable and usable with zero involvement from
+# lldbsuite (LLDB's own checkout-only test suite) or any build step.
+
+# CHECK: LLDB_TESTING_IMPORT_OK
+
+# CHECK-LABEL: test_testing_smoke --discover
+# CHECK: test_testing_smoke.TestGreetCommand.test_custom_name: custom name is greeted
+# CHECK: test_testing_smoke.TestGreetCommand.test_default_greeting: default greeting says hello world
+
+# CHECK-LABEL: test_testing_smoke --json
+# CHECK: "testsRun": 2,
+# CHECK: "failures": [],
+# CHECK: "errors": [],

@@ -1,10 +1,9 @@
 import lldb
-from lldbsuite.test.decorators import *
-from lldbsuite.test.lldbtest import *
-from lldbsuite.test import lldbutil
+from lldb.testing import lldbutil
+from lldb.testing.testcase import LLDBTestCase
 
 
-class TestCase(TestBase):
+class TestCase(LLDBTestCase):
     def test_summary_string_with_bare_dollar_char(self):
         self.build()
         lldbutil.run_to_source_breakpoint(self, "break here", lldb.SBFileSpec("main.c"))

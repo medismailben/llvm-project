@@ -1,13 +1,11 @@
 # coding=utf8
 
 import lldb
-from lldbsuite.test.lldbtest import *
-import lldbsuite.test.lldbutil as lldbutil
+from lldb.testing import lldbutil
+from lldb.testing.testcase import LLDBTestCase
 
 
-class CstringUnicodeTestCase(TestBase):
-    NO_DEBUG_INFO_TESTCASE = True
-
+class CstringUnicodeTestCase(LLDBTestCase):
     def test_cstring_unicode(self):
         self.build()
         lldbutil.run_to_source_breakpoint(

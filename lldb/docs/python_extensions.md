@@ -5,6 +5,9 @@ This gives users the ability to tailor their debugging experience to their own n
 
 This page describes some of these scripting extensions:
 
+See {doc}`python_testing_helpers` for a library of helpers to test the
+extensions you write here.
+
 ## Operating System Thread Plugins
 
 ```{eval-rst}

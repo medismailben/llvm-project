@@ -1,11 +1,9 @@
 import lldb
-from lldbsuite.test.lldbtest import *
-import lldbsuite.test.lldbutil as lldbutil
+from lldb.testing import lldbutil
+from lldb.testing.testcase import LLDBTestCase
 
 
-class ArrayTypedefTestCase(TestBase):
-    NO_DEBUG_INFO_TESTCASE = True
-
+class ArrayTypedefTestCase(LLDBTestCase):
     def test_array_typedef(self):
         self.build()
         lldbutil.run_to_source_breakpoint(

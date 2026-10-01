@@ -208,7 +208,11 @@ else:
     lit_config.warning("Could not set a default per-test timeout. " + errormsg)
 
 # Build dotest command.
-dotest_cmd = [os.path.join(config.lldb_src_root, "test", "API", "dotest.py")]
+# dotest_testing.py is a drop-in replacement for dotest.py: it re-execs the
+# real dotest.py, unchanged, for any test file that hasn't been ported to
+# lldb.testing, and only takes the lightweight stdlib-unittest path for
+# files that have.
+dotest_cmd = [os.path.join(config.lldb_src_root, "test", "API", "dotest_testing.py")]
 
 if is_configured("dotest_common_args_str"):
     dotest_cmd.extend(config.dotest_common_args_str.split(";"))
