@@ -8,18 +8,22 @@
 
 #include "CommandOptionsProcessAttach.h"
 
+#include "lldb/Core/Debugger.h"
+#include "lldb/Core/IOHandlerPicker.h"
 #include "lldb/Host/FileSystem.h"
 #include "lldb/Host/HostInfo.h"
 #include "lldb/Host/OptionParser.h"
 #include "lldb/Interpreter/CommandCompletions.h"
 #include "lldb/Interpreter/CommandObject.h"
 #include "lldb/Interpreter/CommandOptionArgumentTable.h"
+#include "lldb/Interpreter/CommandReturnObject.h"
 #include "lldb/Interpreter/OptionArgParser.h"
 #include "lldb/Target/ExecutionContext.h"
 #include "lldb/Target/Platform.h"
 #include "lldb/Target/Target.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 
 using namespace llvm;
 using namespace lldb;
@@ -73,4 +77,64 @@ Status CommandOptionsProcessAttach::SetOptionValue(
 
 llvm::ArrayRef<OptionDefinition> CommandOptionsProcessAttach::GetDefinitions() {
   return llvm::ArrayRef(g_process_attach_options);
+}
+
+lldb::pid_t lldb_private::PickProcessToAttach(Debugger &debugger,
+                                              Platform &platform,
+                                              CommandReturnObject &result) {
+  // Bail out before enumerating processes if nobody can answer the picker.
+  if (!debugger.GetInputFile().GetIsRealTerminal()) {
+    result.AppendError("no process specified, create a target with a file, or "
+                       "specify the --pid or --name");
+    return LLDB_INVALID_PROCESS_ID;
+  }
+
+  ProcessInstanceInfoMatch match_info;
+  ProcessInstanceInfoList proc_infos;
+  platform.FindProcesses(match_info, proc_infos);
+
+  if (proc_infos.empty()) {
+    result.AppendError("no processes found on the current platform");
+    return LLDB_INVALID_PROCESS_ID;
+  }
+
+  std::vector<PickerItem> items;
+  for (const ProcessInstanceInfo &proc : proc_infos) {
+    const ArchSpec &arch = proc.GetArchitecture();
+    PickerItem item;
+    item.id = std::to_string(proc.GetProcessID());
+    item.columns = {
+        {"PID", item.id, /*is_numeric=*/true},
+        {"NAME", proc.GetName().str(), /*is_numeric=*/false},
+        {"ARCH", arch.IsValid() ? arch.GetTriple().getArchName().str() : "",
+         /*is_numeric=*/false},
+    };
+    items.push_back(std::move(item));
+  }
+
+  auto picker_sp = std::make_shared<IOHandlerPicker>(
+      debugger, "Select a process to attach to:", std::move(items),
+      PickerMode::SingleSelect);
+  debugger.RunIOHandlerSync(picker_sp);
+
+  const PickerResult &picked = picker_sp->GetResult();
+  if (picked.was_canceled || picked.selected_ids.empty()) {
+    result.AppendError("no process selected");
+    return LLDB_INVALID_PROCESS_ID;
+  }
+
+  lldb::pid_t pid = LLDB_INVALID_PROCESS_ID;
+  llvm::StringRef(picked.selected_ids.front()).getAsInteger(10, pid);
+
+  auto it = llvm::find_if(proc_infos, [pid](const ProcessInstanceInfo &proc) {
+    return proc.GetProcessID() == pid;
+  });
+  llvm::StringRef name =
+      it != proc_infos.end() ? it->GetName() : llvm::StringRef();
+  if (!name.empty())
+    result.AppendMessageWithFormatv("Attaching to \"{0}\" ({1})...", name, pid);
+  else
+    result.AppendMessageWithFormatv("Attaching to process {0}...", pid);
+
+  return pid;
 }

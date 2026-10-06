@@ -14,6 +14,8 @@
 
 namespace lldb_private {
 
+class CommandReturnObject;
+
 // CommandOptionsProcessAttach
 
 class CommandOptionsProcessAttach : public lldb_private::OptionGroup {
@@ -41,6 +43,12 @@ public:
 
   lldb_private::ProcessAttachInfo attach_info;
 }; // CommandOptionsProcessAttach
+
+/// Show an interactive process picker and return the selected PID.
+/// Returns LLDB_INVALID_PROCESS_ID if canceled or no processes found.
+/// The \a result object is updated with an error message on failure.
+lldb::pid_t PickProcessToAttach(Debugger &debugger, Platform &platform,
+                                CommandReturnObject &result);
 
 } // namespace lldb_private
 
