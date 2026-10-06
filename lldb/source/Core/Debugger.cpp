@@ -1315,6 +1315,22 @@ void Debugger::RestoreInputTerminalState() {
   }
 }
 
+void Debugger::HideStatusline() {
+  // Destroy the statusline rather than just disabling it, so that resizes and
+  // redraws from other threads can't draw it back while it's hidden.
+  std::lock_guard<std::mutex> guard(m_statusline_mutex);
+  m_statusline.reset();
+}
+
+void Debugger::ShowStatusline() {
+  std::lock_guard<std::mutex> guard(m_statusline_mutex);
+  if (!m_statusline && StatuslineSupported()) {
+    m_statusline.emplace(*this);
+    m_statusline->Enable(
+        GetSelectedExecutionContextRef(/*adopt_dummy_target=*/true));
+  }
+}
+
 void Debugger::RedrawStatusline(
     std::optional<ExecutionContextRef> exe_ctx_ref) {
   std::lock_guard<std::mutex> guard(m_statusline_mutex);
