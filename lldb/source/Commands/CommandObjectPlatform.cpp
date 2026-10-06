@@ -10,6 +10,7 @@
 #include "CommandOptionsProcessAttach.h"
 #include "CommandOptionsProcessLaunch.h"
 #include "lldb/Core/Debugger.h"
+#include "lldb/Core/IOHandlerPicker.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Host/OptionParser.h"
@@ -1546,6 +1547,19 @@ public:
         ScriptedMetadataSP metadata_sp = std::make_shared<ScriptedMetadata>(
             m_class_options.GetName(), m_class_options.GetStructuredData());
         m_options.attach_info.SetScriptedMetadata(metadata_sp);
+      }
+
+      // Without a pid or name, let the user pick a process interactively.
+      if (!m_options.attach_info.ProcessInfoSpecified() &&
+          m_class_options.GetName().empty() &&
+          IOHandlerPicker::IsSupported(GetDebugger())) {
+        llvm::Expected<lldb::pid_t> pid =
+            PickProcessToAttach(GetDebugger(), *platform_sp, result);
+        if (!pid) {
+          result.SetError(pid.takeError());
+          return;
+        }
+        m_options.attach_info.SetProcessID(*pid);
       }
 
       Status err;

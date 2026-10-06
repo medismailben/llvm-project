@@ -16,6 +16,7 @@
 #include "lldb/Breakpoint/BreakpointLocation.h"
 #include "lldb/Breakpoint/BreakpointName.h"
 #include "lldb/Breakpoint/BreakpointSite.h"
+#include "lldb/Core/IOHandlerPicker.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Host/OptionParser.h"
@@ -347,6 +348,20 @@ protected:
       ScriptedMetadataSP metadata_sp = std::make_shared<ScriptedMetadata>(
           m_class_options.GetName(), m_class_options.GetStructuredData());
       m_options.attach_info.SetScriptedMetadata(metadata_sp);
+    }
+
+    // Without a pid, name, or target executable to fall back on, let the user
+    // pick a process interactively.
+    if (!m_options.attach_info.ProcessInfoSpecified() &&
+        !target->GetExecutableModule() && m_class_options.GetName().empty() &&
+        IOHandlerPicker::IsSupported(GetDebugger())) {
+      llvm::Expected<lldb::pid_t> pid =
+          PickProcessToAttach(GetDebugger(), *platform_sp, result);
+      if (!pid) {
+        result.SetError(pid.takeError());
+        return;
+      }
+      m_options.attach_info.SetProcessID(*pid);
     }
 
     // Record the old executable module, we want to issue a warning if the
