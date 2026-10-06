@@ -13,6 +13,7 @@
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FormatVariadic.h"
 
 #include "lldb/Utility/SelectHelper.h"
@@ -33,6 +34,7 @@
 #define ANSI_REVERSE_VIDEO ESCAPE "[7m"
 #define ANSI_CURSOR_HOME ESCAPE "[H"
 #define ANSI_CLEAR_SCREEN ESCAPE "[2J"
+#define ANSI_CLEAR_BELOW ESCAPE "[J"
 #define ANSI_HIDE_CURSOR ESCAPE "[?25l"
 #define ANSI_SHOW_CURSOR ESCAPE "[?25h"
 #define ANSI_DISABLE_AUTO_WRAP ESCAPE "[?7l"
@@ -63,6 +65,7 @@ IOHandlerPicker::IOHandlerPicker(Debugger &debugger, llvm::StringRef header,
 
   m_sorted_indices.resize(m_items.size());
   std::iota(m_sorted_indices.begin(), m_sorted_indices.end(), 0);
+  ApplyFilter();
 }
 
 IOHandlerPicker::~IOHandlerPicker() = default;
@@ -135,7 +138,7 @@ void IOHandlerPicker::RestoreTerminalMode() {
   }
 }
 
-IOHandlerPicker::Key IOHandlerPicker::ReadKey() {
+IOHandlerPicker::KeyPress IOHandlerPicker::ReadKey() {
 #if LLDB_ENABLE_TERMIOS
   int fd = GetInputFD();
   auto read_byte = [fd]() -> std::optional<char> {
@@ -152,38 +155,34 @@ IOHandlerPicker::Key IOHandlerPicker::ReadKey() {
   if (m_resize_pipe.CanRead())
     wait_for_input.FDSetRead(resize_fd);
   if (wait_for_input.Select().Fail())
-    return Key::Escape;
+    return {Key::Abort};
   if (m_resize_pipe.CanRead() && wait_for_input.FDIsSetRead(resize_fd)) {
     char buf[32];
     if (llvm::Expected<size_t> bytes = m_resize_pipe.Read(buf, sizeof(buf));
         !bytes)
       llvm::consumeError(bytes.takeError());
-    return Key::Resize;
+    return {Key::Resize};
   }
 
   std::optional<char> c = read_byte();
   if (!c)
-    return Key::Escape;
+    return {Key::Abort};
 
   switch (*c) {
   case '\r':
   case '\n':
-    return Key::Enter;
-  case ' ':
-    return Key::Space;
-  case 'k':
-    return Key::Up;
-  case 'j':
-    return Key::Down;
-  case 's':
-  case 'S':
-    return Key::Sort;
+    return {Key::Enter};
+  case '\b':
+  case 0x7f:
+    return {Key::Backspace};
   case 3: // Raw mode disables SIGINT, so Ctrl+C arrives as a byte.
-    return Key::Escape;
+    return {Key::Abort};
   case '\x1b':
     break;
   default:
-    return Key::Unknown;
+    if (llvm::isPrint(*c))
+      return {Key::Char, *c};
+    return {Key::Unknown};
   }
 
   // A bare ESC looks like the start of an escape sequence, so only treat it as
@@ -192,35 +191,35 @@ IOHandlerPicker::Key IOHandlerPicker::ReadKey() {
   wait_for_sequence.SetTimeout(std::chrono::milliseconds(100));
   wait_for_sequence.FDSetRead(fd);
   if (wait_for_sequence.Select().Fail())
-    return Key::Escape;
+    return {Key::Escape};
 
   // Accept both CSI ("ESC [") and vt100 application mode ("ESC O") sequences.
   std::optional<char> intro = read_byte();
   if (intro != '[' && intro != 'O')
-    return Key::Unknown;
+    return {Key::Unknown};
 
   std::optional<char> code = read_byte();
   if (!code)
-    return Key::Escape;
+    return {Key::Abort};
 
   switch (*code) {
   case 'A':
-    return Key::Up;
+    return {Key::Up};
   case 'B':
-    return Key::Down;
+    return {Key::Down};
   case 'H':
-    return Key::Home;
+    return {Key::Home};
   case 'F':
-    return Key::End;
+    return {Key::End};
   case '5':
   case '6':
     read_byte(); // Consume the trailing '~'.
-    return *code == '5' ? Key::PageUp : Key::PageDown;
+    return {*code == '5' ? Key::PageUp : Key::PageDown};
   default:
-    return Key::Unknown;
+    return {Key::Unknown};
   }
 #else
-  return Key::Escape;
+  return {Key::Abort};
 #endif
 }
 
@@ -274,7 +273,20 @@ void IOHandlerPicker::SortByColumn(std::optional<size_t> col_index,
                      });
   }
 
-  // Jump to the top so the new order is visible.
+  ApplyFilter();
+}
+
+void IOHandlerPicker::ApplyFilter() {
+  m_visible_indices.clear();
+  for (size_t idx : m_sorted_indices) {
+    if (m_query.empty() ||
+        llvm::any_of(m_items[idx].columns, [&](const PickerColumn &col) {
+          return llvm::StringRef(col.value).contains_insensitive(m_query);
+        }))
+      m_visible_indices.push_back(idx);
+  }
+
+  // Jump to the top so the new order or matches are visible.
   m_cursor_index = 0;
   m_viewport_start = 0;
 }
@@ -295,12 +307,19 @@ void IOHandlerPicker::Render() {
 
   write_line(ANSI_BOLD, m_header, m_header.size());
 
-  llvm::StringRef help =
-      m_mode == PickerMode::SingleSelect
-          ? "  jk: navigate  Enter: select  s: sort  ESC: cancel"
-          : "  jk: navigate  Space: toggle  Enter: confirm  s: sort  ESC: "
-            "cancel";
-  write_line(ANSI_FAINT, help, help.size());
+  if (m_searching) {
+    std::string prompt = "  /" + m_query + "_";
+    llvm::StringRef hint = "    Enter: apply  ESC: clear";
+    write_line("", prompt + ANSI_FAINT + hint.str(),
+               prompt.size() + hint.size());
+  } else {
+    llvm::StringRef help = m_mode == PickerMode::SingleSelect
+                               ? "  jk: navigate  Enter: select  s: sort  /: "
+                                 "search  ESC: cancel"
+                               : "  jk: navigate  Space: toggle  Enter: "
+                                 "confirm  s: sort  /: search  ESC: cancel";
+    write_line(ANSI_FAINT, help, help.size());
+  }
 
   std::string column_names(GetPrefixWidth(), ' ');
   for (size_t c = 0; c < m_column_widths.size(); ++c) {
@@ -318,9 +337,9 @@ void IOHandlerPicker::Render() {
   write_line(ANSI_FAINT, column_names, m_row_width);
 
   size_t end = std::min(m_viewport_start + GetViewportHeight(),
-                        m_sorted_indices.size());
+                        m_visible_indices.size());
   for (size_t i = m_viewport_start; i < end; ++i) {
-    size_t item_idx = m_sorted_indices[i];
+    size_t item_idx = m_visible_indices[i];
     bool is_cursor = i == m_cursor_index;
 
     std::string row;
@@ -337,20 +356,130 @@ void IOHandlerPicker::Render() {
     write_line(is_cursor ? ANSI_REVERSE_VIDEO : "", row, row.size());
   }
 
-  std::string footer =
-      m_mode == PickerMode::MultiSelect
-          ? llvm::formatv("  {0}/{1} selected", llvm::count(m_checked, true),
-                          m_items.size())
-                .str()
-          : llvm::formatv("  {0}/{1}", m_cursor_index + 1, m_items.size())
-                .str();
-  if (end < m_sorted_indices.size())
+  std::string footer;
+  if (m_mode == PickerMode::MultiSelect)
+    footer = llvm::formatv("  {0}/{1} selected", llvm::count(m_checked, true),
+                           m_items.size());
+  else if (!m_visible_indices.empty())
+    footer = llvm::formatv("  {0}/{1}", m_cursor_index + 1,
+                           m_visible_indices.size());
+  if (m_visible_indices.empty())
+    footer += "  no matches";
+  else if (!m_query.empty() && !m_searching)
+    footer += "  filter: " + m_query;
+  if (size_t hidden = m_items.size() - m_visible_indices.size())
+    footer += llvm::formatv("  ({0} hidden)", hidden).str();
+  if (end < m_visible_indices.size())
     footer += "  [more below]";
   if (m_viewport_start > 0)
     footer += "  [more above]";
   write_line(ANSI_FAINT, footer, footer.size());
 
+  // Filtering can shrink the list, so erase rows left over from the previous
+  // frame.
+  frame += ANSI_CLEAR_BELOW;
+
   GetOutputStreamFileSP()->Lock() << frame;
+}
+
+void IOHandlerPicker::HandleKey(KeyPress press) {
+  const size_t count = m_visible_indices.size();
+  switch (press.key) {
+  case Key::Up:
+    if (m_cursor_index > 0)
+      --m_cursor_index;
+    break;
+  case Key::Down:
+    if (m_cursor_index + 1 < count)
+      ++m_cursor_index;
+    break;
+  case Key::PageUp:
+    m_cursor_index -= std::min(m_cursor_index, GetViewportHeight());
+    break;
+  case Key::PageDown:
+    if (count)
+      m_cursor_index = std::min(m_cursor_index + GetViewportHeight(), count - 1);
+    break;
+  case Key::Home:
+    m_cursor_index = 0;
+    break;
+  case Key::End:
+    if (count)
+      m_cursor_index = count - 1;
+    break;
+  case Key::Enter:
+    if (m_mode == PickerMode::SingleSelect) {
+      if (!count)
+        break;
+      m_result.selected_ids.push_back(
+          m_items[m_visible_indices[m_cursor_index]].id);
+    } else {
+      // Items hidden by the filter stay checked.
+      for (size_t i = 0; i < m_items.size(); ++i)
+        if (m_checked[i])
+          m_result.selected_ids.push_back(m_items[i].id);
+    }
+    SetIsDone(true);
+    break;
+  case Key::Escape:
+    Cancel();
+    break;
+  case Key::Char:
+    switch (press.ch) {
+    case 'k':
+      HandleKey({Key::Up});
+      break;
+    case 'j':
+      HandleKey({Key::Down});
+      break;
+    case 's':
+    case 'S':
+      CycleSort();
+      break;
+    case ' ':
+      if (m_mode == PickerMode::MultiSelect && count)
+        m_checked[m_visible_indices[m_cursor_index]].flip();
+      break;
+    case '/':
+      m_searching = true;
+      break;
+    }
+    break;
+  case Key::Backspace:
+  case Key::Abort:
+  case Key::Resize:
+  case Key::Unknown:
+    break;
+  }
+}
+
+void IOHandlerPicker::HandleSearchKey(KeyPress press) {
+  switch (press.key) {
+  case Key::Char:
+    m_query += press.ch;
+    ApplyFilter();
+    break;
+  case Key::Backspace:
+    if (m_query.empty()) {
+      m_searching = false;
+      break;
+    }
+    m_query.pop_back();
+    ApplyFilter();
+    break;
+  case Key::Enter:
+    m_searching = false;
+    break;
+  case Key::Escape:
+    m_searching = false;
+    m_query.clear();
+    ApplyFilter();
+    break;
+  default:
+    // Arrow keys keep navigating the matches while typing.
+    HandleKey(press);
+    break;
+  }
 }
 
 void IOHandlerPicker::Run() {
@@ -379,56 +508,17 @@ void IOHandlerPicker::Run() {
   Render();
 
   while (!GetIsDone()) {
-    switch (ReadKey()) {
-    case Key::Up:
-      if (m_cursor_index > 0)
-        --m_cursor_index;
-      break;
-    case Key::Down:
-      if (m_cursor_index + 1 < m_items.size())
-        ++m_cursor_index;
-      break;
-    case Key::PageUp:
-      m_cursor_index -= std::min(m_cursor_index, GetViewportHeight());
-      break;
-    case Key::PageDown:
-      m_cursor_index =
-          std::min(m_cursor_index + GetViewportHeight(), m_items.size() - 1);
-      break;
-    case Key::Home:
-      m_cursor_index = 0;
-      break;
-    case Key::End:
-      m_cursor_index = m_items.size() - 1;
-      break;
-    case Key::Sort:
-      CycleSort();
-      break;
-    case Key::Resize:
+    KeyPress press = ReadKey();
+    if (press.key == Key::Abort) {
+      Cancel();
+    } else if (press.key == Key::Resize) {
       UpdateLayout();
       // Rows may now be narrower than the previous frame, so wipe it.
       GetOutputStreamFileSP()->Lock() << ANSI_CLEAR_SCREEN;
-      break;
-    case Key::Space:
-      if (m_mode == PickerMode::MultiSelect)
-        m_checked[m_sorted_indices[m_cursor_index]].flip();
-      break;
-    case Key::Enter:
-      if (m_mode == PickerMode::SingleSelect) {
-        m_result.selected_ids.push_back(
-            m_items[m_sorted_indices[m_cursor_index]].id);
-      } else {
-        for (size_t i = 0; i < m_items.size(); ++i)
-          if (m_checked[i])
-            m_result.selected_ids.push_back(m_items[i].id);
-      }
-      SetIsDone(true);
-      break;
-    case Key::Escape:
-      Cancel();
-      break;
-    case Key::Unknown:
-      break;
+    } else if (m_searching) {
+      HandleSearchKey(press);
+    } else {
+      HandleKey(press);
     }
 
     if (!GetIsDone()) {

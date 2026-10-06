@@ -44,8 +44,8 @@ struct PickerResult {
 
 /// An interactive ANSI-based picker IOHandler.
 ///
-/// Supports single-select and multi-select modes, column sorting,
-/// vim-style navigation, and scrolling. Works in any terminal that
+/// Supports single-select and multi-select modes, column sorting, filtering
+/// rows by a search query, vim-style navigation, and scrolling. Works in any terminal that
 /// supports basic ANSI escape codes. Falls back to canceled state
 /// if the terminal is not interactive.
 class IOHandlerPicker : public IOHandler {
@@ -71,17 +71,28 @@ private:
     PageDown,
     Home,
     End,
-    Space,
     Enter,
-    Sort,
-    Resize,
+    Backspace,
     Escape,
+    /// Ctrl+C or a read failure, which always cancel the picker.
+    Abort,
+    Resize,
+    /// A printable character, stored in KeyPress::ch.
+    Char,
     Unknown,
+  };
+
+  struct KeyPress {
+    Key key;
+    char ch = 0;
   };
 
   bool EnterRawMode();
   void RestoreTerminalMode();
-  Key ReadKey();
+  KeyPress ReadKey();
+  void HandleKey(KeyPress press);
+  void HandleSearchKey(KeyPress press);
+  void ApplyFilter();
   void Render();
   void ScrollToCursor();
   void CycleSort();
@@ -100,9 +111,14 @@ private:
   std::vector<bool> m_checked;
   size_t m_viewport_start = 0;
 
+  /// Indices into m_items in display order, before and after filtering.
   std::vector<size_t> m_sorted_indices;
+  std::vector<size_t> m_visible_indices;
   std::optional<size_t> m_sort_column_index;
   bool m_sort_ascending = true;
+
+  std::string m_query;
+  bool m_searching = false;
 
   std::vector<size_t> m_column_widths;
   size_t m_row_width = 0;
