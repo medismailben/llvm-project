@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <numeric>
 
 #define ESCAPE "\x1b"
 #define ANSI_NORMAL ESCAPE "[0m"
@@ -43,6 +44,7 @@ using namespace lldb;
 using namespace lldb_private;
 
 static constexpr size_t kColumnGap = 2;
+static constexpr size_t kSortIndicatorWidth = 2;
 
 IOHandlerPicker::IOHandlerPicker(Debugger &debugger, llvm::StringRef header,
                                  std::vector<PickerItem> items,
@@ -58,6 +60,9 @@ IOHandlerPicker::IOHandlerPicker(Debugger &debugger, llvm::StringRef header,
 
   for (const PickerItem &item : m_items)
     m_checked.push_back(item.initially_selected);
+
+  m_sorted_indices.resize(m_items.size());
+  std::iota(m_sorted_indices.begin(), m_sorted_indices.end(), 0);
 }
 
 IOHandlerPicker::~IOHandlerPicker() = default;
@@ -71,7 +76,7 @@ void IOHandlerPicker::ComputeColumnWidths() {
   const std::vector<PickerColumn> &first = m_items.front().columns;
   m_column_widths.clear();
   for (size_t c = 0; c < first.size(); ++c) {
-    size_t width = first[c].name.size();
+    size_t width = first[c].name.size() + kSortIndicatorWidth;
     for (const PickerItem &item : m_items)
       width = std::max(width, item.columns[c].value.size());
     m_column_widths.push_back(width);
@@ -170,6 +175,9 @@ IOHandlerPicker::Key IOHandlerPicker::ReadKey() {
     return Key::Up;
   case 'j':
     return Key::Down;
+  case 's':
+  case 'S':
+    return Key::Sort;
   case 3: // Raw mode disables SIGINT, so Ctrl+C arrives as a byte.
     return Key::Escape;
   case '\x1b':
@@ -225,6 +233,52 @@ void IOHandlerPicker::ScrollToCursor() {
     m_viewport_start = m_cursor_index - viewport + 1;
 }
 
+void IOHandlerPicker::CycleSort() {
+  // unsorted -> col0 asc -> col0 desc -> col1 asc -> ... -> unsorted
+  if (m_column_widths.empty())
+    return;
+  if (!m_sort_column_index)
+    SortByColumn(0, true);
+  else if (m_sort_ascending)
+    SortByColumn(m_sort_column_index, false);
+  else if (*m_sort_column_index + 1 < m_column_widths.size())
+    SortByColumn(*m_sort_column_index + 1, true);
+  else
+    SortByColumn(std::nullopt, true);
+}
+
+void IOHandlerPicker::SortByColumn(std::optional<size_t> col_index,
+                                   bool ascending) {
+  m_sort_column_index = col_index;
+  m_sort_ascending = ascending;
+
+  // Always start from the natural order so ties stay deterministic.
+  std::iota(m_sorted_indices.begin(), m_sorted_indices.end(), 0);
+
+  if (col_index) {
+    size_t col = *col_index;
+    bool numeric = m_items.front().columns[col].is_numeric;
+    auto less = [&](size_t a, size_t b) {
+      llvm::StringRef va = m_items[a].columns[col].value;
+      llvm::StringRef vb = m_items[b].columns[col].value;
+      if (!numeric)
+        return va < vb;
+      int64_t na = 0, nb = 0;
+      va.getAsInteger(10, na);
+      vb.getAsInteger(10, nb);
+      return na < nb;
+    };
+    std::stable_sort(m_sorted_indices.begin(), m_sorted_indices.end(),
+                     [&](size_t a, size_t b) {
+                       return ascending ? less(a, b) : less(b, a);
+                     });
+  }
+
+  // Jump to the top so the new order is visible.
+  m_cursor_index = 0;
+  m_viewport_start = 0;
+}
+
 void IOHandlerPicker::Render() {
   // Build the whole frame first so it reaches the terminal in one write.
   std::string frame = ANSI_CURSOR_HOME;
@@ -243,22 +297,31 @@ void IOHandlerPicker::Render() {
 
   llvm::StringRef help =
       m_mode == PickerMode::SingleSelect
-          ? "  jk: navigate  Enter: select  ESC: cancel"
-          : "  jk: navigate  Space: toggle  Enter: confirm  ESC: cancel";
+          ? "  jk: navigate  Enter: select  s: sort  ESC: cancel"
+          : "  jk: navigate  Space: toggle  Enter: confirm  s: sort  ESC: "
+            "cancel";
   write_line(ANSI_FAINT, help, help.size());
 
   std::string column_names(GetPrefixWidth(), ' ');
   for (size_t c = 0; c < m_column_widths.size(); ++c) {
-    const std::string &name = m_items.front().columns[c].name;
+    std::string name = m_items.front().columns[c].name;
+    bool is_sort_col = m_sort_column_index == c;
+    if (is_sort_col) {
+      name += m_sort_ascending ? " ^" : " v";
+      column_names += ANSI_NORMAL ANSI_BOLD ANSI_UNDERLINE;
+    }
     column_names += name;
+    if (is_sort_col)
+      column_names += ANSI_NORMAL ANSI_FAINT;
     column_names.append(m_column_widths[c] - name.size() + kColumnGap, ' ');
   }
   write_line(ANSI_FAINT, column_names, m_row_width);
 
-  size_t end =
-      std::min(m_viewport_start + GetViewportHeight(), m_items.size());
-  for (size_t item_idx = m_viewport_start; item_idx < end; ++item_idx) {
-    bool is_cursor = item_idx == m_cursor_index;
+  size_t end = std::min(m_viewport_start + GetViewportHeight(),
+                        m_sorted_indices.size());
+  for (size_t i = m_viewport_start; i < end; ++i) {
+    size_t item_idx = m_sorted_indices[i];
+    bool is_cursor = i == m_cursor_index;
 
     std::string row;
     if (m_mode == PickerMode::MultiSelect)
@@ -281,7 +344,7 @@ void IOHandlerPicker::Render() {
                 .str()
           : llvm::formatv("  {0}/{1}", m_cursor_index + 1, m_items.size())
                 .str();
-  if (end < m_items.size())
+  if (end < m_sorted_indices.size())
     footer += "  [more below]";
   if (m_viewport_start > 0)
     footer += "  [more above]";
@@ -338,6 +401,9 @@ void IOHandlerPicker::Run() {
     case Key::End:
       m_cursor_index = m_items.size() - 1;
       break;
+    case Key::Sort:
+      CycleSort();
+      break;
     case Key::Resize:
       UpdateLayout();
       // Rows may now be narrower than the previous frame, so wipe it.
@@ -345,11 +411,12 @@ void IOHandlerPicker::Run() {
       break;
     case Key::Space:
       if (m_mode == PickerMode::MultiSelect)
-        m_checked[m_cursor_index].flip();
+        m_checked[m_sorted_indices[m_cursor_index]].flip();
       break;
     case Key::Enter:
       if (m_mode == PickerMode::SingleSelect) {
-        m_result.selected_ids.push_back(m_items[m_cursor_index].id);
+        m_result.selected_ids.push_back(
+            m_items[m_sorted_indices[m_cursor_index]].id);
       } else {
         for (size_t i = 0; i < m_items.size(); ++i)
           if (m_checked[i])

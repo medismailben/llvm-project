@@ -44,8 +44,8 @@ struct PickerResult {
 
 /// An interactive ANSI-based picker IOHandler.
 ///
-/// Supports single-select and multi-select modes, vim-style navigation, and
-/// scrolling. Works in any terminal that
+/// Supports single-select and multi-select modes, column sorting,
+/// vim-style navigation, and scrolling. Works in any terminal that
 /// supports basic ANSI escape codes. Falls back to canceled state
 /// if the terminal is not interactive.
 class IOHandlerPicker : public IOHandler {
@@ -73,6 +73,7 @@ private:
     End,
     Space,
     Enter,
+    Sort,
     Resize,
     Escape,
     Unknown,
@@ -83,6 +84,8 @@ private:
   Key ReadKey();
   void Render();
   void ScrollToCursor();
+  void CycleSort();
+  void SortByColumn(std::optional<size_t> col_index, bool ascending);
   void ComputeColumnWidths();
   void UpdateLayout();
   size_t GetPrefixWidth() const;
@@ -96,6 +99,10 @@ private:
   size_t m_cursor_index = 0;
   std::vector<bool> m_checked;
   size_t m_viewport_start = 0;
+
+  std::vector<size_t> m_sorted_indices;
+  std::optional<size_t> m_sort_column_index;
+  bool m_sort_ascending = true;
 
   std::vector<size_t> m_column_widths;
   size_t m_row_width = 0;
