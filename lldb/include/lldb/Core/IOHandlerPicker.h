@@ -41,9 +41,10 @@ struct PickerResult {
 
 /// An interactive ANSI-based picker IOHandler.
 ///
-/// Supports single-select and multi-select modes, vim-style navigation, and
-/// scrolling. Works in any terminal that supports basic ANSI escape codes.
-/// Reports a canceled result if the input is not an interactive terminal.
+/// Supports single-select and multi-select modes, column sorting, vim-style
+/// navigation, and scrolling. Works in any terminal that supports basic ANSI
+/// escape codes. Reports a canceled result if the input is not an interactive
+/// terminal.
 class IOHandlerPicker : public IOHandler {
 public:
   IOHandlerPicker(Debugger &debugger, llvm::StringRef header,
@@ -70,10 +71,16 @@ private:
     End,
     Space,
     Enter,
+    Sort,
     /// A byte arrived on m_wakeup_pipe.
     Wakeup,
     Escape,
     Unknown,
+  };
+
+  struct SortOrder {
+    size_t column;
+    bool ascending;
   };
 
   enum class Input { Ready, Wakeup, Error };
@@ -92,6 +99,9 @@ private:
 
   void Render();
   void ScrollToCursor();
+  void CycleSort();
+  void UpdateVisibleIndices();
+  void SortVisibleIndices(SortOrder order);
   void ComputeColumnWidths();
   void UpdateLayout();
   size_t GetPrefixWidth() const;
@@ -103,11 +113,17 @@ private:
   PickerMode m_mode;
   PickerResult m_result;
 
+  /// Index into m_visible_indices of the row under the cursor.
   size_t m_cursor_index = 0;
-  /// Index of the first row on screen.
+  /// Index into m_visible_indices of the first row on screen.
   size_t m_viewport_start = 0;
   /// Bit i is set if m_items[i] is checked.
   llvm::BitVector m_checked;
+
+  /// Indices into m_items of the rows to show, in display order.
+  llvm::SmallVector<size_t, 0> m_visible_indices;
+  /// Sort column and direction, or std::nullopt for the original order.
+  std::optional<SortOrder> m_sort_order;
 
   llvm::SmallVector<size_t> m_column_widths;
 
