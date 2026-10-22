@@ -1577,6 +1577,9 @@ StackFrameListSP Thread::GetStackFrameList() {
 
   // First, try to load frame providers if we don't have any yet.
   if (m_frame_providers.empty()) {
+    // The chain outlives ClearStackFrames() so that frames from the previous
+    // stop can still resolve their provider, but loading rebuilds it.
+    m_provider_chain_ids.clear();
     if (process_sp) {
       Target &target = process_sp->GetTarget();
       const auto &descriptors = target.GetScriptedFrameProviderDescriptors();
@@ -1779,9 +1782,9 @@ void Thread::ClearStackFrames() {
   m_curr_frames_sp.reset();
   m_unwinder_frames_sp.reset();
 
-  // Clear the provider instances and reset the ID counter, but keep the
-  // chain configuration (m_provider_chain_ids) so providers are re-loaded
-  // with consistent IDs on the next GetStackFrameList() call.
+  // Clear the provider instances but keep the chain (m_provider_chain_ids)
+  // until GetStackFrameList() reloads the providers, so frames from this
+  // stop can still resolve their provider descriptor.
   m_frame_providers.clear();
   m_frame_lists_by_id.clear();
   m_extended_info.reset();

@@ -1349,14 +1349,15 @@ public:
   /// Each element is a pair of:
   ///   - \b ScriptedFrameProviderDescriptor: metadata for the provider
   ///     (class name, description, priority, thread specs).
-  ///   - \b frame_list_id_t: the sequential frame list identifier assigned
-  ///     to that provider in the chain (1 for the first provider, 2 for the
-  ///     second, etc.). ID 0 is reserved for the base unwinder and is never
+  ///   - \b frame_list_id_t: the identifier of the frame list the provider
+  ///     produces. This is the provider's registration ID from
+  ///     \c Target::AddScriptedFrameProviderDescriptor, not its position in
+  ///     the chain. ID 0 is reserved for the base unwinder and is never
   ///     present in this vector.
   ///
-  /// The vector is ordered by provider chain position (registration order
-  /// adjusted by priority). It persists across \c ClearStackFrames() so that
-  /// provider IDs remain stable for the lifetime of the thread.
+  /// The vector is ordered by chain position (priority, then registration
+  /// order) and lists each loaded provider once. It persists across
+  /// \c ClearStackFrames() and is rebuilt when the providers are reloaded.
   const std::vector<
       std::pair<ScriptedFrameProviderDescriptor, lldb::frame_list_id_t>> &
   GetProviderChainIds() const {

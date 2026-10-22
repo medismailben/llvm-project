@@ -4,6 +4,7 @@ StackFrameList while modifying function names.
 """
 
 import os
+import re
 import lldb
 from lldbsuite.test.decorators import *
 from lldbsuite.test.lldbtest import TestBase
@@ -426,6 +427,81 @@ class FrameProviderPassThroughPrefixTestCase(TestBase):
         # UpperCase wraps Prefix (registration order is preserved), so the
         # outermost output should have fully upper-cased prefixed names.
         self.assertIn("MY_CUSTOM_BAZ", output)
+
+    def test_bt_provider_follows_chain_order(self):
+        """
+        Test that 'bt --provider' shows providers in the order they run when
+        it differs from their ID (registration) order.
+
+        LatePrefixProvider is registered first (ID 1) but its priority makes
+        it run after EarlyUpperCaseProvider (ID 2), so the run order is the
+        unwinder, then provider 2, then provider 1. Every listing must follow
+        that order and show each provider once, at every stop, since each
+        resume makes the thread reload its provider chain.
+        """
+        self.build()
+
+        target, process, thread, _ = lldbutil.run_to_name_breakpoint(self, "foo")
+
+        script_path = os.path.join(self.getSourceDir(), "frame_provider.py")
+        self.runCmd("command script import " + script_path)
+
+        error = lldb.SBError()
+        late_id = target.RegisterScriptedFrameProvider(
+            "frame_provider.LatePrefixProvider", lldb.SBStructuredData(), error
+        )
+        self.assertSuccess(error)
+        early_id = target.RegisterScriptedFrameProvider(
+            "frame_provider.EarlyUpperCaseProvider", lldb.SBStructuredData(), error
+        )
+        self.assertSuccess(error)
+        self.assertEqual(late_id, self.FIRST_PROVIDER_FRAME_LIST_ID)
+        self.assertEqual(early_id, self.SECOND_PROVIDER_FRAME_LIST_ID)
+
+        def shown_provider_ids(provider_arg):
+            result = lldb.SBCommandReturnObject()
+            self.dbg.GetCommandInterpreter().HandleCommand(
+                f"bt --provider {provider_arg}", result
+            )
+            self.assertTrue(result.Succeeded(), result.GetError())
+            output = result.GetOutput()
+            self.assertIn(
+                f"=== Provider {early_id}: frame_provider.EarlyUpperCaseProvider "
+                "(priority: 10) ===",
+                output,
+            )
+            return [
+                int(provider_id)
+                for provider_id in re.findall(
+                    r"^=== Provider (\d+):", output, re.MULTILINE
+                )
+            ]
+
+        def check_chain_order(function_name):
+            # The upper-case provider runs first, then the prefix provider.
+            self.assertEqual(
+                thread.GetFrameAtIndex(0).GetFunctionName(),
+                "my_custom_" + function_name.upper(),
+            )
+            run_order = [self.UNWINDER_FRAME_LIST_ID, early_id, late_id]
+            self.assertEqual(shown_provider_ids("'*'"), run_order)
+            self.assertEqual(shown_provider_ids(f"0-{early_id}"), run_order)
+            # A range selects providers by ID but still lists them in the
+            # order they run.
+            self.assertEqual(
+                shown_provider_ids(f"{late_id}-{early_id}"), [early_id, late_id]
+            )
+
+        check_chain_order("foo")
+
+        bar_bkpt = target.BreakpointCreateByName("bar")
+        baz_bkpt = target.BreakpointCreateBySourceRegex(
+            "break here", lldb.SBFileSpec(self.source)
+        )
+        for function_name, bkpt in [("bar", bar_bkpt), ("baz", baz_bkpt)]:
+            threads = lldbutil.continue_to_breakpoint(process, bkpt)
+            self.assertEqual(len(threads), 1)
+            check_chain_order(function_name)
 
     def test_bt_provider_star_from_within_provider(self):
         """

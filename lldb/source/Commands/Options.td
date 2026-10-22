@@ -2116,7 +2116,8 @@ let Command = "thread backtrace" in {
              "Use a single ID (e.g., '2') for one provider, "
              "a range (e.g., '0-2', '0 to 2') for multiple, "
              "or '*'/'all' to show every provider. "
-             "ID 0 is the base unwinder, 1+ are synthetic providers.">;
+             "ID 0 is the base unwinder, 1+ are synthetic providers. "
+             "Providers are shown in the order they run.">;
 }
 
 let Command = "thread step scope" in {

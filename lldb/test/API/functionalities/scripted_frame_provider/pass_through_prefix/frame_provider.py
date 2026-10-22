@@ -92,6 +92,22 @@ class UpperCasePassThroughProvider(ScriptedFrameProvider):
         return None
 
 
+class LatePrefixProvider(PrefixPassThroughProvider):
+    """PrefixPassThroughProvider that runs after EarlyUpperCaseProvider."""
+
+    @staticmethod
+    def get_priority():
+        return 20
+
+
+class EarlyUpperCaseProvider(UpperCasePassThroughProvider):
+    """UpperCasePassThroughProvider that runs before LatePrefixProvider."""
+
+    @staticmethod
+    def get_priority():
+        return 10
+
+
 class BtProviderStarProvider(ScriptedFrameProvider):
     """
     Provider that runs 'bt --provider *' from within get_frame_at_index

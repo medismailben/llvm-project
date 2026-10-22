@@ -328,18 +328,32 @@ protected:
                         /*num_frames_with_source=*/0, /*stop_format=*/true,
                         /*show_hidden=*/false, /*only_stacks=*/false);
 
+      const auto &chain = thread->GetProviderChainIds();
       if (m_options.m_show_all_providers) {
-        // Show all providers: unwinder (0) through the last in the chain.
+        // Show all providers: unwinder (0) through the highest provider ID.
         m_options.m_provider_start_id = 0;
-        const auto &chain = thread->GetProviderChainIds();
-        m_options.m_provider_end_id = chain.empty() ? 0 : chain.back().second;
+        m_options.m_provider_end_id = 0;
+        for (const auto &[descriptor, id] : chain)
+          m_options.m_provider_end_id =
+              std::max(m_options.m_provider_end_id, id);
       }
 
-      // Provider filter mode: show sequential views for each provider in range.
-      bool first_provider = true;
-      for (lldb::frame_list_id_t provider_id = m_options.m_provider_start_id;
-           provider_id <= m_options.m_provider_end_id; ++provider_id) {
+      // IDs follow registration order while the chain is sorted by priority,
+      // so walk the chain to list the selected views in the order they are
+      // produced.
+      auto in_range = [this](lldb::frame_list_id_t id) {
+        return id >= m_options.m_provider_start_id &&
+               id <= m_options.m_provider_end_id;
+      };
+      llvm::SmallVector<lldb::frame_list_id_t> provider_ids;
+      if (in_range(0))
+        provider_ids.push_back(0);
+      for (const auto &[descriptor, id] : chain)
+        if (in_range(id))
+          provider_ids.push_back(id);
 
+      bool first_provider = true;
+      for (lldb::frame_list_id_t provider_id : provider_ids) {
         // Get the frame list for this provider.
         lldb::StackFrameListSP frame_list_sp =
             thread->GetFrameListByIdentifier(provider_id);
