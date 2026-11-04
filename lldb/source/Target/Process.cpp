@@ -1340,7 +1340,7 @@ StateType Process::GetPublicState() const {
     return eStateUnloaded;
   if (StopHandlingContextSP context_sp =
           GetStopHandlingContextForCurrentThread())
-    return context_sp->m_public_state;
+    return context_sp->m_state.GetValue();
   return m_current_private_state_thread_sp->GetPublicState();
 }
 
@@ -1348,7 +1348,7 @@ bool Process::SetPublicRunLockToStopped() {
   if (StopHandlingContextSP context_sp =
           GetStopHandlingContextForCurrentThread()) {
     context_sp->m_run_lock_running = false;
-    return context_sp->m_public_run_lock.SetStopped();
+    return context_sp->m_run_lock.SetStopped();
   }
   assert(m_current_private_state_thread_sp);
   if (m_current_private_state_thread_sp)
@@ -1359,7 +1359,7 @@ bool Process::SetPublicRunLockToStopped() {
 bool Process::SetPublicRunLockToRunning() {
   if (StopHandlingContextSP context_sp =
           GetStopHandlingContextForCurrentThread()) {
-    const bool was_stopped = context_sp->m_public_run_lock.SetRunning();
+    const bool was_stopped = context_sp->m_run_lock.SetRunning();
     context_sp->m_run_lock_running = true;
     context_sp->m_resumed |= was_stopped;
     return was_stopped;
@@ -1370,62 +1370,28 @@ bool Process::SetPublicRunLockToRunning() {
   return false;
 }
 
-Process::StopHandlingContextSP Process::GetStopHandlingContext() const {
-  std::lock_guard<std::mutex> guard(m_stop_handling_mutex);
-  return m_stop_handling_context_sp;
-}
-
 Process::StopHandlingContextSP
 Process::GetStopHandlingContextForCurrentThread() const {
+  // Only a thread handling a stop has this view, so every other thread skips
+  // the lookup. The view alone isn't enough, though: the policy stack belongs
+  // to the host thread, and one host thread can handle stops of several
+  // processes, since the debugger's event handler thread pulls the stop
+  // events of every process in the debugger. While it handles a stop of one
+  // process, its view is HandlingStop even when an action calls into another
+  // process, and that process has no activity of this thread to return.
   if (PolicyStack::Get().Current().view != Policy::View::HandlingStop)
     return nullptr;
-  StopHandlingContextSP context_sp = GetStopHandlingContext();
-  // The policy stack belongs to the host thread, and one host thread can
-  // handle stops of several processes: the debugger's event handler thread
-  // pulls the stop events of every process in the debugger. While it handles
-  // a stop of one process, its view is HandlingStop even when an action calls
-  // into another process. So the view alone isn't enough: return this
-  // process's context only if this thread opened it. Otherwise this process's
-  // public state and run lock come from its PrivateStateThread, as for any
-  // thread that isn't handling its stop.
-  if (context_sp && context_sp->m_owner == std::this_thread::get_id())
-    return context_sp;
-  return nullptr;
+  return m_stop_handling.GetDataForCurrentThread();
 }
 
 bool Process::IsHandlingStopOnOtherThread() const {
-  StopHandlingContextSP context_sp = GetStopHandlingContext();
-  return context_sp && context_sp->m_owner != std::this_thread::get_id();
+  return m_stop_handling.IsActiveOnOtherThread();
 }
 
 Process::StopHandlingScope::StopHandlingScope(Process &process)
-    : m_process(process), m_context_sp(std::make_shared<StopHandlingContext>(
-                              std::this_thread::get_id())),
-      m_policy_guard(PolicyStack::Get().PushHandlingStop()) {
-  std::lock_guard<std::mutex> guard(m_process.m_stop_handling_mutex);
-  m_enclosing_context_sp =
-      std::exchange(m_process.m_stop_handling_context_sp, m_context_sp);
-}
-
-Process::StopHandlingScope::~StopHandlingScope() {
-  std::lock_guard<std::mutex> guard(m_process.m_stop_handling_mutex);
-  // The slot only holds another thread's context if two threads pull this
-  // process's events from its primary listener, and the other one started
-  // handling a second stop while this one was still handling the first, which
-  // takes an action resuming the process asynchronously. Leave the slot alone
-  // then: that thread's scope clears it when it ends, because our context
-  // isn't one that thread opened.
-  if (m_process.m_stop_handling_context_sp != m_context_sp)
-    return;
-  // Reinstall the enclosing context only if this thread opened it too. This
-  // thread's scopes nest, so its enclosing scope is still open. Another
-  // thread's scope may already have ended, and reinstalling its context would
-  // leave a context in the slot that no scope ever removes.
-  if (m_enclosing_context_sp &&
-      m_enclosing_context_sp->m_owner != m_context_sp->m_owner)
-    m_enclosing_context_sp.reset();
-  m_process.m_stop_handling_context_sp = std::move(m_enclosing_context_sp);
-}
+    : m_activity(process.m_stop_handling.Enter(
+          std::make_shared<StopHandlingContext>())),
+      m_policy_guard(PolicyStack::Get().PushHandlingStop()) {}
 
 void Process::SetPublicState(StateType new_state, bool restarted) {
   const bool new_state_is_stopped = StateIsStoppedState(new_state, false);
@@ -1445,7 +1411,7 @@ void Process::SetPublicState(StateType new_state, bool restarted) {
   const StateType old_state = GetPublicState();
   if (StopHandlingContextSP context_sp =
           GetStopHandlingContextForCurrentThread())
-    context_sp->m_public_state = new_state;
+    context_sp->m_state.SetValue(new_state);
   else
     m_current_private_state_thread_sp->SetPublicState(new_state);
 
@@ -6443,7 +6409,7 @@ ProcessRunLock &Process::GetRunLock() {
   // return before the scope ends.
   if (StopHandlingContextSP context_sp =
           GetStopHandlingContextForCurrentThread())
-    return context_sp->m_public_run_lock;
+    return context_sp->m_run_lock;
   return m_current_private_state_thread_sp->GetRunLock();
 }
 
