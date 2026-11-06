@@ -60,6 +60,9 @@ private:
   /// statusline.
   ExecutionContextRef m_exe_ctx_ref;
 
+  /// The last text drawn, before fitting it to the terminal's width.
+  std::string m_last_str;
+
   uint64_t m_terminal_width = 0;
   uint64_t m_terminal_height = 0;
 };

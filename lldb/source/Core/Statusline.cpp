@@ -14,6 +14,7 @@
 #include "lldb/Symbol/SymbolContext.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/StackFrame.h"
+#include "lldb/Target/Target.h"
 #include "lldb/Utility/AnsiTerminal.h"
 #include "lldb/Utility/StreamString.h"
 #include "llvm/ADT/StringRef.h"
@@ -74,6 +75,7 @@ void Statusline::Draw(std::string str) {
   if (!stream_sp)
     return;
 
+  m_last_str = str;
   str = ansi::TrimAndPad(str, m_terminal_width);
 
   LockedStreamFile locked_stream = stream_sp->Lock();
@@ -174,6 +176,20 @@ void Statusline::Redraw(std::optional<ExecutionContextRef> exe_ctx_ref) {
   // Update the cached execution context.
   if (exe_ctx_ref)
     m_exe_ctx_ref = *exe_ctx_ref;
+
+  // Another thread can hold the target's API lock for a long time, like a
+  // command waiting for the user to answer a prompt. Rather than block, which
+  // also blocks redrawing on resize, redraw the last statusline.
+  TargetAPIMutex api_mutex;
+  std::unique_lock<TargetAPIMutex> api_lock;
+  if (lldb::TargetSP target_sp = m_exe_ctx_ref.GetTargetSP()) {
+    api_mutex = target_sp->GetAPIMutex();
+    api_lock = std::unique_lock<TargetAPIMutex>(api_mutex, std::try_to_lock);
+    if (!api_lock.owns_lock()) {
+      Draw(m_last_str);
+      return;
+    }
+  }
 
   // Lock the execution context.
   ExecutionContext exe_ctx =
