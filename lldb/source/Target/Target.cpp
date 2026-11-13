@@ -1976,6 +1976,30 @@ void Target::NotifyModulesRemoved(lldb_private::ModuleList &module_list) {
   ModulesDidUnload(module_list, false);
 }
 
+bool Target::RecordScriptingResource(Module &module, const FileSpec &script) {
+  Log *log = GetLog(LLDBLog::Modules | LLDBLog::Script);
+
+  // We key the record by UUID rather than by Module, because LLDB can create a
+  // new Module for the same binary, for example after the file moved. Running
+  // its script again would duplicate what it already added to this target, like
+  // stop hooks.
+  const UUID &uuid = module.GetUUID();
+  if (!uuid.IsValid()) {
+    LLDB_LOG(log, "Loading '{0}' for '{1}', which has no UUID to record it by",
+             script, module.GetFileSpec());
+    return true;
+  }
+
+  std::lock_guard<std::mutex> guard(m_loaded_scripts_mutex);
+  if (!m_loaded_scripts.insert(uuid).second) {
+    LLDB_LOG(log, "Skipping '{0}' for '{1}': this target already loaded it",
+             script, module.GetFileSpec());
+    return false;
+  }
+  LLDB_LOG(log, "Loading '{0}' for '{1}'", script, module.GetFileSpec());
+  return true;
+}
+
 void Target::ModulesDidLoad(ModuleList &module_list) {
   if (GetPreloadSymbols())
     module_list.PreloadSymbols(GetParallelModuleLoad());

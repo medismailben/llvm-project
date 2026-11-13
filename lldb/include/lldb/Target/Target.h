@@ -12,6 +12,7 @@
 #include <list>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <type_traits>
@@ -46,7 +47,9 @@
 #include "lldb/Utility/Stream.h"
 #include "lldb/Utility/StructuredData.h"
 #include "lldb/Utility/Timeout.h"
+#include "lldb/Utility/UUID.h"
 #include "lldb/lldb-public.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Casting.h"
@@ -1190,6 +1193,13 @@ public:
 
   void SymbolsDidLoad(ModuleList &module_list);
 
+  /// Record that we're auto-loading \p module's \p script in this target, so
+  /// we only load it once. We don't record modules without a UUID.
+  ///
+  /// \return
+  ///     False if we already loaded \p module's script in this target.
+  bool RecordScriptingResource(Module &module, const FileSpec &script);
+
   void ClearModules(bool delete_locations);
 
   /// Called as the last function in Process::DidExec().
@@ -2197,6 +2207,12 @@ protected:
                                   /// which we ran a stop-hook.
   bool m_valid;
   bool m_suppress_stop_hooks; /// Used to not run stop hooks for expressions
+
+  /// The UUIDs of the modules we auto-loaded a script for. We keep them when a
+  /// module leaves m_images, so a dynamic loader re-adding it doesn't run its
+  /// script again.
+  llvm::SmallDenseSet<UUID> m_loaded_scripts;
+  std::mutex m_loaded_scripts_mutex;
   bool m_is_dummy_target;
 
   typedef std::map<lldb::user_id_t, HookSP> HookCollection;

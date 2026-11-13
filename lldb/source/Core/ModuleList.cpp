@@ -1436,6 +1436,10 @@ To run all discovered debug scripts in this session:
       continue;
     }
 
+    // Only load each module's script once per target.
+    if (!target.RecordScriptingResource(module, scripting_fspec))
+      continue;
+
     LLDB_LOG(log, "Auto-loading {0}", scripting_fspec.GetPath());
 
     if (!LoadScriptingModule(scripting_fspec, *script_interpreter, target,
