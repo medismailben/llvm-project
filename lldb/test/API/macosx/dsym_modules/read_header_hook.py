@@ -15,7 +15,7 @@ class ReadHeader:
         module = target.FindModule(target.GetExecutable())
         header = module.GetObjectFileHeaderAddress().GetLoadAddress(target)
         if header == lldb.LLDB_INVALID_ADDRESS:
-            # Too early, for example the initial stop of a launch, before the
+            # Too early, for example a launch that stops at entry, before the
             # loader has run: try again at the next stop.
             add_hook(target)
             return True

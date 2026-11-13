@@ -86,8 +86,17 @@ class TestStopHooks(TestBase):
         self.stop_hooks_scripted(5, "-I false")
 
     def test_stop_hooks_scripted_no_entry(self):
-        """Test that a scripted stop hook works with no specifiers"""
-        self.stop_hooks_scripted(10)
+        """Test that a launch that doesn't stop at entry doesn't run the stop
+        hook at its entry point, where nobody sees it stop"""
+        self.stop_hooks_scripted(5)
+
+    def test_stop_hooks_scripted_stop_at_entry(self):
+        """Test that a launch that stops at entry runs the stop hook there"""
+        self.stop_hooks_at_entry(5)
+
+    def test_stop_hooks_scripted_stop_at_entry_not_initial(self):
+        """Test that --at-initial-stop false skips a launch's stop at entry"""
+        self.stop_hooks_at_entry(0, "-I false")
 
     def test_stop_hooks_scripted_right_func(self):
         """Test that a scripted stop hook fires when there is a function match"""
@@ -176,6 +185,26 @@ class TestStopHooks(TestBase):
         dummy_target.BreakpointCreateBySourceRegex(
             "return result", self.main_source_file
         )
+
+    def stop_hooks_at_entry(self, g_var_value, specifier=""):
+        self.script_setup()
+
+        result = lldb.SBCommandReturnObject()
+        command = "target stop-hook add -P stop_hook.stop_handler -k increment -v 5 "
+        self.interp.HandleCommand(command + specifier, result)
+        self.assertTrue(result.Succeeded(), "Set the target stop hook")
+
+        target = self.createTestTarget()
+        launch_info = target.GetLaunchInfo()
+        launch_info.SetLaunchFlags(lldb.eLaunchFlagStopAtEntry)
+        error = lldb.SBError()
+        process = target.Launch(launch_info, error)
+        self.assertSuccess(error)
+        self.assertState(process.GetState(), lldb.eStateStopped)
+
+        var = target.FindFirstGlobalVariable("g_var")
+        self.assertTrue(var.IsValid())
+        self.assertEqual(var.GetValueAsUnsigned(), g_var_value, "Updated g_var")
 
     def stop_hooks_scripted(self, g_var_value, specifier=None):
         self.script_setup()

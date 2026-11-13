@@ -77,6 +77,7 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/ErrorExtras.h"
+#include "llvm/Support/SaveAndRestore.h"
 #include "llvm/Support/ThreadPool.h"
 
 #include <memory>
@@ -3727,6 +3728,12 @@ Status Target::Launch(ProcessLaunchInfo &launch_info, Stream *stream) {
     launch_info.SetHijackListener(
         Listener::MakeListener(Process::LaunchSynchronousHijackListenerName));
 
+  // Platform::DebugProcess launches the process stopped and attaches to it, so
+  // Process::CompleteAttach would run the stop hooks at the launch's entry
+  // stop. We decide below whether they run there.
+  std::optional<llvm::SaveAndRestore<bool>> suppress_stop_hooks;
+  suppress_stop_hooks.emplace(m_suppress_stop_hooks, true);
+
   // If we're not already connected to the process, and if we have a platform
   // that can launch a process for debugging, go ahead and do that here.
   if (state != eStateConnected && platform_sp &&
@@ -3782,6 +3789,7 @@ Status Target::Launch(ProcessLaunchInfo &launch_info, Stream *stream) {
                                              rebroadcast_first_stop,
                                              launch_info.GetHijackListener());
   m_process_sp->RestoreProcessEvents();
+  suppress_stop_hooks.reset();
 
   if (rebroadcast_first_stop) {
     // We don't need to run the stop hooks by hand here, they will get
@@ -3790,8 +3798,11 @@ Status Target::Launch(ProcessLaunchInfo &launch_info, Stream *stream) {
     m_process_sp->BroadcastEvent(first_stop_event_sp);
     return error;
   }
-  // Run the stop hooks that want to run at entry.
-  RunStopHooks(true /* at entry point */);
+  // The process always stops at its entry point, before the dynamic loader
+  // runs. Unless the launch asked to stop there, we resume it below and nobody
+  // sees that stop, so we only run the stop hooks if the launch stops at entry.
+  if (launch_info.GetFlags().Test(eLaunchFlagStopAtEntry))
+    RunStopHooks(/*at_initial_stop=*/true);
 
   switch (state) {
   case eStateStopped: {
