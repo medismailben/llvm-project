@@ -1994,6 +1994,10 @@ let Command = "target stop_hook add" in {
              "may happen very early on - before the loader has run. You can "
              "use this option if you do not want some stop-hooks to run then. "
              "Defaults to true.">;
+  def target_stop_hook_add_one_shot
+      : Option<"one-shot", "O">,
+        Arg<"Boolean">,
+        Desc<"The stop-hook is deleted the first time it runs.">;
 }
 
 let Command = "target stop_hook list" in {

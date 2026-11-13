@@ -23,3 +23,8 @@ To use this class in lldb, run the command:
 ```
 
 where `MyModule.py` is the file containing the class definition `MyStopHook`.
+
+To run a stop hook only once, add it with `--one-shot true`. LLDB deletes it the
+first time it runs, for the first thread it applies to. A one-shot stop hook is
+how a script can do something at the next stop and then get out of the way:
+once it's deleted, it no longer votes on whether the process stops.

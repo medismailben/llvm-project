@@ -3404,6 +3404,13 @@ bool Target::RunStopHooks(bool at_initial_stop) {
       if (!cur_hook_sp->ExecutionContextPasses(exc_ctx))
         continue;
 
+      // A one-shot hook only runs for the first thread it applies to. We
+      // delete it before running it, so it can't run again if it resumes the
+      // process.
+      const bool one_shot = cur_hook_sp->IsOneShot();
+      if (one_shot)
+        RemoveStopHookByID(cur_hook_sp->GetID());
+
       bool suppress_output = cur_hook_sp->GetSuppressOutput();
       if (print_hook_header && !any_thread_matched && !suppress_output) {
         StreamString s;
@@ -3448,6 +3455,11 @@ bool Target::RunStopHooks(bool at_initial_stop) {
         // processing stop hooks.
         return true;
       }
+
+      // active_hooks still holds the hook we just deleted, so don't run it for
+      // the other threads that stopped too.
+      if (one_shot)
+        break;
     }
   }
 
@@ -4256,7 +4268,8 @@ Target::StopHook::StopHook(lldb::TargetSP target_sp, lldb::user_id_t uid)
 Target::StopHook::StopHook(const StopHook &rhs)
     : UserID(rhs.GetID()), m_target_sp(rhs.m_target_sp),
       m_specifier_sp(rhs.m_specifier_sp), m_thread_spec_up(),
-      m_active(rhs.m_active), m_auto_continue(rhs.m_auto_continue) {
+      m_active(rhs.m_active), m_auto_continue(rhs.m_auto_continue),
+      m_one_shot(rhs.m_one_shot) {
   if (rhs.m_thread_spec_up)
     m_thread_spec_up = std::make_unique<ThreadSpec>(*rhs.m_thread_spec_up);
 }
@@ -4304,6 +4317,9 @@ void Target::StopHook::GetDescription(Stream &s,
 
   if (m_auto_continue)
     s.Indent("AutoContinue on\n");
+
+  if (m_one_shot)
+    s.Indent("One-shot\n");
 
   if (m_specifier_sp) {
     s.Indent();

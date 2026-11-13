@@ -13,7 +13,13 @@ from lldbsuite.test import lldbutil
 @requireDarwin
 class TestdSYMModuleHooks(TestBase):
     SHARED_BUILD_TESTCASE = False
-    COUNTS = ("module_hooks_inits", "module_hooks_targets")
+    COUNTS = (
+        "module_hooks_inits",
+        "module_hooks_targets",
+        "read_header_runs",
+        "read_header_magic",
+    )
+    MH_MAGIC_64 = 0xFEEDFACF
 
     def setUp(self):
         TestBase.setUp(self)
@@ -45,6 +51,22 @@ class TestdSYMModuleHooks(TestBase):
             self.read_script_log(log),
             r"Skipping '.*' for '.*': this target already loaded it",
         )
+
+    @no_debug_info_test
+    def test_one_shot_stop_hook_reads_module(self):
+        """A one-shot stop hook that __lldb_module_added_to_target adds reads
+        the module from memory at the first stop where it is loaded, and LLDB
+        deletes it afterwards."""
+        self.runCmd("settings set target.load-script-from-symbol-file true")
+        self.build_dsym("reads_header", "read_header_hook.py")
+        lldbutil.run_to_source_breakpoint(
+            self,
+            "Set a breakpoint here",
+            lldb.SBFileSpec("main.c"),
+            exe_name="reads_header",
+        )
+        self.assertEqual(getattr(lldb, "read_header_magic", None), self.MH_MAGIC_64)
+        self.expect("target stop-hook list", substrs=["No stop hooks."])
 
     def enable_script_log(self):
         log = self.getBuildArtifact("script.log")
