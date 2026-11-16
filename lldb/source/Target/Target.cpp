@@ -2001,16 +2001,77 @@ bool Target::RecordScriptingResource(Module &module, const FileSpec &script) {
   return true;
 }
 
+bool Target::CanLoadScriptingResourcesNow() {
+  ProcessSP process_sp = m_process_sp;
+  if (!process_sp)
+    return true;
+  // The private state thread reads the process through the private run lock,
+  // but a script there can't resume the process or wait for its events.
+  if (PolicyStack::Get().Current().view == Policy::View::Private)
+    return false;
+  // Until the process reports its first stop, for example while a core file is
+  // loading, its public state is eStateUnloaded and the run lock is still in
+  // its initial, stopped state. An exited or detached process can't be read,
+  // but there's nothing left for a script to wait for either.
+  StateType state = process_sp->GetPublicState();
+  if (state == eStateUnloaded ||
+      !StateIsStoppedState(state, /*must_exist=*/false))
+    return false;
+  // SBProcess calls take the same lock, so they would fail too.
+  ProcessRunLock::ProcessRunLocker stop_locker;
+  return stop_locker.TryLock(&process_sp->GetRunLock());
+}
+
+void Target::LoadDeferredScriptingResources() {
+  if (!CanLoadScriptingResourcesNow())
+    return;
+
+  llvm::SmallVector<lldb::ModuleWP> deferred;
+  {
+    std::lock_guard<std::mutex> guard(m_deferred_script_modules_mutex);
+    deferred.swap(m_deferred_script_modules);
+  }
+
+  // Skip the modules that left the target since.
+  ModuleList module_list;
+  for (const lldb::ModuleWP &module_wp : deferred)
+    if (ModuleSP module_sp = module_wp.lock();
+        module_sp && m_images.FindModule(module_sp.get()))
+      module_list.AppendIfNeeded(module_sp);
+  if (module_list.IsEmpty())
+    return;
+
+  std::list<Status> errors;
+  module_list.LoadScriptingResourcesInTarget(this, errors);
+  for (const auto &err : errors)
+    GetDebugger().GetAsyncErrorStream()->PutCString(err.AsCString());
+}
+
 void Target::ModulesDidLoad(ModuleList &module_list) {
   if (GetPreloadSymbols())
     module_list.PreloadSymbols(GetParallelModuleLoad());
 
   const size_t num_images = module_list.GetSize();
   if (m_valid && num_images) {
-    std::list<Status> errors;
-    module_list.LoadScriptingResourcesInTarget(this, errors);
-    for (const auto &err : errors)
-      GetDebugger().GetAsyncErrorStream()->PutCString(err.AsCString());
+    if (CanLoadScriptingResourcesNow()) {
+      std::list<Status> errors;
+      module_list.LoadScriptingResourcesInTarget(this, errors);
+      for (const auto &err : errors)
+        GetDebugger().GetAsyncErrorStream()->PutCString(err.AsCString());
+    } else {
+      // The scripts couldn't read the process from here either, so we load
+      // them at the next public stop.
+      Log *log = GetLog(LLDBLog::Modules | LLDBLog::Script);
+      llvm::SmallVector<ModuleSP> modules;
+      module_list.ForEach([&](const ModuleSP &module_sp) {
+        LLDB_LOG(log, "Deferring the scripts of '{0}' to the next public stop",
+                 module_sp->GetFileSpec());
+        modules.push_back(module_sp);
+        return IterationAction::Continue;
+      });
+      std::lock_guard<std::mutex> guard(m_deferred_script_modules_mutex);
+      m_deferred_script_modules.append(modules.begin(), modules.end());
+    }
 
     for (size_t idx = 0; idx < num_images; ++idx) {
       ModuleSP module_sp(module_list.GetModuleAtIndex(idx));
@@ -3313,6 +3374,11 @@ bool Target::RunStopHooks(bool at_initial_stop) {
   lldb::StateType state = m_process_sp->GetState();
   if (!(state == eStateStopped || state == eStateAttaching))
     return false;
+
+  // Process::ProcessEventData::DoOnRemoval already did this, unless the stop
+  // was hijacked and the run lock was still running then. Do it before the
+  // stop hooks run, so the stop hooks the scripts add run at this stop too.
+  LoadDeferredScriptingResources();
 
   auto is_active = [at_initial_stop](StopHookSP hook) {
     bool should_run_now = (!at_initial_stop || hook->GetRunAtInitialStop());

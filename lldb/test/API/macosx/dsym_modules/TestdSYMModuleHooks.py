@@ -18,6 +18,7 @@ class TestdSYMModuleHooks(TestBase):
         "module_hooks_targets",
         "read_header_runs",
         "read_header_magic",
+        "read_process_results",
     )
     MH_MAGIC_64 = 0xFEEDFACF
 
@@ -67,6 +68,27 @@ class TestdSYMModuleHooks(TestBase):
         )
         self.assertEqual(getattr(lldb, "read_header_magic", None), self.MH_MAGIC_64)
         self.expect("target stop-hook list", substrs=["No stop hooks."])
+
+    @no_debug_info_test
+    def test_script_reads_core_file(self):
+        """LLDB loads a module's dSYM script once the core file is loaded, so
+        __lldb_module_added_to_target can read the process."""
+        self.build_dsym("reads_process", "read_process.py")
+        target, process, _, _ = lldbutil.run_to_source_breakpoint(
+            self,
+            "Set a breakpoint here",
+            lldb.SBFileSpec("main.c"),
+            exe_name="reads_process",
+        )
+        core = self.getBuildArtifact("reads_process.core")
+        self.runCmd(f"process save-core {core}")
+        process.Kill()
+        self.dbg.DeleteTarget(target)
+
+        self.runCmd("settings set target.load-script-from-symbol-file true")
+        target = self.dbg.CreateTarget(None)
+        self.assertTrue(target.LoadCore(core), PROCESS_IS_VALID)
+        self.assertEqual(getattr(lldb, "read_process_results", None), [True])
 
     def enable_script_log(self):
         log = self.getBuildArtifact("script.log")

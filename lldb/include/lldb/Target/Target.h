@@ -1200,6 +1200,11 @@ public:
   ///     False if we already loaded \p module's script in this target.
   bool RecordScriptingResource(Module &module, const FileSpec &script);
 
+  /// Load the scripts of the modules that ModulesDidLoad saw while the process
+  /// couldn't be read, if it can be read now. We call this at every public
+  /// stop, before the stop hooks run.
+  void LoadDeferredScriptingResources();
+
   void ClearModules(bool delete_locations);
 
   /// Called as the last function in Process::DidExec().
@@ -2136,6 +2141,10 @@ protected:
 
   void NotifyModulesRemoved(lldb_private::ModuleList &module_list) override;
 
+  /// Whether this thread could read the process through the SB API right now,
+  /// so a module's script could too.
+  bool CanLoadScriptingResourcesNow();
+
   class Arch {
   public:
     explicit Arch(const ArchSpec &spec);
@@ -2218,6 +2227,10 @@ protected:
   /// script again.
   llvm::SmallDenseSet<UUID> m_loaded_scripts;
   std::mutex m_loaded_scripts_mutex;
+  /// The modules ModulesDidLoad saw while the process couldn't be read. We
+  /// load their scripts at the process's next public stop.
+  llvm::SmallVector<lldb::ModuleWP> m_deferred_script_modules;
+  std::mutex m_deferred_script_modules_mutex;
   bool m_is_dummy_target;
 
   typedef std::map<lldb::user_id_t, HookSP> HookCollection;

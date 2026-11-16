@@ -12,7 +12,7 @@ from lldbsuite.test.lldbtest import *
 @skipUnlessDarwin
 class TestScriptedProcessdSYMScripts(TestBase):
     NO_DEBUG_INFO_TESTCASE = True
-    RECORDS = ("payload_inits", "payload_targets", "payload_magics")
+    RECORDS = ("payload_inits", "payload_targets", "payload_magics", "payload_reads")
     LOAD_ADDR = 0x100000000
     MH_MAGIC_64 = 0xFEEDFACF
 
@@ -29,6 +29,15 @@ class TestScriptedProcessdSYMScripts(TestBase):
         self.launch_scripted_processes(2)
         self.assertEqual(lldb.payload_inits, 2)
         self.assertEqual(lldb.payload_targets, [0, 1])
+
+    def test_added_to_target_reads_image(self):
+        """LLDB waits for the scripted process to stop before it loads the
+        image's dSYM script, so __lldb_module_added_to_target can read the
+        image's Mach-O header through the scripted process."""
+        self.launch_scripted_processes(2)
+        self.assertEqual(
+            lldb.payload_reads, [(0, self.MH_MAGIC_64), (1, self.MH_MAGIC_64)]
+        )
 
     def test_one_shot_stop_hook_reads_image(self):
         """The image's dSYM script adds a one-shot stop hook to each target,

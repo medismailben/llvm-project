@@ -4733,6 +4733,8 @@ void Process::ProcessEventData::DoOnRemoval(Event *event_ptr) {
     // anything they might need to in order to speed up register and memory
     // accesses.
     process_sp->WillPublicStop();
+    // Load the module scripts we deferred until the process could be read.
+    process_sp->GetTarget().LoadDeferredScriptingResources();
   }
 
   // If this is a halt event, even if the halt stopped with some reason other
