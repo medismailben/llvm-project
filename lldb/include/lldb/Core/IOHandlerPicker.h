@@ -104,6 +104,9 @@ private:
     Wakeup,
     /// A printable character, stored in KeyPress::ch.
     Char,
+    /// Ctrl+S and Ctrl+R, which search incrementally like Editline.
+    SearchForward,
+    SearchBackward,
     Unknown,
   };
 
@@ -132,6 +135,11 @@ private:
 
   void HandleKey(KeyPress press);
   void HandleSearchKey(KeyPress press);
+  void HandleIncrementalSearchKey(KeyPress press);
+  /// Filter the rows with m_query, and move the cursor to the first match in
+  /// the incremental search's direction.
+  void UpdateIncrementalSearch();
+  void MoveCursorToItem(std::optional<size_t> item_index);
   void Render();
   /// Redraw the screen without the dialog.
   void RestoreScreen();
@@ -169,6 +177,17 @@ private:
 
   std::string m_query;
   bool m_searching = false;
+
+  /// Filters the rows with m_query like the search prompt, and moves the
+  /// cursor from match to match.
+  struct IncrementalSearch {
+    bool forward;
+    /// Index into m_items of the row under the cursor, and the query, when the
+    /// search started. ESC goes back to them.
+    std::optional<size_t> origin_item;
+    std::string origin_query;
+  };
+  std::optional<IncrementalSearch> m_incremental_search;
 
   llvm::SmallVector<size_t> m_column_widths;
 

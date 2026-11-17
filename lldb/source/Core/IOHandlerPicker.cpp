@@ -69,6 +69,8 @@ static constexpr size_t g_max_preview_lines = 10;
 static constexpr size_t g_min_rows_with_preview = 4;
 
 static constexpr char g_ctrl_c = 0x03;
+static constexpr char g_ctrl_r = 0x12;
+static constexpr char g_ctrl_s = 0x13;
 static constexpr char g_escape = 0x1b;
 static constexpr char g_delete = 0x7f; // Backspace on most terminals.
 
@@ -427,6 +429,11 @@ IOHandlerPicker::KeyPress IOHandlerPicker::DecodeByte(char c) {
   case '\b':
   case g_delete:
     return {Key::Backspace};
+  // Raw mode disables flow control, so Ctrl+S arrives as a byte too.
+  case g_ctrl_s:
+    return {Key::SearchForward};
+  case g_ctrl_r:
+    return {Key::SearchBackward};
   case g_ctrl_c: // Raw mode disables SIGINT, so Ctrl+C arrives as a byte.
     return {Key::Abort};
   default:
@@ -584,7 +591,16 @@ void IOHandlerPicker::Render() {
   write_line("", "");
   write_line(ANSI_ESCAPE1(ANSI_CTRL_BOLD), "  " + m_header);
 
-  if (m_searching) {
+  if (m_incremental_search) {
+    std::string prompt =
+        llvm::formatv("  {0}I-search{1}: {2}_",
+                      !m_query.empty() && m_visible_indices.empty() ? "failing "
+                                                                    : "",
+                      m_incremental_search->forward ? "" : " backward", m_query)
+            .str();
+    prompt += "    C-s: next  C-r: previous  Enter: done  ESC: cancel";
+    write_line("", prompt);
+  } else if (m_searching) {
     std::string prompt = "  /" + m_query + "_";
     prompt += "    Enter: apply  ESC: clear";
     write_line("", prompt);
@@ -666,7 +682,7 @@ void IOHandlerPicker::Render() {
             .str();
   if (m_visible_indices.empty())
     footer += "  no matches";
-  else if (!m_query.empty() && !m_searching)
+  else if (!m_query.empty() && !m_searching && !m_incremental_search)
     footer += "  filter: " + m_query;
   if (size_t hidden = m_items.size() - m_visible_indices.size())
     footer += llvm::formatv("  ({0} hidden)", hidden).str();
@@ -745,6 +761,17 @@ void IOHandlerPicker::HandleKey(KeyPress press) {
       break;
     }
     break;
+  case Key::SearchForward:
+  case Key::SearchBackward: {
+    std::optional<size_t> item_index;
+    if (count)
+      item_index = m_visible_indices[m_cursor_index];
+    m_incremental_search =
+        IncrementalSearch{press.key == Key::SearchForward, item_index, m_query};
+    m_query.clear();
+    UpdateIncrementalSearch();
+    break;
+  }
   case Key::Backspace:
   case Key::Abort:
   case Key::Wakeup:
@@ -775,11 +802,74 @@ void IOHandlerPicker::HandleSearchKey(KeyPress press) {
     m_query.clear();
     UpdateVisibleIndices();
     break;
+  case Key::SearchForward:
+  case Key::SearchBackward:
+    // Already searching, by filtering.
+    break;
   default:
     // Arrow keys keep navigating the matches while typing.
     HandleKey(press);
     break;
   }
+}
+
+void IOHandlerPicker::HandleIncrementalSearchKey(KeyPress press) {
+  IncrementalSearch &search = *m_incremental_search;
+  const size_t count = m_visible_indices.size();
+  switch (press.key) {
+  case Key::Char:
+    m_query += press.ch;
+    UpdateIncrementalSearch();
+    break;
+  case Key::Backspace:
+    if (m_query.empty()) {
+      m_incremental_search.reset();
+      break;
+    }
+    m_query.pop_back();
+    UpdateIncrementalSearch();
+    break;
+  case Key::SearchForward:
+  case Key::SearchBackward:
+    search.forward = press.key == Key::SearchForward;
+    if (count)
+      m_cursor_index = search.forward ? (m_cursor_index + 1) % count
+                                      : (m_cursor_index + count - 1) % count;
+    break;
+  case Key::Enter:
+    // Like the search prompt, keep the filter.
+    m_incremental_search.reset();
+    break;
+  case Key::Escape:
+    m_query = search.origin_query;
+    UpdateVisibleIndices();
+    MoveCursorToItem(search.origin_item);
+    m_incremental_search.reset();
+    break;
+  default:
+    // Like in Editline, other keys end the search and do what they'd do.
+    m_incremental_search.reset();
+    HandleKey(press);
+    break;
+  }
+}
+
+void IOHandlerPicker::UpdateIncrementalSearch() {
+  UpdateVisibleIndices();
+  if (m_query.empty()) {
+    MoveCursorToItem(m_incremental_search->origin_item);
+    return;
+  }
+  if (!m_incremental_search->forward && !m_visible_indices.empty())
+    m_cursor_index = m_visible_indices.size() - 1;
+}
+
+void IOHandlerPicker::MoveCursorToItem(std::optional<size_t> item_index) {
+  if (!item_index)
+    return;
+  auto it = llvm::find(m_visible_indices, *item_index);
+  if (it != m_visible_indices.end())
+    m_cursor_index = it - m_visible_indices.begin();
 }
 
 void IOHandlerPicker::Run() {
@@ -808,6 +898,8 @@ void IOHandlerPicker::Run() {
       // A resize, the statusline, or async output may have drawn over us.
       UpdateLayout();
       RestoreScreen();
+    } else if (m_incremental_search) {
+      HandleIncrementalSearchKey(press);
     } else if (m_searching) {
       HandleSearchKey(press);
     } else {

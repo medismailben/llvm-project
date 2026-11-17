@@ -255,6 +255,54 @@ class IOHandlerPickerTest(PExpectTest):
         self.child.send("\r")
         self.finish("selected: 26")
 
+    def test_incremental_search(self):
+        """Ctrl+S filters the rows like / and moves from match to match."""
+        self.start_picker("test-picker single 26", "Select an item:")
+        # quebec (17), then echo (5).
+        self.child.send("\x13ec")
+        self.child.expect_exact("I-search: ec_")
+        self.child.expect_exact("1/2  (24 hidden)")
+        self.child.send("\x13")
+        self.child.expect_exact("2/2  (24 hidden)")
+        # Enter ends the search and keeps the filter, and the next one selects.
+        self.child.send("\r")
+        self.child.expect_exact("filter: ec  (24 hidden)")
+        self.child.send("\r")
+        self.finish("selected: 5")
+
+    def test_incremental_search_backward(self):
+        """Ctrl+R starts from the last match, and wraps around."""
+        self.start_picker("test-picker single 26", "Select an item:")
+        self.child.send("\x12ec")
+        self.child.expect_exact("I-search backward: ec_")
+        self.child.expect_exact("2/2  (24 hidden)")
+        self.child.send("\x12\x12")
+        self.child.expect_exact("2/2  (24 hidden)")
+        self.child.send("\x12\r\r")
+        self.finish("selected: 17")
+
+    def test_incremental_search_cancel(self):
+        """ESC clears the filter and puts the cursor back."""
+        self.start_picker("test-picker single 26", "Select an item:")
+        self.child.send("j\x13ec")
+        self.child.expect_exact("1/2  (24 hidden)")
+        self.child.send(self.escape_key)
+        self.child.expect_exact("/: search")
+        self.child.expect_exact("2/26")
+        self.child.send("\r")
+        self.finish("selected: 25")
+
+    def test_incremental_search_failing(self):
+        """A query without a match hides every row until Backspace fixes it."""
+        self.start_picker("test-picker single 26", "Select an item:")
+        self.child.send("\x13eczz")
+        self.child.expect_exact("failing I-search: eczz_")
+        self.child.expect_exact("no matches")
+        self.child.send("\x7f\x7f")
+        self.child.expect_exact("1/2  (24 hidden)")
+        self.child.send("\r\r")
+        self.finish("selected: 17")
+
     def test_search_multi_keeps_hidden_selection(self):
         """Items hidden by the filter stay checked in multi-select mode."""
         self.start_picker("test-picker multi 5", "Toggle items:")
