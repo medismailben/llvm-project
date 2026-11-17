@@ -170,6 +170,18 @@ class IOHandlerPickerTest(PExpectTest):
         self.child.send("\r")
         self.finish("selected: 16")
 
+    def test_long_values_fit(self):
+        """A column with long values narrows to fit the dialog, so the columns
+        after it stay visible."""
+        self.start_picker(
+            "test-picker single 5 100", "Select an item:", dimensions=(25, 80)
+        )
+        # The middle of echo (5) is cut out, so both of its ends show, and so
+        # does its VALUE.
+        self.child.expect("echo-+\u2026-+echo  9595".encode())
+        self.child.send("\r")
+        self.finish("selected: 5")
+
     def test_resize_too_short_cancels(self):
         """Shrinking the terminal below the dialog's minimum height cancels
         the picker."""

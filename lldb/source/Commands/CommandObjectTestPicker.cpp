@@ -25,13 +25,17 @@ static const char *const g_names[] = {
 
 /// Descending ids give sorting a visible effect. This avoids <random>, whose
 /// output differs across standard libraries.
-static llvm::SmallVector<PickerItem, 0> GenerateItems(size_t count,
-                                                      PickerMode mode) {
+/// Names are padded to \a name_width with dashes and the name again, to test
+/// long values.
+static llvm::SmallVector<PickerItem, 0>
+GenerateItems(size_t count, size_t name_width, PickerMode mode) {
   llvm::SmallVector<PickerItem, 0> items;
   for (size_t id = count; id > 0; --id) {
+    std::string name = g_names[(id - 1) % std::size(g_names)];
+    if (2 * name.size() < name_width)
+      name += std::string(name_width - 2 * name.size(), '-') + name;
     PickerItem item;
-    item.values = {std::to_string(id), g_names[(id - 1) % std::size(g_names)],
-                   std::to_string(id * 7919 % 10000)};
+    item.values = {std::to_string(id), name, std::to_string(id * 7919 % 10000)};
     item.initially_selected = mode == PickerMode::MultiSelect && id % 3 == 1;
     items.push_back(std::move(item));
   }
@@ -41,17 +45,18 @@ static llvm::SmallVector<PickerItem, 0> GenerateItems(size_t count,
 class CommandObjectTestPickerMode : public CommandObjectParsed {
 public:
   CommandObjectTestPickerMode(CommandInterpreter &interpreter, PickerMode mode)
-      : CommandObjectParsed(
-            interpreter,
-            mode == PickerMode::SingleSelect ? "test-picker single"
-                                             : "test-picker multi",
-            mode == PickerMode::SingleSelect
-                ? "Test IOHandlerPicker in single-select mode."
-                : "Test IOHandlerPicker in multi-select mode.",
-            mode == PickerMode::SingleSelect ? "test-picker single [<count>]"
-                                             : "test-picker multi [<count>]"),
+      : CommandObjectParsed(interpreter,
+                            mode == PickerMode::SingleSelect
+                                ? "test-picker single"
+                                : "test-picker multi",
+                            mode == PickerMode::SingleSelect
+                                ? "Test IOHandlerPicker in single-select mode."
+                                : "Test IOHandlerPicker in multi-select mode.",
+                            mode == PickerMode::SingleSelect
+                                ? "test-picker single [<count> [<name-width>]]"
+                                : "test-picker multi [<count> [<name-width>]]"),
         m_mode(mode) {
-    AddSimpleArgumentList(eArgTypeCount, eArgRepeatOptional);
+    AddSimpleArgumentList(eArgTypeCount, eArgRepeatStar);
   }
 
 protected:
@@ -61,10 +66,17 @@ protected:
       result.AppendErrorWithFormatv("invalid count: '{0}'", args[0].ref());
       return;
     }
+    size_t name_width = 0;
+    if (args.GetArgumentCount() >= 2 &&
+        args[1].ref().getAsInteger(10, name_width)) {
+      result.AppendErrorWithFormatv("invalid name width: '{0}'", args[1].ref());
+      return;
+    }
 
     llvm::SmallVector<PickerColumnName> columns = {"ID", "NAME", "VALUE"};
     // Keep a copy to print the selected ids.
-    llvm::SmallVector<PickerItem, 0> items = GenerateItems(count, m_mode);
+    llvm::SmallVector<PickerItem, 0> items =
+        GenerateItems(count, name_width, m_mode);
     auto picker_sp = std::make_shared<IOHandlerPicker>(
         GetDebugger(),
         m_mode == PickerMode::SingleSelect ? "Select an item:"

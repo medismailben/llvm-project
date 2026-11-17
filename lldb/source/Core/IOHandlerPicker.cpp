@@ -79,12 +79,44 @@ static bool IsCSIParameterOrIntermediateByte(char c) {
   return c >= 0x20 && c <= 0x3f;
 }
 
+static constexpr llvm::StringLiteral g_ellipsis = "\u2026";
+
 /// Ignores ANSI escape codes, and falls back to the size in bytes when
 /// columnWidth() can't measure \a str.
 static size_t GetColumnWidth(llvm::StringRef str) {
   std::string stripped = ansi::StripAnsiTerminalCodes(str);
   int width = llvm::sys::locale::columnWidth(stripped);
   return width < 0 ? stripped.size() : width;
+}
+
+/// Pads \a value to \a width columns, or replaces its middle with an
+/// ellipsis. Keeping both ends tells apart values like paths, which often only
+/// differ at the end.
+static std::string FitToColumn(llvm::StringRef value, size_t width) {
+  if (GetColumnWidth(value) <= width)
+    return ansi::TrimAndPad(value, width);
+  if (width == 0)
+    return "";
+
+  // Cutting the middle out could split an escape code, so drop them.
+  std::string text = ansi::StripAnsiTerminalCodes(value);
+  size_t tail_width = (width - 1) / 2;
+  size_t head_width = width - 1 - tail_width;
+
+  // Walk back over whole UTF-8 characters while the end still fits.
+  size_t tail_start = text.size();
+  while (tail_start > 0) {
+    size_t prev = tail_start - 1;
+    while (prev > 0 && (text[prev] & 0xC0) == 0x80)
+      --prev;
+    if (GetColumnWidth(llvm::StringRef(text).substr(prev)) > tail_width)
+      break;
+    tail_start = prev;
+  }
+
+  std::string fitted = ansi::TrimAndPad(text, head_width) + g_ellipsis.str() +
+                       text.substr(tail_start);
+  return ansi::TrimAndPad(fitted, width);
 }
 
 IOHandlerPicker::IOHandlerPicker(Debugger &debugger, llvm::StringRef header,
@@ -160,9 +192,11 @@ llvm::StringRef IOHandlerPicker::GetHelpText() const {
 
 void IOHandlerPicker::ComputeColumnWidths() {
   m_column_widths.clear();
+  llvm::SmallVector<size_t> header_widths;
   size_t row_width = GetPrefixWidth();
   for (size_t i = 0; i < m_columns.size(); ++i) {
     size_t width = GetColumnWidth(m_columns[i]) + g_ascending_indicator.size();
+    header_widths.push_back(width);
     for (const PickerItem &item : m_items)
       width = std::max(width, GetColumnWidth(item.values[i]));
     m_column_widths.push_back(width);
@@ -179,7 +213,24 @@ void IOHandlerPicker::ComputeColumnWidths() {
       std::max(m_terminal_width - 2 * margin, content_width), m_terminal_width);
 
   size_t inner_width = GetInnerWidth();
-  if (m_column_widths.empty() || row_width >= inner_width)
+  if (m_column_widths.empty() || row_width == inner_width)
+    return;
+
+  // Narrow the widest columns until every column fits, so that one long value
+  // doesn't push the others out of the dialog. Never go narrower than the
+  // header, though.
+  while (row_width > inner_width) {
+    size_t widest = 0;
+    for (size_t i = 1; i < m_column_widths.size(); ++i)
+      if (m_column_widths[i] - header_widths[i] >
+          m_column_widths[widest] - header_widths[widest])
+        widest = i;
+    if (m_column_widths[widest] == header_widths[widest])
+      return;
+    --m_column_widths[widest];
+    --row_width;
+  }
+  if (row_width == inner_width)
     return;
 
   // Spread the unused width across the columns.
@@ -576,8 +627,8 @@ void IOHandlerPicker::Render() {
 
     for (auto [value, width] :
          llvm::zip_equal(m_items[item_idx].values, m_column_widths)) {
-      row += value;
-      row.append(width - GetColumnWidth(value) + g_column_gap, ' ');
+      row += FitToColumn(value, width);
+      row.append(g_column_gap, ' ');
     }
     write_line(is_cursor ? g_cursor_style : "", row);
   }
