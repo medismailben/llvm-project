@@ -6,6 +6,7 @@ Tests for the IOHandlerPicker interactive widget.
 """
 
 import lldb
+import pexpect
 from lldbsuite.test.decorators import *
 from lldbsuite.test.lldbtest import *
 from lldbsuite.test.lldbpexpect import PExpectTest
@@ -113,6 +114,69 @@ class IOHandlerPickerTest(PExpectTest):
         self.child.send("\t")
         self.child.send(self.escape_key)
         self.finish("canceled")
+
+    # The confirm dialog draws the highlighted answer in normal video.
+    highlighted_yes = "\x1b[0m[ Yes ]"
+    highlighted_no = "\x1b[0m[ No ]"
+
+    def test_confirm_quit(self):
+        """`quit` with a live process confirms with the dialog, which starts on
+        the command's default answer, yes."""
+        self.start_stopped_picker("quit", "Quitting LLDB will kill")
+        self.child.expect_exact(self.highlighted_yes)
+        # n keeps the session.
+        self.child.send("n")
+        self.expect_prompt()
+        self.expect("process status", ["stopped"])
+        # Enter picks the default answer.
+        self.child.sendline("quit")
+        self.child.expect_exact(self.highlighted_yes)
+        self.child.send("\r")
+        self.child.expect(pexpect.EOF)
+
+    def test_confirm_breakpoint_delete(self):
+        """Canceling the dialog doesn't delete the breakpoints, and Enter does."""
+        self.build()
+        self.start_picker(
+            "breakpoint delete",
+            "About to delete all breakpoints",
+            executable=self.getBuildArtifact("a.out"),
+            setup=[("breakpoint set -n inner", ["Breakpoint 1"])],
+        )
+        self.child.send(self.escape_key)
+        self.child.expect_exact("Operation cancelled...")
+        self.expect_prompt()
+        self.child.sendline("breakpoint delete")
+        self.child.expect_exact(self.highlighted_yes)
+        self.child.send("\r")
+        self.finish("All breakpoints removed. (1 breakpoint)")
+
+    def test_confirm_default_no(self):
+        """A command whose default answer is no starts the dialog on no."""
+        self.build()
+        self.start_picker(
+            "breakpoint override delete",
+            "Delete all breakpoint overrides?",
+            executable=self.getBuildArtifact("a.out"),
+        )
+        self.child.expect_exact(self.highlighted_no)
+        self.child.send("\r")
+        self.finish()
+
+    def test_confirm_dumb_terminal(self):
+        """With TERM=dumb, LLDB asks for confirmation with a text prompt."""
+        self.build()
+        self.launch(
+            run_under=["env", "TERM=dumb"],
+            executable=self.getBuildArtifact("a.out"),
+        )
+        self.expect("breakpoint set -n inner", ["Breakpoint 1"])
+        self.child.sendline("breakpoint delete")
+        self.child.expect_exact("[Y/n]")
+        self.child.sendline("n")
+        self.child.expect_exact("Operation cancelled...")
+        self.expect_prompt()
+        self.quit()
 
     def test_sort_ascending(self):
         """The first s sorts by the first column, ascending."""

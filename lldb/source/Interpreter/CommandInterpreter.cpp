@@ -50,6 +50,7 @@
 #include "Commands/CommandObjectWatchpoint.h"
 
 #include "lldb/Core/Debugger.h"
+#include "lldb/Core/IOHandlerPicker.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/Telemetry.h"
@@ -2444,6 +2445,11 @@ bool CommandInterpreter::Confirm(llvm::StringRef message, bool default_answer) {
   // Check AutoConfirm first:
   if (m_debugger.GetAutoConfirm())
     return default_answer;
+
+  // Canceling the dialog means not doing what it asks about.
+  if (IOHandlerPicker::IsSupported(m_debugger))
+    return IOHandlerPicker::Confirm(m_debugger, message, default_answer)
+        .value_or(false);
 
   IOHandlerConfirm *confirm =
       new IOHandlerConfirm(m_debugger, message, default_answer);
