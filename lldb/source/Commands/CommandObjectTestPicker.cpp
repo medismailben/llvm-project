@@ -98,6 +98,25 @@ private:
   PickerMode m_mode;
 };
 
+class CommandObjectTestPickerConfirm : public CommandObjectParsed {
+public:
+  CommandObjectTestPickerConfirm(CommandInterpreter &interpreter)
+      : CommandObjectParsed(interpreter, "test-picker confirm",
+                            "Test IOHandlerPicker in confirm mode.",
+                            "test-picker confirm") {}
+
+protected:
+  void DoExecute(Args &args, CommandReturnObject &result) override {
+    std::optional<bool> answer = IOHandlerPicker::Confirm(
+        GetDebugger(), "Are you sure?", /*default_answer=*/true);
+    if (!answer)
+      result.AppendMessage("canceled");
+    else
+      result.AppendMessageWithFormatv("answer: {0}", *answer ? "yes" : "no");
+    result.SetStatus(eReturnStatusSuccessFinishResult);
+  }
+};
+
 CommandObjectTestPicker::CommandObjectTestPicker(
     CommandInterpreter &interpreter)
     : CommandObjectMultiword(interpreter, "test-picker",
@@ -107,6 +126,8 @@ CommandObjectTestPicker::CommandObjectTestPicker(
                                interpreter, PickerMode::SingleSelect));
   LoadSubCommand("multi", std::make_shared<CommandObjectTestPickerMode>(
                               interpreter, PickerMode::MultiSelect));
+  LoadSubCommand("confirm",
+                 std::make_shared<CommandObjectTestPickerConfirm>(interpreter));
 }
 
 CommandObjectTestPicker::~CommandObjectTestPicker() = default;

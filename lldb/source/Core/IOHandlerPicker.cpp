@@ -71,6 +71,15 @@ static constexpr size_t g_min_rows_with_preview = 4;
 static constexpr char g_ctrl_c = 0x03;
 static constexpr char g_ctrl_r = 0x12;
 static constexpr char g_ctrl_s = 0x13;
+static constexpr char g_tab = 0x09;
+
+/// Blank line, question, blank line, answers, blank line, key help, and blank
+/// line.
+static constexpr size_t g_confirm_lines = 7;
+static constexpr llvm::StringLiteral g_confirm_help =
+    "  Tab: switch  y/n: answer  Enter: confirm  ESC: cancel";
+static constexpr size_t g_confirm_yes = 0;
+static constexpr size_t g_confirm_no = 1;
 static constexpr char g_escape = 0x1b;
 static constexpr char g_delete = 0x7f; // Backspace on most terminals.
 
@@ -140,7 +149,7 @@ IOHandlerPicker::IOHandlerPicker(Debugger &debugger, llvm::StringRef header,
       m_checked.set(i);
 
   UpdateVisibleIndices();
-  if (m_mode == PickerMode::SingleSelect) {
+  if (m_mode != PickerMode::MultiSelect) {
     auto it = llvm::find_if(m_visible_indices, [&](size_t i) {
       return m_items[i].initially_selected;
     });
@@ -178,6 +187,39 @@ IOHandlerPicker::PickOne(Debugger &debugger, llvm::StringRef header,
   if (result.was_canceled || result.selected_indices.empty())
     return std::nullopt;
   return result.selected_indices.front();
+}
+
+std::optional<bool> IOHandlerPicker::Confirm(Debugger &debugger,
+                                             llvm::StringRef question,
+                                             bool default_answer) {
+  llvm::SmallVector<PickerItem, 0> items(2);
+  items[g_confirm_yes].values = {"Yes"};
+  items[g_confirm_no].values = {"No"};
+  items[default_answer ? g_confirm_yes : g_confirm_no].initially_selected =
+      true;
+  auto picker_sp = std::make_shared<IOHandlerPicker>(
+      debugger, question, llvm::SmallVector<PickerColumnName>{"ANSWER"},
+      std::move(items), PickerMode::Confirm);
+  debugger.RunIOHandlerSync(picker_sp);
+  const PickerResult &result = picker_sp->GetResult();
+  if (result.was_canceled || result.selected_indices.empty())
+    return std::nullopt;
+  return result.selected_indices.front() == g_confirm_yes;
+}
+
+std::string IOHandlerPicker::GetConfirmButtons() const {
+  std::string buttons;
+  for (size_t i : {g_confirm_yes, g_confirm_no}) {
+    if (!buttons.empty())
+      buttons += "    ";
+    std::string button = "[ " + m_items[i].values[0] + " ]";
+    // Like a row under the cursor, the chosen answer is in normal video.
+    if (i == m_cursor_index)
+      button = g_cursor_style.str() + button + ANSI_ESCAPE1(ANSI_CTRL_NORMAL) +
+               g_dialog_style.str();
+    buttons += button;
+  }
+  return buttons;
 }
 
 size_t IOHandlerPicker::GetPrefixWidth() const {
@@ -277,6 +319,14 @@ void IOHandlerPicker::UpdateLayout() {
   size_t preview_lines = m_preview_height ? m_preview_height + 1 : 0;
   m_viewport_height = std::min(m_items.size(), max_rows - preview_lines);
 
+  // The question needs less room than a table, so the dialog fits it.
+  if (m_mode == PickerMode::Confirm)
+    m_box_width = std::min(std::max({GetColumnWidth(m_header) + 2,
+                                     GetColumnWidth(GetConfirmButtons()),
+                                     GetColumnWidth(g_confirm_help)}) +
+                               2 * g_horizontal_padding,
+                           m_terminal_width);
+
   m_box_top = (m_screen_height - std::min(GetDialogHeight(), m_screen_height)) / 2;
   m_box_left = (m_terminal_width - m_box_width) / 2;
 
@@ -288,6 +338,8 @@ void IOHandlerPicker::UpdateLayout() {
 }
 
 size_t IOHandlerPicker::GetDialogHeight() const {
+  if (m_mode == PickerMode::Confirm)
+    return g_confirm_lines;
   size_t preview_lines = m_preview_height ? m_preview_height + 1 : 0;
   return m_viewport_height + preview_lines + g_chrome_lines;
 }
@@ -430,6 +482,8 @@ IOHandlerPicker::KeyPress IOHandlerPicker::DecodeByte(char c) {
   case g_delete:
     return {Key::Backspace};
   // Raw mode disables flow control, so Ctrl+S arrives as a byte too.
+  case g_tab:
+    return {Key::Tab};
   case g_ctrl_s:
     return {Key::SearchForward};
   case g_ctrl_r:
@@ -450,6 +504,10 @@ IOHandlerPicker::DecodeEscapeSequence(llvm::StringRef params, char final_byte) {
     return Key::Up;
   case 'B':
     return Key::Down;
+  case 'C':
+    return Key::Right;
+  case 'D':
+    return Key::Left;
   case 'H':
     return Key::Home;
   case 'F':
@@ -587,6 +645,12 @@ void IOHandlerPicker::Render() {
     frame += padding;
     frame += ANSI_ESCAPE1(ANSI_CTRL_NORMAL);
   };
+
+  if (m_mode == PickerMode::Confirm) {
+    RenderConfirm(frame, write_line);
+    GetOutputStreamFileSP()->Lock() << frame;
+    return;
+  }
 
   write_line("", "");
   write_line(ANSI_ESCAPE1(ANSI_CTRL_BOLD), "  " + m_header);
@@ -773,6 +837,9 @@ void IOHandlerPicker::HandleKey(KeyPress press) {
     break;
   }
   case Key::Backspace:
+  case Key::Left:
+  case Key::Right:
+  case Key::Tab:
   case Key::Abort:
   case Key::Wakeup:
   case Key::Unknown:
@@ -854,6 +921,58 @@ void IOHandlerPicker::HandleIncrementalSearchKey(KeyPress press) {
   }
 }
 
+void IOHandlerPicker::HandleConfirmKey(KeyPress press) {
+  auto answer = [&](size_t index) {
+    m_result.selected_indices.push_back(index);
+    SetIsDone(true);
+  };
+  switch (press.key) {
+  case Key::Left:
+  case Key::Right:
+  case Key::Tab:
+    m_cursor_index =
+        m_cursor_index == g_confirm_yes ? g_confirm_no : g_confirm_yes;
+    break;
+  case Key::Enter:
+    answer(m_cursor_index);
+    break;
+  case Key::Escape:
+    m_result.was_canceled = true;
+    SetIsDone(true);
+    break;
+  case Key::Char:
+    if (press.ch == 'y' || press.ch == 'Y')
+      answer(g_confirm_yes);
+    else if (press.ch == 'n' || press.ch == 'N')
+      answer(g_confirm_no);
+    else if (press.ch == 'h' || press.ch == 'l')
+      HandleConfirmKey({Key::Tab});
+    break;
+  default:
+    break;
+  }
+}
+
+void IOHandlerPicker::RenderConfirm(
+    std::string &frame,
+    llvm::function_ref<void(llvm::StringRef style, llvm::StringRef content)>
+        write_line) {
+  std::string buttons = GetConfirmButtons();
+  size_t inner_width = GetInnerWidth();
+  size_t buttons_width = GetColumnWidth(buttons);
+  std::string centered(
+      inner_width > buttons_width ? (inner_width - buttons_width) / 2 : 0, ' ');
+
+  write_line("", "");
+  write_line(ANSI_ESCAPE1(ANSI_CTRL_BOLD), "  " + m_header);
+  write_line("", "");
+  write_line("", centered + buttons);
+  write_line("", "");
+  write_line("", g_confirm_help);
+  write_line("", "");
+  frame += ANSI_ESC_RESTORE_CURSOR;
+}
+
 void IOHandlerPicker::UpdateIncrementalSearch() {
   UpdateVisibleIndices();
   if (m_query.empty()) {
@@ -898,6 +1017,8 @@ void IOHandlerPicker::Run() {
       // A resize, the statusline, or async output may have drawn over us.
       UpdateLayout();
       RestoreScreen();
+    } else if (m_mode == PickerMode::Confirm) {
+      HandleConfirmKey(press);
     } else if (m_incremental_search) {
       HandleIncrementalSearchKey(press);
     } else if (m_searching) {

@@ -16,6 +16,7 @@ from lldbsuite.test.lldbpexpect import PExpectTest
 @skipIfWindows
 class IOHandlerPickerTest(PExpectTest):
     arrow_down = "\x1b[B"
+    arrow_right = "\x1b[C"
     escape_key = "\x1b"
 
     def start_picker(
@@ -81,6 +82,35 @@ class IOHandlerPickerTest(PExpectTest):
         """ESC discards toggles."""
         self.start_picker("test-picker multi 5", "Toggle items:")
         self.child.send(" j ")
+        self.child.send(self.escape_key)
+        self.finish("canceled")
+
+    def test_confirm_side_by_side(self):
+        """The confirm picker shows both answers on one line, and Enter picks
+        the default one."""
+        self.start_picker("test-picker confirm", "Are you sure?")
+        # Only spaces and styles between the two answers.
+        self.child.expect(r"\[ Yes \](?:\x1b\[[0-9;]*m| )*\[ No \]")
+        self.child.send("\r")
+        self.finish("answer: yes")
+
+    def test_confirm_switch(self):
+        """Arrow keys and Tab switch between the answers."""
+        self.start_picker("test-picker confirm", "Are you sure?")
+        self.child.send(self.arrow_right)
+        self.child.send("\r")
+        self.finish("answer: no")
+
+    def test_confirm_shortcuts(self):
+        """y and n answer right away."""
+        self.start_picker("test-picker confirm", "Are you sure?")
+        self.child.send("n")
+        self.finish("answer: no")
+
+    def test_confirm_cancel(self):
+        """ESC cancels the confirm picker."""
+        self.start_picker("test-picker confirm", "Are you sure?")
+        self.child.send("\t")
         self.child.send(self.escape_key)
         self.finish("canceled")
 

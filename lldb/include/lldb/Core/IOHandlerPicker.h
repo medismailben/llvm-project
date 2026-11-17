@@ -13,6 +13,7 @@
 #include "lldb/Host/Pipe.h"
 #include "lldb/Host/Terminal.h"
 #include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <atomic>
@@ -32,7 +33,8 @@ struct PickerItem {
   bool initially_selected = false;
 };
 
-enum class PickerMode { SingleSelect, MultiSelect };
+/// Confirm asks a yes or no question, with the two answers side by side.
+enum class PickerMode { SingleSelect, MultiSelect, Confirm };
 
 struct PickerResult {
   bool was_canceled = false;
@@ -87,6 +89,11 @@ public:
           llvm::SmallVector<PickerItem, 0> items,
           PreviewCallback preview_callback = {});
 
+  /// Ask \a question, starting on \a default_answer. Returns std::nullopt if
+  /// the user canceled or the input isn't a terminal.
+  static std::optional<bool>
+  Confirm(Debugger &debugger, llvm::StringRef question, bool default_answer);
+
 private:
   enum class Key {
     Up,
@@ -104,6 +111,9 @@ private:
     Wakeup,
     /// A printable character, stored in KeyPress::ch.
     Char,
+    Left,
+    Right,
+    Tab,
     /// Ctrl+S and Ctrl+R, which search incrementally like Editline.
     SearchForward,
     SearchBackward,
@@ -136,6 +146,12 @@ private:
   void HandleKey(KeyPress press);
   void HandleSearchKey(KeyPress press);
   void HandleIncrementalSearchKey(KeyPress press);
+  void HandleConfirmKey(KeyPress press);
+  void RenderConfirm(
+      std::string &frame,
+      llvm::function_ref<void(llvm::StringRef style, llvm::StringRef content)>
+          write_line);
+  std::string GetConfirmButtons() const;
   /// Filter the rows with m_query, and move the cursor to the first match in
   /// the incremental search's direction.
   void UpdateIncrementalSearch();
